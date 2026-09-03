@@ -561,6 +561,14 @@ branch carried the change. And `state.py next` reported
 unrelated work. That one line is the difference between this and the three months the
 predecessor factory spent finding no work behind a label nobody lifted.
 
+**What the silence was NOT.** `selfcheck` runs the full gate -- static, unit, the two
+agent-driven rungs, and the whole mutation set, each mutation re-running the gate -- under
+`capture_output=True`. It therefore emits NOTHING to the run log for its entire duration,
+which on this repo is tens of minutes. So "no output for an hour" is not evidence of death
+and must not be read as such; what proved this one dead was that no `bun` process existed.
+Worth knowing before diagnosing the next one, and worth weighing against the node's declared
+30-minute timeout, which is plausibly tighter than the work it is timing.
+
 **What is still unproven.** The cause. The run was launched by hand under `nohup`
 rather than through `dispatch.py`, so no lock existed and no reaper applied, and a
 detached child not surviving its parent shell is the likeliest reading. It is also true
