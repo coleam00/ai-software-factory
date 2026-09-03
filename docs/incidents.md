@@ -546,6 +546,71 @@ that holds for a subset is not a check on the whole.** It appears wherever a che
 written as "something like this exists" rather than "this specific thing is here", and
 the only thing that finds it is a defect aimed at that rung.
 
+### The run that died between two nodes and left the issue reading "being worked on"
+
+**What happened.** An implement lap ran cleanly through prime, plan, implement, commit
+and guard, then stopped. Not failed -- stopped. The last line in the log is
+`selfcheck` starting and its script discovery completing. No error, no exit code, no
+stack. The process was gone, the Archon run row still said `running`, and the issue sat
+at `factory:in-progress` for eighty-six minutes on a node whose declared timeout is
+thirty.
+
+**What made it survivable.** The work was not lost: implement had committed, so the
+branch carried the change. And `state.py next` reported
+`stalled-issue gh:issue:1 in 'in-progress' with no PR` rather than moving on to
+unrelated work. That one line is the difference between this and the three months the
+predecessor factory spent finding no work behind a label nobody lifted.
+
+**What is still unproven.** The cause. The run was launched by hand under `nohup`
+rather than through `dispatch.py`, so no lock existed and no reaper applied, and a
+detached child not surviving its parent shell is the likeliest reading. It is also true
+that it died at the exact moment the one `runtime: uv` node started, and that uv creates
+its virtualenv on first use. Both remain guesses, and they are written down as guesses.
+
+**The rule.** A label that means "being worked on" needs something that notices when
+nothing is working on it. `next` reporting a stalled issue is that something, and it is
+worth more than any amount of care about not crashing -- because the crash will happen
+and the report is what turns a three-month outage into a five-minute one.
+
+### The consumer that would have failed naming itself, eight nodes after the mistake
+
+**What happened.** A new `bash:` node emitted `{"errors":"true","docs":"auto"}` and a
+node further down read `$review-scope.output.errors`. The workflow validated clean and
+`archon validate workflows` said `ok`. The cross-file audit did not:
+
+```
+[FAIL] factory-implement: $review-scope.output.errors is read, but 'review-scope'
+       declares no output_format -- the consumer will fail, naming itself rather
+       than the producer
+```
+
+**Why it mattered here.** The consumer sits after prime, plan and implement. The failure
+would have arrived roughly thirty minutes and one premium model into the lap, and its
+message would have accused the reader rather than the writer.
+
+**The rule.** The audit is not a linter, it is the only thing that reads ACROSS files.
+Schema validation proves each file is well-formed; it cannot know that a producer never
+promised a field. Run the audit after editing the pack, not only after editing the
+machinery -- this one was clean an hour earlier, before the node existed.
+
+### The cancel that reported no live owner for a run that was alive
+
+**What happened.** `archon workflow cancel <id>` answered:
+
+> No live detached CLI owner is reachable for run &lt;id&gt;. The run was not changed.
+> (ENOENT) If you have verified that its process is gone, use
+> `archon workflow abandon <id>` to release its persisted state.
+
+The process was NOT gone. The run was executing normally under a shell the operator had
+started. Taking the message at its word and running `abandon` killed a healthy lap at
+its third node, and the log then read `Failed: Cancelled by user` -- which was true, and
+gave no hint that the user had been told the opposite a second earlier.
+
+**The rule.** "I could not reach it" is not "it is dead", and a message that offers the
+destructive remedy in the same breath invites the confusion. Before abandoning, read the
+run's own log and check for a live process; an abandon is not reversible and the thing
+it destroys is usually the expensive half of a lap.
+
 ## Inherited from the factory this one was built from
 
 These were paid for by an earlier experiment. They are not hypothetical either.

@@ -229,6 +229,15 @@ nodes:
   - id: review-scope
     bash: echo '{"errors":"true","docs":"auto"}'
     depends_on: [selfcheck]
+    # Declared, because a consumer reading an undeclared field fails naming ITSELF
+    # rather than the producer that never promised the field -- and the failure lands
+    # eight nodes and one premium model after the mistake was made.
+    output_format:
+      type: object
+      properties:
+        errors: { type: string }
+        docs: { type: string }
+      required: [errors, docs]
 
   - id: review
     include: archon-review
