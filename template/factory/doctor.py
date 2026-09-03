@@ -101,6 +101,75 @@ def git(*args: str) -> tuple[int, str]:
     return p.returncode, p.stdout.strip()
 
 
+def _include_deny_supported() -> tuple[str, str, str, int]:
+    """Does THIS engine honour `denied_tools` on an `include:`?
+
+    THE FAILURE THIS EXISTS TO CATCH IS SILENT AND IT COSTS THE WHOLE ARGUMENT.
+    `factory-implement` includes Archon's `sdlc` review pack, whose nodes all grant
+    Read and none of which know this factory has a holdout. The include carries the
+    holdout deny and the engine unions it onto every expanded node -- on an engine
+    that supports it. On an older one the field is dropped, the workflow still loads,
+    every check still passes, and the reviewer can read the assertions the builder is
+    blocked from reading. Nothing goes red. A version string would be the easy check
+    and the wrong one, because it tests what the binary CLAIMS.
+
+    So this asks the engine what it did. Loading a workflow whose include carries an
+    inert field makes Archon log `include_node_ai_fields_ignored` naming that field.
+    If the warning names `denied_tools`, the deny was dropped and the wall is gone.
+    Absence of the warning is the pass.
+
+    Unknown is NOT a pass. If the probe cannot run, say so and keep blocking, because
+    "we could not check, so we merged" is the same mistake as counting a skipped check
+    as a passed one.
+    """
+    pack = config.ROOT / ".archon" / "workflows" / "factory"
+    if not pack.is_dir():
+        return (WARN, "include deny", "no factory pack installed yet -- nothing to probe", 99)
+
+    # Only meaningful when this factory actually composes somebody else's block. A pack
+    # whose nodes are all local has no include for the engine to strip, and reporting
+    # OK there would be a check that cannot fail -- which is the shape this whole file
+    # exists to refuse.
+    composed = [
+        y for y in pack.rglob("*.yaml")
+        if "include:" in y.read_text(encoding="utf-8", errors="replace")
+    ]
+    if not composed:
+        return (WARN, "include deny",
+                "this pack includes no other workflow, so there is nothing to sandbox", 99)
+    unguarded = [
+        y.name for y in composed
+        if "denied_tools" not in y.read_text(encoding="utf-8", errors="replace")
+    ]
+    if unguarded:
+        return (FAIL, "include deny",
+                f"{', '.join(unguarded)} includes another workflow with NO denied_tools -- "
+                "every node it expands can read the holdout", 1)
+    try:
+        p = subprocess.run(
+            [config.ARCHON_BIN, "validate", "workflows"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=180, cwd=str(config.ROOT),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return (FAIL, "include deny",
+                "could not run `archon validate workflows` -- UNKNOWN is not a pass, and "
+                "this is the check that proves the holdout survives composition", 1)
+
+    blob = (p.stdout or "") + (p.stderr or "")
+    for line in blob.splitlines():
+        if "include_node_ai_fields_ignored" in line and "denied_tools" in line:
+            return (FAIL, "include deny",
+                    "this Archon DROPS denied_tools on an include -- the review pack would "
+                    "run with no holdout deny and every check would still pass. Upgrade the "
+                    "engine, or replace the `include: archon-review` node with a local one", 1)
+    if "factory-implement" not in blob:
+        return (FAIL, "include deny",
+                "`archon validate workflows` never mentioned factory-implement, so the probe "
+                "proved nothing -- UNKNOWN is not a pass", 1)
+    return (OK, "include deny", "the engine keeps denied_tools on an include (holdout survives)")
+
+
 def main(argv: list[str]) -> int:
     want = None
     if "--level" in argv:
@@ -121,6 +190,7 @@ def main(argv: list[str]) -> int:
         except (OSError, subprocess.SubprocessError, IndexError):
             out = ""
         r.add(OK, "archon", out or "installed")
+        r.add(*_include_deny_supported())
     else:
         r.add(FAIL, "archon", f"{config.ARCHON_BIN} not on PATH -- run `factory init`", 1)
 
