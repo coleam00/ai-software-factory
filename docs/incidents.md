@@ -619,6 +619,53 @@ destructive remedy in the same breath invites the confusion. Before abandoning, 
 run's own log and check for a live process; an abandon is not reversible and the thing
 it destroys is usually the expensive half of a lap.
 
+### The import the merge had always needed, on the only line no failing lap reaches
+
+**What happened.** The first fully green validation this repo ever produced died one
+statement before the merge it had just earned:
+
+```
+MARKERS_OK checked=4
+RATCHET_OK keys=3 e2e_journeys=3/3 holdout_scenarios=3/3 unit_tests=49/45
+GATE_PASS pr=gh:pr:2 markers green, mutations 9/9
+NameError: name 'os' is not defined
+```
+
+`gate.py` used `os.environ` exactly once, on the line handing the observed counts to
+`merge.py`, and never imported `os`.
+
+**Why it survived every earlier lap.** That line runs only when the markers, the ratchet
+AND the verdict are all green. Every lap before this one stopped earlier, so the merge
+path had never executed. A bug reachable only on total success is invisible to exactly
+the testing that finds bugs.
+
+**Why the static rung could not see it.** For a Python project the shipped `static` is
+`python -m compileall`, which proves a file PARSES. A NameError is a runtime event.
+
+**The rule.** `_selftest.py` now parses every factory module and asserts that each stdlib
+module it references by attribute is also imported there. Narrow on purpose -- it is not a
+type checker, it exists to make this one silence impossible to repeat. Proven in both
+directions: removing the import turns the self-test red naming the file.
+
+### The ratchet that did not move on the merge that opened the gap
+
+**What happened.** The lap merged with the gate observing `unit_tests=49` against a floor
+of 45. `floor.json` and `merge.py` both promise the gap is closed "in the same breath as
+the merge". After the merge, main's floor still read 45, and nothing in the run mentioned
+a raise.
+
+**Where it probably goes.** `raise_floor` runs in the checkout the validate workflow owns
+-- a throwaway worktree on `factory/validate-pr-*` -- while the merge itself happens on
+GitHub. A floor commit written there has nowhere to go.
+
+**Why it matters.** The slack is not cosmetic: it is exactly the number of assertions that
+can be deleted with the gate still green. Four here, and it grows every time the harness
+improves, which is the failure mode `floor.json` names in its own header.
+
+**Unfixed, deliberately.** Where the raise should land is a design decision -- a commit on
+main from the machinery, a follow-up issue, or a human line in the PR record -- and picking
+one blind would be guessing. The PR record already prints the exact raise to apply.
+
 ## Inherited from the factory this one was built from
 
 These were paid for by an earlier experiment. They are not hypothetical either.

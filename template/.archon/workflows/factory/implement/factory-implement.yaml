@@ -64,6 +64,7 @@ nodes:
         branch: { type: string }
         title: { type: string }
         base: { type: string }
+        prior_attempt: { type: string }
       required: [target, number, branch, title, base]
 
   # --- 1. PRIME -------------------------------------------------------------

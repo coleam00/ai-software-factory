@@ -1223,6 +1223,77 @@ def agentcheck_checks() -> None:
         check("an unset agent command fails rather than skips", True)
 
 
+def undefined_module_checks() -> None:
+    """Every stdlib module a factory file USES, that file also IMPORTS.
+
+    THE INCIDENT: `gate.py` referenced `os.environ` exactly once, on the line that
+    hands the observed counts to the merge, and never imported `os`. That line runs
+    only when the markers, the ratchet and the verdict are ALL green -- so no failing
+    lap ever reached it, and the FIRST fully green validation this repo ever produced
+    died with NameError one statement before the merge it had just earned.
+
+    WHY NOTHING CAUGHT IT. The static rung for a Python project is
+    `python -m compileall`, which proves a file parses, not that its names resolve.
+    A NameError is a runtime event, and the runtime in question is the rarest path in
+    the system: the one where everything else passed.
+
+    This is deliberately narrow -- bare `NAME.attr` where NAME is a stdlib module this
+    factory actually uses. It is not a type checker and it is not trying to be; it
+    exists to make the specific silence above impossible to repeat.
+    """
+    import ast
+
+    watched = {
+        "os", "sys", "json", "re", "subprocess", "time", "shutil", "tempfile",
+        "hashlib", "sqlite3", "socket", "signal", "textwrap", "difflib", "fnmatch",
+    }
+    here = Path(__file__).resolve().parent
+    for path in sorted(here.glob("*.py")):
+        if path.name.startswith("_test"):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            check("selftest/undefined-module " + path.name, False, "does not parse")
+            continue
+
+        imported: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imported.add((alias.asname or alias.name).split(".")[0])
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    imported.add(alias.asname or alias.name)
+
+        # Names bound anywhere in the file are not module references; a local called
+        # `time` shadows the module and is none of this check's business.
+        bound: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                bound.add(node.id)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                bound.add(node.name)
+                for arg in node.args.args + node.args.kwonlyargs:
+                    bound.add(arg.arg)
+
+        used: set[str] = set()
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id in watched
+            ):
+                used.add(node.value.id)
+
+        missing = sorted(used - imported - bound)
+        check(
+            "selftest/undefined-module " + path.name,
+            not missing,
+            "uses " + ", ".join(missing) + " without importing it" if missing else "",
+        )
+
+
 def main() -> int:
     quiet = "--quiet" in sys.argv
     # POINT THE LEDGER SOMEWHERE HARMLESS FOR THE WHOLE RUN, before any check fires.
@@ -1254,6 +1325,7 @@ def main() -> int:
     argv_quoting_checks()
     teardown_frees_the_port_checks()
     gh_retry_checks()
+    undefined_module_checks()
 
     if FAILURES:
         if not quiet:
