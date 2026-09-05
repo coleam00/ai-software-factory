@@ -1294,6 +1294,53 @@ def undefined_module_checks() -> None:
         )
 
 
+def clean_tree_is_not_empty_work_checks() -> None:
+    """A script that fails on a clean working tree must also ask whether the BRANCH moved.
+
+    THE INCIDENT, TWICE IN ONE DAY. The build step became Archon's `archon-implement`,
+    which commits as it goes. Two scripts asserted "did anything change" by reading
+    `git status --porcelain` and treating a clean tree as "the node did nothing":
+
+      commit.py   would have failed the lap for succeeding.
+      land-fix.py DID -- it threw away a ten-minute opus fix as "changed nothing",
+                  after the fix had been correctly written and committed.
+
+    The question both were asking stopped being the right one the moment the builder
+    started committing its own work. What has to be true is that the branch carries
+    something, not that the tree is dirty.
+
+    This check is narrow and mechanical: a factory script that reads `--porcelain` and
+    can `die`/`exit(1)` on an empty result must also consult `rev-list`. It cannot prove
+    the logic is right; it proves the second question is being asked at all, which is
+    exactly what was missing both times.
+    """
+    here = Path(__file__).resolve().parent
+    roots = [here]
+    pack = here.parent / ".archon" / "workflows" / "factory"
+    if pack.is_dir():
+        roots.append(pack)
+
+    for root in roots:
+        for path in sorted(root.rglob("*.py")):
+            if path.name.startswith("_test") or path.name.startswith("_self"):
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if "--porcelain" not in text:
+                continue
+            # Only scripts that can STOP on the answer are in scope; a script that merely
+            # reports cleanliness is not making a decision this can be wrong about.
+            stops = "die(" in text or "sys.exit(1)" in text
+            if not stops:
+                continue
+            check(
+                "selftest/clean-tree " + path.name,
+                "rev-list" in text,
+                "decides on `git status --porcelain` and can stop, but never consults "
+                "rev-list -- a builder that commits its own work reads as having done "
+                "nothing",
+            )
+
+
 def main() -> int:
     quiet = "--quiet" in sys.argv
     # POINT THE LEDGER SOMEWHERE HARMLESS FOR THE WHOLE RUN, before any check fires.
@@ -1326,6 +1373,7 @@ def main() -> int:
     teardown_frees_the_port_checks()
     gh_retry_checks()
     undefined_module_checks()
+    clean_tree_is_not_empty_work_checks()
 
     if FAILURES:
         if not quiet:

@@ -58,13 +58,25 @@ rc, dirty = git("status", "--porcelain", "--untracked-files=all")
 if rc != 0:
     die(f"git status failed: {dirty}")
 if not dirty.strip():
-    report = artifacts / "fix-report.md"
-    hint = f" It wrote {report}, so read that first." if report.exists() else ""
-    die(
-        "the fix node changed nothing. A finding is not addressed by an empty diff, "
-        "and the usual cause is a denied tool or a finding the node decided it could "
-        "not act on." + hint
-    )
+    # A CLEAN TREE IS NOT AN EMPTY FIX. The fix node is Archon's `archon-implement`,
+    # which commits as it goes, so the ordinary success case arrives here with nothing
+    # left to stage. Asking "is the tree dirty" answers a question that stopped being
+    # the right one when the builder changed: what has to be true is that the BRANCH
+    # carries something the remote does not.
+    #
+    # This is the same defect that was fixed in commit.py and missed here, and it cost
+    # a ten-minute opus fix that was then thrown away as "changed nothing".
+    rc_ahead, ahead = git("rev-list", "--count", f"origin/{branch}..HEAD")
+    carried = rc_ahead == 0 and ahead.strip().isdigit() and int(ahead.strip()) > 0
+    if not carried:
+        report = artifacts / "fix-report.md"
+        hint = f" It wrote {report}, so read that first." if report.exists() else ""
+        die(
+            "the fix node changed nothing. A finding is not addressed by an empty diff, "
+            "and the usual cause is a denied tool or a finding the node decided it could "
+            "not act on." + hint
+        )
+    note(f"FIX_ALREADY_COMMITTED {ahead.strip()} commit(s) ahead of origin/{branch}")
 
 git("add", "-A")
 # The builder is `archon-implement`, which commits as it goes, so by the time this runs
