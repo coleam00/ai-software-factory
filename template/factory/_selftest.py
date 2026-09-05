@@ -1247,8 +1247,24 @@ def undefined_module_checks() -> None:
         "os", "sys", "json", "re", "subprocess", "time", "shutil", "tempfile",
         "hashlib", "sqlite3", "socket", "signal", "textwrap", "difflib", "fnmatch",
     }
+
+    # THE HELPERS TOO, not only modules. The module version of this check shipped and
+    # then failed to catch `note(...)` in a script that never imported it -- a NameError
+    # on the success path of the fix loop, found by running it rather than by reading it.
+    # These two are the factory's own output channel: every node either imports them
+    # from nodeio or prints directly, and calling one that is not there is the same
+    # silence as the missing import, one word narrower.
+    helpers = {"note", "emit"}
     here = Path(__file__).resolve().parent
-    for path in sorted(here.glob("*.py")):
+    # BOTH ROOTS. The first version of this scanned only factory/ and therefore never
+    # looked at the workflow scripts -- which is exactly where the NameError it was
+    # written for actually happened. A check aimed at the wrong directory passes for
+    # the same reason a check aimed at nothing passes.
+    roots = [here]
+    pack = here.parent / ".archon" / "workflows" / "factory"
+    if pack.is_dir():
+        roots.append(pack)
+    for path in sorted(q for root in roots for q in root.rglob("*.py")):
         if path.name.startswith("_test"):
             continue
         try:
@@ -1286,11 +1302,20 @@ def undefined_module_checks() -> None:
             ):
                 used.add(node.value.id)
 
-        missing = sorted(used - imported - bound)
+        called: set[str] = set()
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in helpers
+            ):
+                called.add(node.func.id)
+
+        missing = sorted((used | called) - imported - bound)
         check(
-            "selftest/undefined-module " + path.name,
+            "selftest/undefined-name " + path.name,
             not missing,
-            "uses " + ", ".join(missing) + " without importing it" if missing else "",
+            "uses " + ", ".join(missing) + " without importing or defining it" if missing else "",
         )
 
 

@@ -76,7 +76,7 @@ if not dirty.strip():
             "and the usual cause is a denied tool or a finding the node decided it could "
             "not act on." + hint
         )
-    note(f"FIX_ALREADY_COMMITTED {ahead.strip()} commit(s) ahead of origin/{branch}")
+    print(f"FIX_ALREADY_COMMITTED {ahead.strip()} commit(s) ahead of origin/{branch}", file=sys.stderr)
 
 git("add", "-A")
 # The builder is `archon-implement`, which commits as it goes, so by the time this runs
@@ -85,7 +85,7 @@ git("add", "-A")
 # the remote is about to. Only a branch with nothing new to push is a dead fix.
 rc_dirty, dirty = git("status", "--porcelain", "--untracked-files=all")
 if rc_dirty == 0 and not dirty.strip():
-    note("FIX_ALREADY_COMMITTED - the builder committed its own work; pushing it")
+    print("FIX_ALREADY_COMMITTED - the builder committed its own work; pushing it", file=sys.stderr)
     rc, out = 0, ""
 else:
     rc, out = git("commit", "-q", "-m", f"fix: address validator findings (attempt {attempt}) (#{number})")
