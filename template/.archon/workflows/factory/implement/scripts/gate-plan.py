@@ -44,6 +44,7 @@ sys.path.insert(0, str(Path.cwd() / "factory"))
 from nodeio import emit, note  # noqa: E402
 
 import config  # noqa: E402
+import gate  # noqa: E402
 import notify  # noqa: E402
 import state  # noqa: E402
 
@@ -133,7 +134,12 @@ if assumptions:
     config.ASSUMPTIONS_DIR.mkdir(parents=True, exist_ok=True)
     dest = config.ASSUMPTIONS_DIR / f"{target.replace(':', '-')}.txt"
     dest.write_text(assumptions, encoding="utf-8")
-    n = len([ln for ln in assumptions.splitlines() if ln.strip()])
+    # COUNT ASSUMPTIONS, NOT LINES -- the identical bug gate.py already documents
+    # fixing. The format is one KEY=value followed by an indented WHY paragraph, so
+    # non-blank lines over-report by roughly the length of the reasoning: three real
+    # assumptions were announced here as 25. The number is the first thing a person
+    # reads, and one that inflates makes a reviewable hold look like a wall.
+    n = len(gate.assumption_keys(assumptions))
     note(f"ASSUMPTIONS_RECORDED {n} -> {dest} (the build continues; the MERGE will be held)")
     for line in assumptions.splitlines()[:20]:
         note(f"    {line}")
