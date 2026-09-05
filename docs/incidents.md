@@ -666,6 +666,56 @@ improves, which is the failure mode `floor.json` names in its own header.
 main from the machinery, a follow-up issue, or a human line in the PR record -- and picking
 one blind would be guessing. The PR record already prints the exact raise to apply.
 
+### The fix loop that threw away a ten-minute fix as "changed nothing"
+
+**What happened.** The first `factory-fix` run this factory ever executed died at the
+land step: *"the fix node changed nothing. A finding is not addressed by an empty
+diff."* The fix had been written correctly and committed.
+
+**The cause.** `land-fix.py` asked `git status --porcelain` and read a clean tree as an
+empty fix. That question stopped being the right one when the build step became
+`archon-implement`, which commits as it goes. It is the SAME defect that was found and
+fixed in `commit.py` in the same change -- and missed one file over, because the fix was
+applied where the commit happens rather than where the emptiness is asserted.
+
+**Then it died again**, on the corrected path, with `NameError: name 'note' is not
+defined`. `land-fix.py` has `die()` and prints to stderr; it never had `note()`.
+
+**Both were invisible to the checks that existed**, including the ones written that
+morning for exactly this class. The undefined-name self-test watched stdlib MODULE names
+only, and it scanned `factory/` while the workflow scripts live under
+`.archon/workflows/factory/**`. A check aimed at the wrong directory passes for the same
+reason a check aimed at nothing passes.
+
+**The rules.** A script that decides on `--porcelain` and can stop must also consult
+`rev-list` -- the question is whether the BRANCH moved, not whether the tree is dirty.
+And the name check now covers the factory's own output helpers as well as modules, over
+both roots. Both are enforced in `_selftest.py` and both were verified by reintroducing
+the exact failure.
+
+**The general shape:** three bugs, one root. Each was a check asking a question that used
+to be equivalent to the one that mattered, and quietly stopped being.
+
+### Three assumptions announced as twenty-five, and the same bug announced as zero
+
+**What happened.** `gate-plan.py` reported `ASSUMPTIONS_RECORDED 25` for a plan carrying
+three. `gate.py` reported `0 recorded assumption(s)` for a plan carrying one.
+
+**The causes are opposite halves of the same contract.** `gate-plan` counted non-blank
+LINES, so it over-reported by the length of each WHY paragraph -- the identical bug
+`gate.py` documents having already fixed, still present one file over. `gate.py` counted
+`KEY=value` keys, an implicit contract with the plan prompt the factory used to own; the
+planner is Archon's now and recorded its assumption as prose, so it counted none.
+
+**Why it matters more than a number.** The count is the first thing a person reads on a
+hold. Twenty-five reads as a wall nobody can review; zero reads as nothing to review, on
+a pull request being held precisely because there IS something to review. Both directions
+end in a rubber stamp.
+
+**The rule.** One counter, `gate.assumption_keys`, used by both, with a fallback so a
+non-empty file is never zero. The planner is also told the `KEY=value` shape, and the
+next lap came back with three properly keyed assumptions and a hold that named all three.
+
 ## Inherited from the factory this one was built from
 
 These were paid for by an earlier experiment. They are not hypothetical either.
