@@ -67,7 +67,16 @@ if not dirty.strip():
     )
 
 git("add", "-A")
-rc, out = git("commit", "-q", "-m", f"fix: address validator findings (attempt {attempt}) (#{number})")
+# The builder is `archon-implement`, which commits as it goes, so by the time this runs
+# the fix is usually ALREADY committed and there is nothing left to stage. That is
+# success, not failure: what has to be true here is that the branch carries the fix and
+# the remote is about to. Only a branch with nothing new to push is a dead fix.
+rc_dirty, dirty = git("status", "--porcelain", "--untracked-files=all")
+if rc_dirty == 0 and not dirty.strip():
+    note("FIX_ALREADY_COMMITTED - the builder committed its own work; pushing it")
+    rc, out = 0, ""
+else:
+    rc, out = git("commit", "-q", "-m", f"fix: address validator findings (attempt {attempt}) (#{number})")
 if rc != 0:
     die(f"could not commit the fix: {out}")
 

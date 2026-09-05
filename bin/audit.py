@@ -85,8 +85,19 @@ def check_node_outputs(root: Path) -> None:
     for wf in sorted(pack.rglob("*.yaml")):
         text = wf.read_text(encoding="utf-8")
         declared: dict[str, set[str]] = {}
+        # A node whose output this file cannot describe: `include:` inlines another
+        # workflow, and the fields its output carries are declared by THAT workflow's
+        # `returns:` node -- which lives in the engine's bundled pack, not here. This
+        # audit is deliberately dependency-free and single-file, so it cannot resolve
+        # them and must not pretend to. Claiming "declares no output_format" for an
+        # include would be a false failure that blocks every composed binding, and a
+        # check that is wrong in the BLOCKING direction gets switched off -- after
+        # which it is not checking the real cases either.
+        composed: set[str] = set()
         for block in re.split(r"^  - id:\s*", text, flags=re.M)[1:]:
             node_id = block.split("\n", 1)[0].strip()
+            if re.search(r"^\s{4}include:\s*\S+", block, re.M):
+                composed.add(node_id)
             props = set()
             m = re.search(r"output_format:.*?properties:(.*?)(?:\n      required:|\n  - id:|\Z)",
                           block, re.S)
@@ -97,6 +108,11 @@ def check_node_outputs(root: Path) -> None:
         for ref_node, ref_field in re.findall(r"\$([a-z][\w-]*)\.output\.(\w+)", text):
             if ref_node not in declared:
                 fail(wf.stem, f"${ref_node}.output.{ref_field} references an unknown node")
+            elif ref_node in composed:
+                # Verified by Archon at load instead: an undeclared field on a composed
+                # producer is a load-time error, so this binding is not unchecked -- it
+                # is checked somewhere this script cannot read.
+                continue
             elif ref_field not in declared[ref_node]:
                 fail(
                     wf.stem,

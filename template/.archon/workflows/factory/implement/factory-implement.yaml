@@ -67,42 +67,43 @@ nodes:
         prior_attempt: { type: string }
       required: [target, number, branch, title, base]
 
-  # --- 1. PRIME -------------------------------------------------------------
-  # The plan node is the expensive one; feeding it a cold read of the repository is
-  # how a premium model gets spent re-deriving what a cheap one could have handed
-  # it. Read-only by construction: no Edit, no Write to source, no shell that
-  # mutates.
-  - id: prime
-    command: prime
-    model: small
-    context: fresh
-    depends_on: [preflight]
-    # PROVEN BY PROBE, in both directions, before being believed:
-    #   allowed_tools: ["Bash(python:*)"]   grants NOTHING -- the node has NO shell.
-    #   allowed_tools: [Bash]               grants a shell.
-    #   denied_tools:  ["Bash(git:*)"]      genuinely blocks it.
-    # So the grant is coarse and the leash is the DENY. The first version scoped the
-    # grant instead, and the build nodes ran for weeks with no shell at all: they
-    # could not run the quick gate, said so politely in prose, and exited 0.
-    allowed_tools: [Read, Glob, Grep, Write, Bash]
-    denied_tools: ["Read(.factory/holdout/**)", "Glob(.factory/holdout/**)", "Grep(.factory/holdout/**)"]
-
-  # --- 2. PLAN --------------------------------------------------------------
-  # THE PREMIUM SLOT, and the last node that will ever go fully unattended -- this
-  # is the step a human actually reads today, and everything downstream inherits
-  # whatever it gets wrong.
+  # --- 1. PLAN --------------------------------------------------------------
+  # ARCHON'S PLANNER, not ours. `archon-plan` is the sdlc pack's planning primitive:
+  # it grounds itself against the current repository, writes $ARTIFACTS_DIR/plan.md,
+  # and returns `ready` -- and it refuses to mutate the checkout while doing it.
   #
-  # NO SHELL AT ALL. A plan node that can run things plans to measure something
-  # itself, gets refused, and the refusal is silent: the request goes to a human who
-  # is not there. Stating the measurement as the implement node's first task is the
-  # working version of the same intent.
+  # THE FACTORY'S OWN prime AND plan NODES ARE GONE. `prime` existed to hand a cheap
+  # reading of the repo to an expensive planner we owned; `archon-plan` does its own
+  # grounding, so priming.md had exactly one reader and it has been deleted. Two
+  # planning prompts in one system is the duplication this integration exists to end.
+  #
+  # `preflight` has already written issue.md, MISSION.md, FACTORY_RULES.md,
+  # decisions.md and PRIOR-ATTEMPT.md into $ARTIFACTS_DIR, so the planner is pointed at
+  # them rather than told to go looking.
+  #
+  # THE TIER IS THE PACK'S. archon-plan declares `model: large` and a workflow's model
+  # is stamped onto its own nodes before expansion, so this runs on the premium tier
+  # whatever this workflow declares. That is the pack's choice and adopting it is the
+  # point; rebind `large` if you want it cheaper.
   - id: plan
-    command: plan
-    model: large
-    context: fresh
-    depends_on: [prime]
-    allowed_tools: [Read, Glob, Grep, Write]
-    denied_tools: ["Read(.factory/holdout/**)", "Glob(.factory/holdout/**)", "Grep(.factory/holdout/**)"]
+    include: archon-plan
+    denied_tools:
+      - "Read(.factory/holdout/**)"
+      - "Glob(.factory/holdout/**)"
+      - "Grep(.factory/holdout/**)"
+    depends_on: [preflight]
+    with:
+      work: >-
+        Plan the work described in $ARTIFACTS_DIR/issue.md. Read it first, then
+        $ARTIFACTS_DIR/MISSION.md and $ARTIFACTS_DIR/FACTORY_RULES.md -- the mission's
+        out-of-scope list decides whether this should be built at all, and a plan that
+        exceeds the size or protected-path rules in FACTORY_RULES cannot be merged by
+        this factory. $ARTIFACTS_DIR/decisions.md records prior decisions to honour,
+        and $ARTIFACTS_DIR/PRIOR-ATTEMPT.md exists only when this branch already
+        carries a failed attempt worth reading before you re-plan it.
+
+        Nobody will read the resulting code before it merges, so declare `ready: false`
+        rather than planning around an ambiguity you would normally raise in review.
 
   # An explicit escalation file beats a silent no-op. The plan node stops only for
   # the short list in commands/plan.md; when it does, this is the only thing that
@@ -114,6 +115,13 @@ nodes:
     depends_on: [plan]
     with:
       target: "$preflight.output.target"
+      # The pack's own "this is not ready to build" verdict, which replaces the
+      # ESCALATE sentinel our planner used to write. Without this binding the
+      # capability would simply disappear on the swap: archon-plan writes no sentinel,
+      # gate-plan would find none, and every run would proceed -- including the ones
+      # the planner explicitly refused. A lost refusal is the most expensive thing an
+      # unattended factory can drop.
+      plan_ready: "$plan.output.ready"
     output_format:
       type: object
       properties:
@@ -126,22 +134,36 @@ nodes:
     depends_on: [gate-plan]
     when: "$gate-plan.output.proceed == false"
 
-  # --- 3. IMPLEMENT ---------------------------------------------------------
-  # Work the plan task by task, running each task's validation command as you go.
-  # `Bash` is scoped to the QUICK gate and to python one-liners for measurement --
-  # the leash was never what enforced the independence property anyway. What stops a
-  # builder tuning against the gate is that the VALIDATOR re-runs everything in a
-  # separate process, that every deliberate defect must still be caught, and that
-  # the ratchet refuses a quieter harness.
+  # --- 2. IMPLEMENT ---------------------------------------------------------
+  # ARCHON'S BUILDER. `archon-implement` loops the implement command until it reports
+  # done (max 5), returns a structured {done, green, red_cause, summary}, and ends in a
+  # deterministic `assert-changed` guard that refuses a run which declined its task --
+  # because an AI node that declines still exits 0.
+  #
+  # It is strictly more than the single-shot command node it replaces, which had no
+  # loop, no green verdict and no decline guard.
+  #
+  # IT COMMITS AS IT GOES. That is why `commit` below now treats a clean tree with
+  # commits ahead of base as success rather than as "nothing happened".
   - id: implement
-    command: implement
-    model: medium
-    context: fresh
+    include: archon-implement
+    denied_tools:
+      - "Read(.factory/holdout/**)"
+      - "Glob(.factory/holdout/**)"
+      - "Grep(.factory/holdout/**)"
+      - "Bash(gh:*)"
     depends_on: [gate-plan]
     when: "$gate-plan.output.proceed == true"
-    allowed_tools: [Read, Glob, Grep, Edit, Write, Bash]
-    denied_tools: ["Read(.factory/holdout/**)", "Glob(.factory/holdout/**)", "Grep(.factory/holdout/**)", "Bash(git:*)", "Bash(gh:*)"]
-    idle_timeout: 900000
+    with:
+      work: >-
+        Implement $ARTIFACTS_DIR/plan.md in full, working it task by task and running
+        each task's validation as you go. The issue it serves is
+        $ARTIFACTS_DIR/issue.md and the rules this repository merges under are
+        $ARTIFACTS_DIR/FACTORY_RULES.md -- the size and protected-path limits there are
+        enforced by a guard after you, so exceeding them wastes the lap.
+
+        Nothing outside the plan. Nobody reads this diff before it merges, so an
+        unrelated improvement is indistinguishable from an unreviewed change.
 
   # --- 4. COMMIT ------------------------------------------------------------
   # WITHOUT THIS THE WHOLE LAP IS THEATRE. The implement node edits files in the

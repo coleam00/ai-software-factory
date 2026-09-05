@@ -1,31 +1,39 @@
 ---
 name: factory-implement
-description: Build the plan. Small commits, the repo's conventions, and the quick gate before you claim it works.
-argument-hint: nothing -- reads the plan from the previous step
+description: Build one planned issue the way the factory builds it, using Archon's sdlc builder.
+argument-hint: optionally the plan to implement (default: the run's plan.md)
 ---
 
 # factory-implement
 
-**The instructions for this step live in `.archon/workflows/factory/implement/commands/implement.md`. Read that file now and follow it.**
-This skill exists so you can run the step by hand; it deliberately does not restate
-the content, because a second copy is a second thing to keep true.
+**The builder is Archon's, not ours.**
 
-Two adjustments for running it interactively rather than as a workflow node:
+```bash
+archon workflow run archon-implement "Implement plan.md in full. Nothing outside the plan."
+```
 
-1. **`$ARTIFACTS_DIR` does not exist here.** Where the file asks for an input from
-   that directory, get the same thing from the repository: `MISSION.md`,
-   `FACTORY_RULES.md` and `CLAUDE.md` are at the root, the issue is
-   `gh issue view <n>`, and anything a previous step wrote is wherever you put it.
-2. **The line telling you to defer to a `piv-*` skill is for the workflow node, not
-   for you.** If this repository has that skill, running it is still the better
-   answer. If it does not, work the shape in the file -- which is what the node does.
+`archon-implement` ships bundled in the engine. It loops the implement command until it
+reports done (max 5), returns `{done, green, red_cause, summary}`, commits as it goes,
+and ends in a deterministic `assert-changed` guard -- because an AI node that declines
+its task still exits 0.
 
-Everything else applies unchanged: the same inputs, the same output, the same
-refusals. That is the point of pointing at one file instead of keeping two.
+The factory's own single-shot implement prompt is gone. It had no loop, no green verdict
+and no decline guard, so keeping it alongside this would have meant maintaining the
+weaker of two builders.
 
-## Why the factory and you read the same prompt
+## What the factory adds around it
 
-The node prompts are the personalisation layer -- they are meant to be rewritten into
-your process. If the interactive version were a copy, rewriting one would silently
-leave the other saying something else, and the difference would first show up as an
-unattended run doing something you thought you had changed.
+- **`commit`** asserts the branch actually differs from its base. Since the builder
+  commits its own work, a clean tree with commits ahead of base is success -- the fatal
+  case is a branch identical to base, which is the whole lap being theatre.
+- **`guard`** enforces the protected paths and the size and scope caps, before anything
+  judges the diff.
+- **`selfcheck`** runs the full gate for the builder's benefit, so a lap does not spend a
+  validation cycle learning it is red.
+
+## The holdout
+
+The include carries a `denied_tools` list covering `.factory/holdout/**`, and Archon
+unions it onto every node the pack expands into. Verify it rather than trusting it: none
+of those nodes knows this factory has a holdout, and without the deny a builder could
+read the assertions it is being measured against, with every check still green.

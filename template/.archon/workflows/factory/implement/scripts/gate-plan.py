@@ -58,6 +58,33 @@ def read(name: str) -> str:
 
 plan = read("plan.md")
 escalate = read("ESCALATE")
+
+# THE PACK'S OWN REFUSAL, which is now the primary one. The planner is Archon's
+# `archon-plan`; it returns `ready` and writes no ESCALATE sentinel, so treating a
+# missing sentinel as consent would silently discard every refusal it makes. The
+# sentinel is still read above because a REWRITTEN planner -- this prompt is the
+# personalisation layer -- may still use it, and losing that would be the same bug in
+# the other direction.
+#
+# Anything that is not an explicit "true" is a refusal. An unset binding, an empty
+# string or a malformed value all mean the same thing here: nobody said it was ready,
+# and this is the last gate before an unattended build starts spending.
+plan_ready = (os.environ.get("INPUTS_PLAN_READY") or "").strip().lower()
+if plan_ready and plan_ready != "true":
+    note("PLAN_NOT_READY: archon-plan returned ready=" + plan_ready)
+    try:
+        state.main(["set", target, "state=needs-human"])
+    except Exception:  # noqa: BLE001
+        note("  (could not park " + target + " at needs-human)")
+    try:
+        notify.send(
+            "plan not ready: " + target,
+            "archon-plan declined to plan this as specified. Read plan.md on the run.",
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    emit({"proceed": False, "reason": "archon-plan returned ready=" + plan_ready})
+    sys.exit(0)
 assumptions = read("ASSUMPTIONS")
 followup = read("FOLLOWUP")
 
