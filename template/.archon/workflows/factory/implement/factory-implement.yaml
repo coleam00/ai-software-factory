@@ -105,6 +105,15 @@ nodes:
         Nobody will read the resulting code before it merges, so declare `ready: false`
         rather than planning around an ambiguity you would normally raise in review.
 
+        When you DO settle a small, reversible detail the issue left open -- a label's
+        wording, a default, an ordering nobody specified -- write it to
+        $ARTIFACTS_DIR/ASSUMPTIONS as `KEY=value` at the start of a line followed by an
+        indented paragraph saying why. Each one holds the merge for a human, which is
+        the point: the build proceeds, and a person agrees with the call before it
+        ships. A judgement value -- a lock, a floor, a tolerance, a sample size -- is
+        NOT an assumption. Choosing one of those is tuning the judge, and it is a
+        `ready: false` instead.
+
   # An explicit escalation file beats a silent no-op. The plan node stops only for
   # the short list in commands/plan.md; when it does, this is the only thing that
   # turns that into a state change, and it CANCELS the run rather than letting five
