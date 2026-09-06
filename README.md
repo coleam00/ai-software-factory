@@ -196,6 +196,11 @@ Four prompts were deleted outright when these landed. What the factory still own
 the part the pack has no opinion about: the state machine, the guard, the gate, the
 merge, the holdout, the ratchet, and the scripts between the AI steps.
 
+The pack ships ten workflows; these four cover every AI step here.
+`docs/derivation.md` accounts for the other six. Four are refused because the pack
+keeps a human at the pull request, which is the one step this factory does not have.
+One, `archon-upkeep`, is not a refusal but a gap: nothing here updates a dependency.
+
 **The composition is only safe because of the deny list.** Every node the pack expands
 into grants `Read`, and none of them knows this factory has a holdout. `include:`
 unions `denied_tools` onto every expanded node, so the wall survives a block somebody
@@ -283,6 +288,7 @@ template/            what init copies in
   harness/           the gate ladder, the mutation runner, END-TO-END.md
   .archon/workflows/ the five workflows, their prompts, and their dry-run fixtures
   .claude/skills/    the same loop, by hand
+docs/derivation.md   which AI steps come from Archon's sdlc pack, and why the rest do not
 docs/first-hour.md   what to do after init, in order
 docs/incidents.md    every way this has been wrong, and the mechanism each time
 ```
