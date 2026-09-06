@@ -716,6 +716,34 @@ end in a rubber stamp.
 non-empty file is never zero. The planner is also told the `KEY=value` shape, and the
 next lap came back with three properly keyed assumptions and a hold that named all three.
 
+### The runs that died with the shell that started them, explained at last
+
+**What happened, three times.** A lap stopped mid-node with no error, no exit code and
+no process, while its Archon row still read `running`. The first was diagnosed as
+"cause not established". The third made it obvious: the session that had launched it
+ended, and the run went with it.
+
+**The mechanism.** `archon workflow run` without `--detach` executes IN the calling
+shell. Kill the shell -- close the terminal, end the session, hit a harness timeout --
+and the run dies mid-node. Nothing writes a failure, because nothing is left to write
+one. The DB row stays `running` forever and the PR or issue stays in whatever state the
+last completed node left it.
+
+**How to tell a dead one from a slow one**, which matters because `selfcheck` and
+`gate-run` are legitimately silent for ten minutes under `capture_output`:
+the run log's mtime tells you nothing during those nodes, but the WORKTREE does. A live
+gate is writing `<worktree>/.factory/runs/gate-*.db-wal` every few seconds. Two hours of
+no write there, and no `bun` process, is dead.
+
+**The rule.** Dispatch detached. `dispatch.py` already does -- it passes `--detach` and
+holds a lock until the run settles, which is why no dispatcher-launched lap has ever
+died this way. Every one that did was launched by hand without it.
+
+**And the recovery is not free.** `archon workflow cancel` answers *"No live detached
+CLI owner is reachable"* for these, which reads like "it is already gone" and is really
+"I cannot reach it". Taking that at face value once killed a HEALTHY lap at its third
+node. Check the worktree for writes before abandoning anything.
+
 ## Inherited from the factory this one was built from
 
 These were paid for by an earlier experiment. They are not hypothetical either.
