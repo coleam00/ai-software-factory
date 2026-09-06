@@ -433,6 +433,16 @@ def enforcement_checks() -> None:
         check("held resumes only through open",
               state.TRANSITIONS.get("held", set()) == {"open", "needs-human", "rejected"},
               "a human raises the floor or accepts the assumptions, then it revalidates")
+        # AND THE MESSAGE MUST SAY THAT. It used to end "the PR waits for a human to
+        # merge it", which is the one thing the table above forbids: there is no
+        # held -> passed edge and merge.py refuses anything not passed, so a person
+        # following the instruction had to reach for `gh pr merge` and silently skip
+        # the ratchet raise, the labels and the issue close. Guidance that contradicts
+        # the mechanism is worse than none: it is trusted.
+        held_msg = (Path(__file__).resolve().parent / "gate.py").read_text(encoding="utf-8")
+        check("the hold message tells the human to hand it back, not to merge it",
+              "state=open" in held_msg and "waits for a human to merge it" not in held_msg,
+              "the hold comment must name the transition that actually clears it")
         gate_src = (Path(__file__).resolve().parent / "gate.py").read_text(encoding="utf-8")
         check("the gate writes held rather than passed when it holds",
               'state.set_state(target, "held")' in gate_src,

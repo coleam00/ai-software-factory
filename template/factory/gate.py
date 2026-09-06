@@ -592,8 +592,20 @@ def main(argv: list[str]) -> int:
                 "",
                 counts_line,
                 "This is not a failure and re-running will not change it. It clears when a "
-                "human commits the raised floor / the answered assumption. Until then the PR "
-                "waits for a human to merge it.",
+                "human commits the raised floor / the answered assumption.",
+                "",
+                "**Then hand it back rather than merging it yourself:**",
+                "",
+                "```",
+                "python factory/state.py set " + str(target) + " state=open",
+                "```",
+                "",
+                "It revalidates and merges itself. That is deliberate and it is not "
+                "ceremony: what you just committed can CHANGE WHAT THE GATE CHECKS -- a "
+                "raised floor is a new ratchet comparison -- so the verdict has to be "
+                "earned again against what you wrote, not reused from before you wrote "
+                "it. `factory/merge.py` refuses a held pull request for the same reason, "
+                "and the state table has no held -> passed edge at all.",
             ]
             post(target, "\n".join(body))
             print(f"GATE_PASS_HELD pr={target} held={'; '.join(held_why)}")
