@@ -245,7 +245,6 @@ def assumption_keys(text: str) -> list[str]:
         # has to get right is "not zero".
         entries = [ln for ln in text.splitlines() if ln.strip() and not ln[0].isspace()]
         return ["(unkeyed " + str(n + 1) + ")" for n in range(len(entries) or 1)]
-        return [f"(unkeyed {i + 1})" for i in range(len(paragraphs) or 1)]
     return keys
 
 

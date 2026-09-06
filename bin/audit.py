@@ -251,6 +251,51 @@ def check_script_inputs_are_bound(root: Path) -> None:
             )
 
 
+def check_referenced_files_exist(root: Path) -> None:
+    """A shipped file that names a path inside the pack must name one that is there.
+
+    THE INCIDENT, and it shipped into every install. Four node prompts were deleted when
+    the plan, build, fix and review steps became Archon's sdlc pack. Three references
+    survived them, and the worst was in a SKILL:
+
+        .claude/skills/factory-fix/SKILL.md
+        "The instructions for this step live in
+         .archon/workflows/factory/fix/commands/fix.md. Read that file now and follow it."
+
+    That skill is the by-hand version of the fix step. Its whole design is to point at one
+    file rather than keep a second copy -- which is right, and which means the single
+    thing it has to get correct is the path. An agent invoked on it reads the sentence,
+    cannot open the file, and improvises the correction step with no guidance at all: no
+    findings discipline, no attempt cap, no "never self-certify". Nothing errors.
+
+    A deleted file is easy to grep for on the day you delete it and impossible to
+    remember six weeks later, so this is mechanical. Only paths under
+    `.archon/workflows/factory/` are checked -- they are this template's own furniture and
+    a broken one is always a mistake, whereas a path into the USER's repository is a
+    reference to something that does not exist yet, which is often the point.
+    """
+    ref = re.compile(r"[`'\"( ]((?:\.archon/workflows/factory/)[\w./*-]+)")
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix not in (".md", ".yaml", ".py", ".txt"):
+            continue
+        if "fixtures" in path.parts:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for match in {m.group(1) for m in ref.finditer(text)}:
+            target = match.rstrip(".,;:)`'\"")
+            if "*" in target:  # a glob is a pattern, not a claim that one file exists
+                continue
+            if not (root / target).exists():
+                fail(
+                    "referenced file",
+                    f"{path.relative_to(root).as_posix()} points at {target}, which does "
+                    f"not exist -- an agent told to read it gets no guidance and no error",
+                )
+
+
 def check_all_scripts_parse(root: Path) -> None:
     """Everything under factory/ and every workflow script compiles.
 
@@ -983,6 +1028,7 @@ def main(argv: list[str]) -> int:
     print(f"auditing {root}\n")
 
     check_script_inputs_are_bound(root)
+    check_referenced_files_exist(root)
     check_all_scripts_parse(root)
     check_node_outputs(root)
     check_emitting_scripts(root)

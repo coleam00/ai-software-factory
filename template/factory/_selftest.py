@@ -1442,6 +1442,60 @@ def operator_settings_live_in_config_checks() -> None:
         )
 
 
+def unreachable_code_checks() -> None:
+    """No statement follows a return, raise, break or continue in the same block.
+
+    THE ONE THAT GOT THROUGH. `gate.assumption_keys` ended a branch with two returns:
+
+        return ["(unkeyed " + str(n + 1) + ")" for n in range(len(entries) or 1)]
+        return [f"(unkeyed {i + 1})" for i in range(len(paragraphs) or 1)]
+
+    The second is dead, and it references `paragraphs`, which does not exist anywhere in
+    the file. Left over from rewriting the expression in place. It reached the branch
+    being merged to main, in the module that decides whether a pull request merges.
+
+    Nothing caught it and every check that should have was looking at the wrong thing.
+    It PARSES, so `check_all_scripts_parse` passed. It never RUNS, so no test could fail
+    on it. `undefined_module_checks` scans for unknown modules and nodeio helpers, not
+    local names. And a reviewer's eye slides over a second return the same way it slides
+    over a duplicated word.
+
+    Checked structurally rather than by name resolution, because that is the property
+    with no false positives: a statement after an unconditional exit in the same block is
+    dead however it is spelled. It is also the right shape for the underlying risk --
+    dead code in a gate is one careless reorder away from being live code that raises.
+    """
+    import ast as _ast
+
+    here = Path(__file__).resolve().parent
+    workflows = here.parent / ".archon" / "workflows" / "factory"
+    files = sorted(here.glob("*.py"))
+    if workflows.is_dir():
+        files += sorted(workflows.rglob("scripts/*.py"))
+
+    terminal = (_ast.Return, _ast.Raise, _ast.Break, _ast.Continue)
+    for path in files:
+        try:
+            tree = _ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            continue  # check_all_scripts_parse owns that failure
+        dead: list[str] = []
+        for node in _ast.walk(tree):
+            for field in ("body", "orelse", "finalbody"):
+                block = getattr(node, field, None)
+                if not isinstance(block, list):
+                    continue
+                for i, stmt in enumerate(block[:-1]):
+                    if isinstance(stmt, terminal):
+                        dead.append(f"line {block[i + 1].lineno} after line {stmt.lineno}")
+        check(
+            "no unreachable code in " + path.name,
+            not dead,
+            "; ".join(dead) + " -- a statement after an unconditional exit never runs, "
+            "so nothing can fail on it and it is one reorder away from being live",
+        )
+
+
 def main() -> int:
     quiet = "--quiet" in sys.argv
     # POINT THE LEDGER SOMEWHERE HARMLESS FOR THE WHOLE RUN, before any check fires.
@@ -1476,6 +1530,7 @@ def main() -> int:
     undefined_module_checks()
     clean_tree_is_not_empty_work_checks()
     operator_settings_live_in_config_checks()
+    unreachable_code_checks()
 
     if FAILURES:
         if not quiet:

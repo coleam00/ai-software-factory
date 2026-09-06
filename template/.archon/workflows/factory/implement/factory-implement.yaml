@@ -123,10 +123,12 @@ nodes:
         NOT an assumption. Choosing one of those is tuning the judge, and it is a
         `ready: false` instead.
 
-  # An explicit escalation file beats a silent no-op. The plan node stops only for
-  # the short list in commands/plan.md; when it does, this is the only thing that
-  # turns that into a state change, and it CANCELS the run rather than letting five
-  # more nodes run against a plan that says "do not build this".
+  # An explicit refusal beats a silent no-op. `archon-plan` declares `ready: false`
+  # rather than writing a sentinel, and this is the only thing that turns that into a
+  # state change -- it CANCELS the run rather than letting five more nodes build against
+  # a plan that says "do not build this". The ESCALATE sentinel is still read below,
+  # because a REWRITTEN planner may still use it, but the pack's `ready` is the primary
+  # refusal now.
   - id: gate-plan
     script: gate-plan
     runtime: uv
