@@ -118,6 +118,40 @@ def missing_settings(dest: Path) -> list[tuple[str, str]]:
     return [(k, v) for k, v in ours.items() if k not in theirs]
 
 
+def orphaned_prompts(dest: Path) -> list[str]:
+    """Node prompts this install still has that no workflow references any more.
+
+    THE SYNC DELETES NOTHING, deliberately -- it copies what differs and leaves the rest
+    alone, because the alternative is a tool that removes a file somebody wrote. The
+    consequence only appears when the TEMPLATE removes one: four prompts were deleted
+    when plan, implement, fix and review became Archon's sdlc pack, and an existing
+    install keeps all four plus the `.claude/skills` entries pointing at them. Nothing
+    breaks -- the skill and the prompt are still consistent with each other -- and that
+    is exactly the problem. The by-hand path now describes a process the unattended
+    factory no longer runs, and it describes it accurately enough to be believed.
+
+    `/commands/` is add-only for a good reason (the prompts are the personalisation
+    layer and overwriting a rewritten one is the one thing this must never do), so the
+    answer is the same as for a missing setting: report it, and let the operator decide.
+    """
+    pack = dest / ".archon" / "workflows" / "factory"
+    if not pack.is_dir():
+        return []
+    referenced = set()
+    for wf in pack.rglob("*.yaml"):
+        if wf.parent.name == "fixtures":
+            continue
+        for line in wf.read_text(encoding="utf-8", errors="replace").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("command:"):
+                referenced.add(stripped.split(":", 1)[1].strip())
+    orphans = []
+    for prompt in sorted(pack.rglob("commands/*.md")):
+        if prompt.stem not in referenced:
+            orphans.append(prompt.relative_to(dest).as_posix())
+    return orphans
+
+
 def main(argv: list[str]) -> int:
     if not argv:
         print(__doc__)
@@ -161,8 +195,15 @@ def main(argv: list[str]) -> int:
 
     for rel in changed:
         print(("would update " if dry else "updated ") + rel)
+    # "kept" only ever prints for a file that DIFFERS -- an identical one is skipped by
+    # the content compare above and never reaches here. So every line below is a real
+    # divergence, and it has two possible causes the sync cannot tell apart: you rewrote
+    # it, or the template changed and add-only meant the change never arrived. Saying
+    # "kept (yours)" asserts the first, and the second is the one that bites: both
+    # factories built on this template were still running the pre-integration `diagnose`
+    # prompt weeks after the workflow around it changed.
     for rel in sorted(set(skipped)):
-        print(f"kept (yours)  {rel}")
+        print(f"differs, kept  {rel}")
     print(f"\n{len(changed)} file(s) {'would change' if dry else 'changed'}, "
           f"{len(set(skipped))} left alone")
 
@@ -177,6 +218,18 @@ def main(argv: list[str]) -> int:
             for ln in line.splitlines():
                 print("    " + ln)
             print()
+        print()
+    orphans = orphaned_prompts(dest)
+    if orphans:
+        print()
+        print("PROMPTS NO WORKFLOW REFERENCES ANY MORE -- left in place, because a prompt")
+        print("you rewrote is yours and this never deletes one. But the by-hand skill that")
+        print("points at each still describes a step the factory no longer runs that way:")
+        print()
+        for rel in orphans:
+            print("    " + rel)
+        print()
+        print("Delete them and re-read .claude/skills/, or keep them as your own variant.")
         print()
     if not changed:
         print("Nothing to do -- the machinery here already matches the template.")
