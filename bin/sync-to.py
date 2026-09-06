@@ -40,6 +40,13 @@ SYNC = [
     ".archon/workflows/factory",
     "harness/ci.py",
     "harness/appproc.py",
+    # THE EVIDENCE CHECKER, and its absence here was a real hole. It is the module that
+    # decides whether an agent's journey report counts as a measurement, it is identical
+    # in every factory, and it was the one harness module the sync could not reach -- so
+    # a false positive in it (there was one: a passing concrete assertion whose observed
+    # value equalled its expectation was refused as a fabrication) was permanent in every
+    # install that already existed.
+    "harness/agentcheck.py",
     "harness/mutations/run.py",
     ".claude/skills",
 ]

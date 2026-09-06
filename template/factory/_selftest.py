@@ -1175,11 +1175,29 @@ def agentcheck_checks() -> None:
             {"journeys": [{"name": "j", "assertions": [
                 {"name": "a", "expected": "open=0", "observed": "   ", "ok": True}]}]},
             "whitespace is not an observation")
-    rejects("observed that merely restates expected is rejected",
+    # THE RULE THAT WAS HERE WAS WRONG, and it cost a full holdout run on a healthy
+    # app. It rejected `observed == expected`, reasoning that echoing the expectation
+    # is the cheapest way to fake a check. The reasoning is sound and the rule is not:
+    # on a PASSING concrete assertion the two are identical BY CONSTRUCTION, because
+    # the expectation was written as a value and the app produced that value. It had
+    # no discriminating power -- only false positives, on exactly the runs that should
+    # pass. On allot it fired on "total 14, held 6, committed 0, available 8", and at
+    # level 3 the holdout is a required marker, so nothing could have merged.
+    accepted = {"journeys": [{"name": "j", "assertions": [
+        {"name": "the item is untouched", "expected": "available 8",
+         "observed": "available 8", "ok": True}]}]}
+    groups, asserts, failures = agentcheck._validate("e2e", accepted)
+    check("a passing concrete measurement equal to its expectation is ACCEPTED",
+          (groups, asserts, failures) == (1, 1, []),
+          "an honest agent reporting the value it saw must not be called a fabricator")
+
+    # What actually discriminates: the NAME is the question, `observed` is meant to be
+    # the answer, and an answer identical to the question answered nothing.
+    rejects("observed that restates the assertion's own name is rejected",
             {"journeys": [{"name": "j", "assertions": [
-                {"name": "a", "expected": "open=0", "observed": "open=0", "ok": True}]}]},
-            "echoing the expectation is the cheapest way to report a check that "
-            "never happened")
+                {"name": "the counter is zero", "expected": "open=0",
+                 "observed": "the counter is zero", "ok": True}]}]},
+            "restating the question is not answering it", says="restates the assertion")
     rejects("observed that says nothing is rejected",
             {"journeys": [{"name": "j", "assertions": [
                 {"name": "a", "expected": "open=0", "observed": "as expected", "ok": True}]}]},

@@ -386,11 +386,36 @@ def _validate(kind: str, data: object) -> tuple[int, int, list[str]]:
                     f"'{gname}' / '{name}' reports no observed value. An assertion with "
                     f"nothing observed did not run."
                 )
-            if observed.lower() in _EMPTY_ANSWERS or observed.lower() == expected.lower():
+            # A CONTENTLESS ANSWER IS NOT A MEASUREMENT. "as expected" is the shape an
+            # agent produces when it did not look, and it is indistinguishable from
+            # success unless it is refused here.
+            #
+            # WHAT IS *NOT* CHECKED, AND WHY IT WAS REMOVED. This also refused
+            # `observed == expected`, and that rule could not work. On a passing
+            # concrete assertion the two are IDENTICAL by construction -- expected
+            # "total 14, held 6, committed 0, available 8", observed the same string,
+            # because that is what the app returned and the check passed. The rule
+            # therefore had no discriminating power at all: it fired on every honest
+            # passing measurement whose expectation was written as a value.
+            #
+            # It cost a full holdout run on a healthy app. At level 3 that is not a
+            # nuisance -- the holdout is a required marker, so nothing can ever merge,
+            # and the failure reads as "the agent is fabricating" when the agent did
+            # exactly what it was asked.
+            #
+            # What DOES discriminate is below: an observation that restates the
+            # assertion's own NAME is a restatement, because the name is the question
+            # and the observation is supposed to be the answer.
+            if observed.lower() in _EMPTY_ANSWERS:
+                raise AgentCheckFailed(
+                    f"'{gname}' / '{name}' observed {observed!r}, which says nothing "
+                    f"about what happened. Report the value the app actually produced."
+                )
+            if observed.lower() == name.lower():
                 raise AgentCheckFailed(
                     f"'{gname}' / '{name}' observed {observed!r}, which restates the "
-                    f"expectation instead of reporting what happened. Report the value "
-                    f"the app actually produced."
+                    f"assertion instead of answering it. Report the value the app "
+                    f"actually produced."
                 )
             assertions += 1
             if not a.get("ok"):
