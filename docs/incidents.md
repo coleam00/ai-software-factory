@@ -1599,3 +1599,48 @@ that wire does not break the gate, it opens it. `bin/audit.py` now checks that e
 reading test data as workflows.** The node-output check failed on a reference quoted in
 a fixture *comment*, and the doctor cheerfully reported nine workflows in a pack of
 five.
+
+## The evidence check called an honest measurement a fabrication
+
+A third factory, installed from this repo into a new project, ran its first full gate.
+Static passed, 57 unit tests passed, the app started, three end-to-end journeys passed
+with twenty steps. Then:
+
+```
+AGENT_RUNNING rung=holdout cmd=claude
+'Two items, five settlements, and a release that must only work once' /
+'step 7: walnut-crate untouched throughout' observed
+'walnut-crate: total 14, held 6, committed 0, available 8', which restates the
+expectation instead of reporting what happened.
+GATE_FAILED: holdout-harness
+```
+
+The agent had done exactly what it was asked. The scenario said the item should read
+those four numbers, the app returned those four numbers, and the agent wrote them down.
+
+`agentcheck` refused any assertion whose `observed` equalled its `expected`, on the
+reasoning that echoing the expectation is the cheapest way to report a check that never
+happened. The reasoning is right. The rule is unworkable: **on a passing concrete
+assertion the two are identical by construction**, because the expectation was written
+as a value and the app produced that value. It had no discriminating power in either
+direction -- it could not catch a determined fabricator (who would paraphrase) and it
+fired on every honest passing measurement whose expectation was a number.
+
+**At level 3 this is not a nuisance.** The holdout is a required marker, so a factory
+that had earned auto-merge could never merge anything, and the log blamed the agent for
+the harness's mistake. It survived two factories only because their scenarios were
+phrased as prose the agent naturally paraphrased.
+
+What replaces it does discriminate: an observation identical to the assertion's own
+NAME. The name is the question, `observed` is meant to be the answer, and an answer
+identical to the question answered nothing.
+
+**Two things about how this was found, and neither is a check.** It took installing the
+product into a third project and running its gate for real. And the self-test asserted
+the WRONG behaviour, confidently, with a comment explaining why -- so the invariant that
+should have caught it was instead the thing defending it.
+
+**And it could never have been fixed in place.** `harness/agentcheck.py` was not in
+`bin/sync-to.py`'s SYNC list -- the one harness module the sync could not reach. Every
+factory already installed would have kept the broken checker forever, and the fix would
+have looked like it shipped.
