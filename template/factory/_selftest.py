@@ -1514,6 +1514,35 @@ def unreachable_code_checks() -> None:
         )
 
 
+def irreversible_scripts_refuse_arguments_checks() -> None:
+    """A script whose only action is irreversible must not perform it by accident.
+
+    `regress-trigger.py --help` DISPATCHED A REGRESSION. It took no arguments, ignored
+    the ones it got, and went straight to work: a real run against main on the premium
+    tier which, at level 4, can file issues into the queue. Anyone typing --help is by
+    definition someone who does not yet know what the script does.
+
+    Narrow and mechanical: a factory script that dispatches a workflow, and takes no
+    arguments, must read `sys.argv` at all. It cannot prove the handling is right; it
+    proves the question is asked, which is exactly what was missing.
+    """
+    here = Path(__file__).resolve().parent
+    for name in ("regress-trigger.py", "trigger.py"):
+        path = here / name
+        if not path.is_file():
+            continue
+        src = path.read_text(encoding="utf-8", errors="replace")
+        code = NL.join(line.split("#", 1)[0] for line in src.splitlines())
+        if "subprocess" not in code:
+            continue
+        check(
+            name + " looks at its arguments before acting",
+            "sys.argv" in code,
+            "it dispatches, takes no arguments, and never reads argv -- so any typo, "
+            "and --help, starts a real run",
+        )
+
+
 def main() -> int:
     quiet = "--quiet" in sys.argv
     # POINT THE LEDGER SOMEWHERE HARMLESS FOR THE WHOLE RUN, before any check fires.
@@ -1549,6 +1578,7 @@ def main() -> int:
     clean_tree_is_not_empty_work_checks()
     operator_settings_live_in_config_checks()
     unreachable_code_checks()
+    irreversible_scripts_refuse_arguments_checks()
 
     if FAILURES:
         if not quiet:

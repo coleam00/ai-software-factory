@@ -31,6 +31,21 @@ def log(msg: str) -> None:
 
 
 def main() -> int:
+    # A SCRIPT WHOSE ONLY ACTION IS IRREVERSIBLE MUST NOT DO IT BY ACCIDENT. This took
+    # no arguments and ignored the ones it was given, so `regress-trigger.py --help`
+    # dispatched a full regression -- a real run against main, on the premium tier,
+    # which at level 4 can file issues. Anyone reaching for --help is by definition
+    # someone who does not yet know what the script does.
+    if len(sys.argv) > 1:
+        if {"-h", "--help"} & set(sys.argv[1:]):
+            print(__doc__)
+            print("Usage: python factory/regress-trigger.py        (takes no arguments)")
+            return 0
+        print(f"unknown argument: {' '.join(sys.argv[1:])}", file=sys.stderr)
+        print("This takes no arguments. Run it bare to dispatch, or --help.",
+              file=sys.stderr)
+        return 2
+
     stopped, why = state.stop_requested()
     if stopped:
         log(f"STOPPED: {why}")
