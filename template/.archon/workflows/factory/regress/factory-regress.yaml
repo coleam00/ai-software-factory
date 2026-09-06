@@ -121,8 +121,8 @@ nodes:
       target: >-
         The scheduled gate ran against the default branch and went red. The full
         output is $ARTIFACTS_DIR/regress.log -- read it first. Establish what actually
-        broke and why, to the cause whose fix prevents the symptom. `MISSION.md` in the repository root
-        says what this software is for, which is how you tell a product defect from a
+        broke and why, to the cause whose fix prevents the symptom. `MISSION.md` in the
+        repository root says what this software is for, which is how you tell a defect from a
         harness that failed to run: a dependency that would not install, a port already
         in use, a checkout that did not complete or a missing environment variable are
         real problems and are NOT defects in this code. Say so plainly when that is what
