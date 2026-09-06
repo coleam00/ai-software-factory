@@ -170,6 +170,81 @@ def _include_deny_supported() -> tuple[str, str, str, int]:
     return (OK, "include deny", "the engine keeps denied_tools on an include (holdout survives)")
 
 
+# A backticked token in the rules that names a FILE rather than a symbol. `is_on` and
+# `guard.py` appear in that prose as identifiers, not as paths, so the test is
+# deliberately narrow: a separator, a glob, or a name that actually exists at the root.
+def _looks_like_path(token: str, root: Path) -> bool:
+    if not token or " " in token or "\n" in token:
+        return False
+    if "/" in token or "*" in token or "?" in token:
+        return True
+    return (root / token).exists()
+
+
+def _sample_path(pattern: str) -> str:
+    """A concrete path the pattern would match, so a PATTERN can be tested against
+    `guard.matches`, which takes paths. `deploy/**` becomes `deploy/a/b`, which is
+    matched by guard's own `deploy/**` and by nothing that does not cover it."""
+    p = pattern.replace("**", "\x00").replace("*", "a").replace("\x00", "a/b")
+    return p[:-1] + "a" if p.endswith("/") else p
+
+
+def _rules_match_guard() -> tuple[str, str, str, int]:
+    """FACTORY_RULES section 5 and the guard's list are ONE FACT WRITTEN TWICE.
+
+    Section 5 is prose: it is what the planner reads before it plans and what the
+    judge reads before it judges. `guard.PROTECTED` is the only one of the two that
+    can stop a commit. When they disagree, the gate prints PROTECTED_OK on a change
+    the rulebook forbids -- and the disagreement is invisible from either side.
+
+    NOT HYPOTHETICAL, and it was not caught by a check. On flagpole, section 5 named
+    `app/rollout.py` as a security invariant while the guard's project list was still
+    entirely commented out. `archon-plan` refused an issue over it. A planner reading
+    the prose is the wrong last line of defence, so this makes it mechanical.
+
+    Only tokens the rules give as real paths are checked. Placeholder spans -- the
+    shipped `<Dockerfiles, deploy/, ...>` an operator has not filled in yet -- are
+    dropped, because an unfilled template is an incomplete setup and not a
+    contradiction, and reporting it as one trains people to ignore the check.
+
+    A PATH IS CLAIMED ON ITS CATEGORY'S ENTRY LINE -- the `**Label:** ...` block, up to
+    the first blank line. Everything after that blank line is commentary and is NOT
+    read as a claim. That rule is not parser convenience: section 5 is also where you
+    explain what is deliberately NOT protected and why, and the first version of this
+    check read flagpole's "`app/server.py` is deliberately NOT protected" paragraph as
+    a demand that server.py be protected. A check that punishes writing down the
+    reasoning is a check that deletes the reasoning.
+    """
+    rules = config.ROOT / "FACTORY_RULES.md"
+    if not rules.is_file():
+        return (WARN, "rules vs guard", "no FACTORY_RULES.md to cross-check", 99)
+    text = rules.read_text(encoding="utf-8", errors="replace")
+    section = re.search(r"^##\s*5\.[^\n]*\n(.*?)(?=^##\s|\Z)", text, re.S | re.M)
+    if not section:
+        return (WARN, "rules vs guard",
+                "FACTORY_RULES.md has no section 5 to cross-check", 99)
+    body = re.sub(r"<[^<>]*>", " ", section.group(1), flags=re.S)
+    claims = " ".join(re.findall(r"^\*\*[^*\n]+\*\*.*?(?=\n\s*\n|\Z)", body, re.S | re.M))
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import guard  # noqa: PLC0415
+
+    uncovered = []
+    for token in re.findall(r"`([^`\n]+)`", claims):
+        token = token.strip().strip(",")
+        if not _looks_like_path(token, config.ROOT):
+            continue
+        if not guard.matches(_sample_path(token), guard.PROTECTED):
+            uncovered.append(token)
+    if uncovered:
+        return (FAIL, "rules vs guard",
+                f"FACTORY_RULES section 5 protects {', '.join(sorted(set(uncovered)))} "
+                "and the guard does not -- add them to config.PROTECTED_EXTRA, or stop "
+                "claiming them in the rules. Prose the gate cannot enforce is not a gate",
+                3)
+    return (OK, "rules vs guard", "every path section 5 protects is on the guard's list")
+
+
 def main(argv: list[str]) -> int:
     want = None
     if "--level" in argv:
@@ -353,6 +428,8 @@ def main(argv: list[str]) -> int:
         ("tripwire", root / "factory" / "tripwire.py", 3),
     ):
         r.add(OK if has(path) else FAIL, name, "" if has(path) else "missing", level)
+
+    r.add(*_rules_match_guard())
 
     if config.MARKER_APP_RAN in config.REQUIRED_MARKERS and config.MARKER_E2E in config.REQUIRED_MARKERS:
         r.add(OK, "required markers", " ".join(config.REQUIRED_MARKERS))

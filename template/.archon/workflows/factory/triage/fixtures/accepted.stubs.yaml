@@ -1,0 +1,16 @@
+# The ordinary path: the issue is not rate-limited, the classifier accepts it, and
+# the script applies the disposition. Proves the flood gate lets a normal issue
+# through and that `apply` binds a real classifier output rather than its fallback.
+resolve: '{"target":"gh:issue:12","number":"12"}'
+flood: '{"rate_limited":false,"reason":""}'
+context: "stub: issue body, MISSION.md and FACTORY_RULES.md gathered"
+classify:
+  disposition: accepted
+  priority: medium
+  area: api
+  note: "stub: in scope, small, and the acceptance criteria are checkable"
+  rules_cited: ["MISSION out-of-scope", "FACTORY_RULES 2"]
+apply: "gh:issue:12 -> factory:accepted"
+fixture:
+  expect: completed
+  reached: [classify, apply]

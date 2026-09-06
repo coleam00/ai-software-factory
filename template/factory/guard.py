@@ -61,29 +61,39 @@ PROTECTED = [
     ".github/**",
     # Secrets. Being unable to EDIT one does not stop a broad `git add` from
     # publishing one that appears for the first time -- see preflight() below.
-    ".env",
-    ".env.*",
+    # `.env*`, not `.env` plus `.env.*`. FACTORY_RULES section 5 claims `.env*` and
+    # the two-pattern form does not cover `.envrc`, `.envlocal` or `.env-prod` -- all
+    # of which hold exactly what the rule is about. Found by the doctor's rules-vs-guard
+    # cross-check on its first run, in the list it was written to audit somebody else's
+    # copy of.
+    ".env*",
     "*.local",
     "*credential*",
     "*secret*",
     "*.pem",
 ]
 
-# ADD ANYTHING WITH A BLAST RADIUS YOU CANNOT ABSORB. Auth modules, rate-limit
-# constants, payment code, migrations, Dockerfiles, deploy/ and infra/.
-# `factory init` seeds this from what it found in your repo; add the rest.
-PROTECTED += [
-    # "deploy/**", "infra/**",
-    # "Dockerfile", "docker-compose*.yml",
-    # "app/auth/**",
-]
+# THE PROJECT'S OWN ADDITIONS COME FROM config.py, AND THAT IS NOT TIDINESS.
+#
+# They used to be a `PROTECTED +=` literal right here. `bin/sync-to.py` syncs
+# `factory/` wholesale as machinery, so the first sync after an operator added a path
+# DELETED it -- and the failure is entirely silent: the guard still runs, still finds
+# no violation, still prints PROTECTED_OK, and the paths it was told to defend are
+# simply not on the list any more. Reproduced on flagpole, on `app/rollout.py`, hours
+# after a planner refused to build until that exact gap was closed.
+#
+# `factory/config.py` is on the sync's NEVER list. Anything an operator edits belongs
+# there, and the rule generalises: a synced file must contain no list a human is
+# invited to change.
+#
+# READ WITHOUT A DEFAULT, deliberately. An install whose config.py predates these
+# settings raises AttributeError and the guard -- a required check -- fails closed and
+# loudly. `sync-to.py` prints the settings to paste. A `getattr(config, ..., [])`
+# would substitute an empty list and print PROTECTED_OK, which is the same silent hole
+# this move exists to close, reintroduced by the fix for it.
+PROTECTED += config.PROTECTED_EXTRA
 
-# Optional: a whole file category banned by extension rather than by intent, for the
-# case where a mission says "no imported assets" or "no vendored binaries". Checked
-# by extension because "just one placeholder" is how the exception becomes the rule.
-BANNED_CATEGORIES: list[str] = [
-    # "*.png", "*.jpg", "*.wav", "*.mp3", "*.ttf",
-]
+BANNED_CATEGORIES: list[str] = config.BANNED_CATEGORIES
 
 SIZE_EXEMPT = [".factory/runs/*", ".factory/runs/**", "*.lock", "uv.lock", "bun.lockb"]
 
@@ -92,7 +102,8 @@ SIZE_EXEMPT = [".factory/runs/*", ".factory/runs/**", "*.lock", "uv.lock", "bun.
 # tests/ does not ship to the running product, so it cannot carry the risk the cap is
 # guarding against, and TOTAL_CAP still bounds the whole diff.
 TEST_PATHS = ["tests/*", "tests/**", "*.test.ts", "*.test.js", "*.spec.ts", "*.spec.js",
-              "**/*.test.ts", "**/*.test.js", "**/*.spec.ts", "**/*.spec.js"]
+              "**/*.test.ts", "**/*.test.js", "**/*.spec.ts", "**/*.spec.js",
+              *config.TEST_PATHS_EXTRA]
 
 
 def git(*args: str) -> tuple[int, str]:

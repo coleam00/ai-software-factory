@@ -115,6 +115,26 @@ should read it, because it is the file the whole auto-merge rests on.
 
 **`harness/harness.config.json`** from answer 4.
 
+**`FACTORY_RULES.md` section 5 and `factory/config.py`'s `PROTECTED_EXTRA`, together
+and in the same pass.** They are one fact written twice and `factory doctor` fails when
+they disagree: section 5 is what the planner and the judge read, `PROTECTED_EXTRA` is
+the only half that can stop a commit.
+
+Replace section 5's `<angle-bracket>` spans with the real paths you found while reading
+the repo -- the auth module, the rate-limit constant AND the code that enforces it,
+payment paths, migrations, Dockerfiles, `deploy/`, `infra/` -- and put the same patterns
+in `PROTECTED_EXTRA`. Name what carries a blast radius the project cannot absorb, not
+everything that looks important; over-protecting means every ordinary issue auto-rejects.
+
+Two things to get right, both of them paid for:
+
+- A glob cannot express a REGION of a file. "the branch in `server.py` that consumes
+  the rollout" is not enforceable, so it is not a rule -- protect the module that owns
+  the decision instead, and say in the commentary what is deliberately left open.
+- Anything the operator edits goes in `config.py`. It is the one file `bin/sync-to.py`
+  will not overwrite; a list added anywhere else in `factory/` is deleted by the next
+  sync with every check still green.
+
 ## Finish
 
 ```bash

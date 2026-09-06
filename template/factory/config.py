@@ -327,6 +327,51 @@ TOTAL_CAP = _env_int("FACTORY_TOTAL_CAP", 1500)
 # while staying well under the line cap the whole way. Set to 0 to disable.
 FILE_CAP = _env_int("FACTORY_FILE_CAP", 12)
 
+# --- what THIS project protects -----------------------------------------------
+# ADD ANYTHING WITH A BLAST RADIUS YOU CANNOT ABSORB. Auth modules, rate-limit
+# constants and their enforcement path, payment code, migrations, Dockerfiles,
+# deploy/ and infra/. Everything the factory protects in EVERY repo -- governance,
+# the machinery, the harness, the locks, the holdout, secrets -- is already in
+# `guard.PROTECTED` and is not your problem.
+#
+# THIS LIST AND FACTORY_RULES SECTION 5 ARE ONE FACT WRITTEN TWICE, so `doctor`
+# checks they agree. Section 5 is what the planner and the judge read; this is what
+# the gate can actually enforce, and a path named only in the prose is a rule the
+# gate prints PROTECTED_OK straight through.
+#
+# IT LIVES HERE RATHER THAN IN guard.py, AND THAT MOVE WAS PAID FOR. It used to be a
+# `PROTECTED +=` block inside `factory/guard.py`, which `bin/sync-to.py` overwrites as
+# machinery -- so the first sync after an operator added a path deleted it, the guard
+# went on printing PROTECTED_OK, and nothing anywhere went red. Reproduced on flagpole
+# with `app/rollout.py`, a path a planner had found missing hours earlier. Anything an
+# operator edits belongs in the one file the sync will not touch.
+#
+# Glob patterns, matched against repo-relative paths with fnmatch. `**` for a subtree.
+PROTECTED_EXTRA: list[str] = [
+    # "app/auth/**",
+    # "app/rate_limit.py",
+    # "deploy/**", "infra/**",
+    # "Dockerfile", "docker-compose*.yml",
+    # "migrations/**",
+]
+
+# Optional: a whole file category banned by extension rather than by intent, for the
+# case where a mission says "no imported assets" or "no vendored binaries". Checked
+# by extension because "just one placeholder" is how the exception becomes the rule.
+BANNED_CATEGORIES: list[str] = [
+    # "*.png", "*.jpg", "*.wav", "*.mp3", "*.ttf",
+]
+
+# WHERE THIS PROJECT'S TESTS LIVE, because the size cap counts production lines and
+# not tests, and "a test" is spelled differently in every language. The shipped list
+# covers `tests/` and the JS/TS suffixes; a Go repo needs `*_test.go`, a Rust one
+# `**/tests/**`, a Java one `src/test/**`. Get this wrong and the cap taxes the one
+# behaviour the whole system exists to encourage.
+TEST_PATHS_EXTRA: list[str] = [
+    # "*_test.go", "**/*_test.go",
+    # "src/test/**",
+]
+
 # --- paths --------------------------------------------------------------------
 # The holdout: assertions the builder is blocked from READING, not merely from
 # editing. Enforced with the agent's own deny list, because a sentence in a prompt

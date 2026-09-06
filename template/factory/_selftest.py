@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 import tempfile
@@ -1366,6 +1367,81 @@ def clean_tree_is_not_empty_work_checks() -> None:
             )
 
 
+def operator_settings_live_in_config_checks() -> None:
+    """A list a human is invited to edit must live in the ONE file the sync will not
+    overwrite.
+
+    THE INCIDENT, AND IT WAS SILENT IN BOTH DIRECTIONS. The per-project protected-path
+    list was a `PROTECTED +=` block inside `factory/guard.py`. `bin/sync-to.py` copies
+    `factory/` wholesale as machinery, so the first sync after an operator added a path
+    DELETED it. Nothing went red: the guard still ran, still found no violation, still
+    printed `PROTECTED_OK`. Reproduced on flagpole against `app/rollout.py` -- a path a
+    planner had refused to build until it was added, removed again hours later by a
+    routine `sync-to.py` and observed only because the diff happened to be read.
+
+    Then the fix reproduced the same shape one level up: the new settings were declared
+    as `NAME: list[str] = []`, `sync-to.py`'s missing-settings walker matched only
+    `ast.Assign`, and it reported nothing missing while the synced guard raised
+    AttributeError on the next run.
+
+    Two mechanical invariants, because the class is "an edit that vanishes quietly":
+
+      1. NO SYNCED MODULE INVITES AN EDIT. A comment line made of nothing but quoted
+         strings is a commented-out list entry, which is how this template says "add
+         yours here". Only `config.py` -- the sync's NEVER list -- may contain one.
+      2. THE GUARD SOURCES ITS PROJECT LISTS FROM CONFIG, by attribute and with no
+         `getattr` default. A default would substitute an empty list on a stale install
+         and print `PROTECTED_OK`, which is the original silent hole restored by the
+         fix for it.
+    """
+    here = Path(__file__).resolve().parent
+    invite = re.compile(r'^\s+#\s*"[^"]*"(?:\s*,\s*"[^"]*")*\s*,?\s*$')
+    for module in sorted(here.glob("*.py")):
+        if module.name == "config.py":
+            continue
+        offenders = [
+            n for n, line in enumerate(module.read_text(encoding="utf-8",
+                                                        errors="replace").splitlines(), 1)
+            if invite.match(line)
+        ]
+        check(
+            "operator-editable list outside config.py: " + module.name,
+            not offenders,
+            "lines " + ",".join(str(n) for n in offenders) + " read as commented-out list "
+            "entries, i.e. an invitation to edit a file bin/sync-to.py overwrites. Move the "
+            "list to config.py, which the sync never touches",
+        )
+
+    guard_src = (here / "guard.py").read_text(encoding="utf-8", errors="replace")
+    for setting in ("PROTECTED_EXTRA", "BANNED_CATEGORIES", "TEST_PATHS_EXTRA"):
+        check(
+            "guard reads config." + setting,
+            "config." + setting in guard_src,
+            "the per-project list must come from config.py or the next sync deletes it",
+        )
+    # CODE ONLY. The first version scanned the raw text and failed on the comment
+    # ABOVE the assignment, which exists to explain why `getattr` is wrong -- a check
+    # that punishes writing down its own reasoning, and the second one of those in this
+    # sweep. A string-scan invariant has to be told what a comment is.
+    guard_code = "\n".join(
+        line.split("#", 1)[0] for line in guard_src.splitlines()
+    )
+    check(
+        "guard does not default its project lists away",
+        "getattr(config" not in guard_code,
+        "a getattr default turns a stale install into a silently unprotected one -- "
+        "AttributeError is the correct failure here",
+    )
+
+    cfg_src = (here / "config.py").read_text(encoding="utf-8", errors="replace")
+    for setting in ("PROTECTED_EXTRA", "BANNED_CATEGORIES", "TEST_PATHS_EXTRA"):
+        check(
+            "config declares " + setting,
+            re.search(r"^" + setting + r"\s*(:|=)", cfg_src, re.M) is not None,
+            "guard.py reads it at import, so a missing declaration breaks every gate",
+        )
+
+
 def main() -> int:
     quiet = "--quiet" in sys.argv
     # POINT THE LEDGER SOMEWHERE HARMLESS FOR THE WHOLE RUN, before any check fires.
@@ -1399,6 +1475,7 @@ def main() -> int:
     gh_retry_checks()
     undefined_module_checks()
     clean_tree_is_not_empty_work_checks()
+    operator_settings_live_in_config_checks()
 
     if FAILURES:
         if not quiet:

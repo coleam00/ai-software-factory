@@ -90,6 +90,21 @@ def missing_settings(dest: Path) -> list[tuple[str, str]]:
                 for tgt in node.targets:
                     if isinstance(tgt, _ast.Name) and tgt.id.isupper():
                         out[tgt.id] = _ast.unparse(node)
+            # ANNOTATED ASSIGNMENTS ARE ASSIGNMENTS. `X: list[str] = []` parses as
+            # AnnAssign, not Assign, so a walker that matches only Assign silently
+            # skips every setting that carries a type -- and skipping is indis-
+            # tinguishable from "already present" downstream, which is precisely
+            # the silence this function exists to break.
+            #
+            # Measured: PROTECTED_EXTRA, BANNED_CATEGORIES and TEST_PATHS_EXTRA were
+            # added to the template, synced into a live repo, and reported as nothing
+            # missing. The guard then died with AttributeError on the next run, which
+            # is the failure named in this function's own docstring, reproduced by the
+            # function meant to prevent it.
+            elif isinstance(node, _ast.AnnAssign):
+                tgt = node.target
+                if isinstance(tgt, _ast.Name) and tgt.id.isupper():
+                    out[tgt.id] = _ast.unparse(node)
             # THE HELPERS TOO. The first version reported only the constant, so the
             # instruction was to paste `BASE_BRANCH = _base_branch()` into a file with
             # no `_base_branch` in it -- a fix that produces a NameError instead of an
