@@ -1,7 +1,8 @@
 name: factory-regress
 description: |
-  Run the full gate against main on a schedule, and file an issue for anything that
-  broke. This is the node that closes the self-healing loop.
+  Run the full gate against main on a schedule, root-cause anything that broke with
+  Archon's investigator, and file an issue for it. This is the node that closes the
+  self-healing loop.
 
   Use when: the weekly trigger fires, or after N merges. By hand:
     archon workflow run factory-regress --branch factory/regress "regress"
@@ -11,9 +12,9 @@ description: |
   WHY THIS EXISTS -- the loop that closes without a human noticing first
   =====================================================================
 
-  regression finds a break in merged code -> files an issue with evidence ->
-  triage accepts it -> implement opens a PR -> validate holds it out -> merge.
-  No human in the loop unless all of that fails.
+  regression finds a break in merged code -> roots the cause -> files an issue with
+  evidence -> triage accepts it -> implement opens a PR -> validate holds it out ->
+  merge. No human in the loop unless all of that fails.
 
   Per-PR validation only ever sees one branch at a time. The failures it cannot see
   are the ones that need two merges to appear: two changes that are individually

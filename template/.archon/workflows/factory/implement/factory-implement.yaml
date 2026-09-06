@@ -1,7 +1,9 @@
 name: factory-implement
 description: |
-  Take ONE accepted issue from the queue to an open pull request: prime, plan,
-  implement, review, open. This is the PIV loop with the approvals removed.
+  Take ONE accepted issue from the queue to an open pull request: plan, implement,
+  commit, guard, self-check, review, open. This is the PIV loop with the approvals
+  removed, and the plan, implement and review steps are Archon's sdlc pack rather
+  than prompts this factory carries.
 
   Use when: the dispatcher finds an issue labelled factory:accepted. By hand:
     archon workflow run factory-implement --branch factory/impl-12 "implement gh:issue:12"
