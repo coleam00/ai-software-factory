@@ -1522,3 +1522,80 @@ hold them.
 **Worth noting where this came from.** Nothing broke. The factory behaved exactly as
 designed, the monitor reported it exactly as designed, and the design was wrong. The
 only reason it surfaced was an alert firing on a machine nobody was watching.
+
+## A routine sync deleted the protected-path list, and every check stayed green
+
+`archon-plan` refused to plan flagpole's issue #3. One of its two reasons was that
+`FACTORY_RULES` section 5 named `app/rollout.py` -- the bucketing rules, the whole
+security surface of that app -- as protected while `guard.py`'s project list held
+neither it nor anything else. The gate would have printed `PROTECTED_OK` on a change
+the rulebook forbade. The path was added, the planner returned ready, and the lap
+completed.
+
+The next `bin/sync-to.py` deleted it again. `factory/` is on the sync's list of
+machinery -- "the same in every factory and therefore safe to overwrite" -- and the
+per-project `PROTECTED +=` block was sitting inside `factory/guard.py`. Nothing went
+red. The guard still ran, still found no violation, still printed the marker.
+
+**The same defect was live in the other factory the whole time.** snip's section 5
+named `app/shortener.py` (the scheme allowlist and `RESERVED_SLUGS`) and its guard
+list was still the shipped template's commented-out placeholder, through five
+auto-merged pull requests. None of the five happened to touch the file. That is luck,
+not a control.
+
+The lists moved to `factory/config.py`, which the sync will not overwrite, and the
+guard reads them by attribute with **no `getattr` default** -- a default would
+substitute an empty list on a stale install and print `PROTECTED_OK`, which is the
+original hole restored by the fix for it. Three checks came out of it, each proven to
+go red when the shape returns: the doctor cross-checks section 5 against the guard's
+patterns, the self-test refuses an operator-editable list in any synced module, and
+`sync-to.py` reports the settings an install is missing.
+
+**Three separate near-misses in one chain, and only the first was found by a check.**
+The planner found the original gap by reading two files and noticing they disagreed.
+The sync deleting it was found because the diff happened to be read. The
+missing-settings reporter that should have caught the third -- it exists, with a
+docstring describing this exact failure -- matched only `ast.Assign` and silently
+skipped every annotated declaration, so it reported nothing missing while the guard
+raised `AttributeError` on the next run.
+
+**And the first version of the new doctor check punished writing down the reasoning.**
+Section 5 is also where you record what is deliberately NOT protected: snip and
+flagpole both explain, in prose, why a *region* of `server.py` cannot be a rule. The
+check read those disclaimers as demands. It now reads only the `**Category:**` entry
+lines, and prose after a blank line is commentary. The second string-scan check in the
+same sweep failed the same way -- on the comment above the assignment explaining why
+`getattr` is wrong.
+
+## The pack shipped 48 dry-run fixtures and this factory used none of them
+
+Every composition failure in this repo was found the expensive way: dispatch a lap,
+spend a premium plan node, read a log. An input that had to arrive as a node reference
+rather than a literal. An output nobody declared. A consumer bound to a producer that
+skipped. None of them are visible by reading the YAML, and all of them are load-time
+or first-node failures.
+
+`archon workflow test` executes the real DAG with the AI nodes stubbed -- `when:`
+conditions, trigger rules, `if_skipped` defaults, cancel nodes, and the namespaced
+nodes an `include:` expands into -- with no provider call and no GitHub call. The
+`sdlc` pack carries 48 of these. This pack carried zero. Eleven now cover the five
+workflows and run in under two seconds.
+
+Each was mutation-tested against the workflow it covers, because a fixture that has
+never been shown to fail is a fixture that proves nothing. Removing `trigger_rule:
+all_done` from triage's `apply` fails it; so does removing `if_skipped` from the
+decision binding. Either would have meant every rate-limited issue silently staying
+untriaged forever.
+
+**A fixture cannot test the node it stubs, and that limit has a shape.** Severing
+`plan_ready: "$plan.output.ready"` -- the single wire carrying `archon-plan`'s refusal
+into this workflow, since the pack writes no ESCALATE sentinel -- changed nothing in
+the fixture, because the fixture stubs `gate-plan`'s output directly. An unbound input
+is the empty string and these scripts read empty as "nothing to act on", so cutting
+that wire does not break the gate, it opens it. `bin/audit.py` now checks that every
+`INPUTS_` a workflow script reads is bound by a node that runs it, which does catch it.
+
+**A fixture is YAML inside the pack, so every scan that globbed the tree started
+reading test data as workflows.** The node-output check failed on a reference quoted in
+a fixture *comment*, and the doctor cheerfully reported nine workflows in a pack of
+five.

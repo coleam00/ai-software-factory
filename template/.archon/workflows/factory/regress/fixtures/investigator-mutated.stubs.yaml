@@ -1,0 +1,28 @@
+# THE INVESTIGATOR TOUCHED THE TREE, AND NOTHING GETS FILED.
+#
+# `archon-investigate` declares `mutates_checkout: false`, which Archon enforces: it
+# snapshots the working tree, and a node that changes anything outside the run's own
+# artifact and state directories is failed with the paths named. That is the pack's
+# choice, not this factory's, and adopting it means adopting this failure mode too.
+#
+# It is a REAL RISK here rather than a theoretical one: this node is granted a shell
+# precisely so it can reproduce the failure, and reproducing a failure is how a stray
+# file gets written. So this fixture pins what happens next, because the answer has to
+# be the safe one.
+#
+# `file-issues` still runs -- `trigger_rule: all_done` plus `if_skipped` on the
+# diagnosis binding -- and files NOTHING, because a skipped diagnosis is not evidence.
+# The run is FAILED, which is loud, and a factory that stayed quiet here would be worse:
+# quiet means the weekly regression looks like it passed.
+#
+# `investigate__investigate` carries no stub, which is how a fixture says "this node
+# died". `diagnose` depends on it, so it is skipped rather than failed, and that
+# distinction is the whole reason the binding resolves at all -- a binding never falls
+# back to `if_skipped` for a FAILED producer.
+sync: '{"sha":"abcdef0123456789abcdef0123456789abcdef01","subject":"feat: sort enabled flags first"}'
+suite: '{"green":false,"harness_ran":true,"failed_step":"holdout","summary":"2 of 3 holdout scenarios failed"}'
+file-issues: "the investigation did not complete; 0 issues filed"
+fixture:
+  expect: failed
+  fail-node: investigate__investigate
+  reached: [file-issues]

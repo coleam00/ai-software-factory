@@ -22,6 +22,13 @@ description: |
 
 model: medium
 
+# EVERY ONE OF THESE WORKFLOWS TALKS TO GITHUB, so say so. Archon hard-blocks a run at
+# invocation -- before a worktree, a clone or a single token -- when the originating
+# user has no GitHub identity connected. On a solo PAT install it is a no-op; on a
+# shared one it turns "the label never moved and nobody knows why" into a refusal with
+# a reason, which is the difference between a dead lap and an answer.
+requires: [github]
+
 inputs:
   target:
     default: ""
@@ -300,6 +307,18 @@ nodes:
     command: pr-record
     model: medium
     context: fresh
+    # ENGINE-ENFORCED, and this one has teeth. The pack's advisory nodes carry the same
+    # declaration and it is the reason `archon-plan` cannot quietly edit the repository
+    # while planning it: the engine snapshots the working tree and fails the node,
+    # naming the paths, if anything outside the run's own artifact/state/log directories
+    # moved.
+    #
+    # It matters HERE because of where this node sits -- after `commit`, before
+    # `open-pr`. Anything it writes is not in the commit and is not in the PR, but it IS
+    # in the tree the push runs against, so a stray file turns a green lap into a dirty
+    # push nobody asked for. This node reads $ARTIFACTS_DIR and writes $ARTIFACTS_DIR;
+    # now the engine agrees rather than the prompt asking nicely.
+    mutates_checkout: false
     depends_on: [review]
     allowed_tools: [Read, Glob, Grep, Write]
     denied_tools: ["Read(.factory/holdout/**)", "Glob(.factory/holdout/**)", "Grep(.factory/holdout/**)"]

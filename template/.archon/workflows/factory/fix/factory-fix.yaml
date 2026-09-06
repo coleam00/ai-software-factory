@@ -21,6 +21,13 @@ description: |
 
 model: medium
 
+# EVERY ONE OF THESE WORKFLOWS TALKS TO GITHUB, so say so. Archon hard-blocks a run at
+# invocation -- before a worktree, a clone or a single token -- when the originating
+# user has no GitHub identity connected. On a solo PAT install it is a no-op; on a
+# shared one it turns "the label never moved and nobody knows why" into a refusal with
+# a reason, which is the difference between a dead lap and an answer.
+requires: [github]
+
 inputs:
   target:
     default: ""

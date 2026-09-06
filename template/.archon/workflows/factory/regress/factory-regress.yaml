@@ -34,6 +34,13 @@ description: |
 
 model: medium
 
+# EVERY ONE OF THESE WORKFLOWS TALKS TO GITHUB, so say so. Archon hard-blocks a run at
+# invocation -- before a worktree, a clone or a single token -- when the originating
+# user has no GitHub identity connected. On a solo PAT install it is a no-op; on a
+# shared one it turns "the label never moved and nobody knows why" into a refusal with
+# a reason, which is the difference between a dead lap and an answer.
+requires: [github]
+
 inputs:
   scope:
     default: ""
@@ -75,10 +82,62 @@ nodes:
 
   # Only when the harness genuinely ran AND went red. A skipped harness is an infra
   # failure, and turning that into "product bugs" is how a backlog fills with fiction.
+  # --- ROOT CAUSE, BY ARCHON'S INVESTIGATOR -------------------------------
+  # `archon-investigate` is the pack's diagnosis primitive: it establishes a PROVEN
+  # causal chain to the root cause whose fix prevents the symptom -- explicitly not the
+  # first plausible explanation -- reproduces it, and writes an evidence-backed report.
+  # It returns `rooted`, and `rooted: false` with the gaps named honestly is a valid
+  # completion rather than a failure.
+  #
+  # WHY IT SITS IN FRONT OF `diagnose` RATHER THAN REPLACING IT. The two do different
+  # jobs. Investigation produces ONE causal chain in prose; this workflow has to produce
+  # N issues with a title, a severity, an area and a body, structured enough for a
+  # script to open them and for triage to accept them. Parsing that back out of a
+  # report is exactly the fragility the declared `output_format` below exists to avoid.
+  # So the pack roots the cause and `diagnose` writes the issues from its report --
+  # which is also the honest division: the expensive, easy-to-get-wrong half is the one
+  # the factory no longer writes a prompt for.
+  #
+  # IT IS ADVISORY AND THE ENGINE ENFORCES THAT. The node declares
+  # `mutates_checkout: false` inside the pack, so a run that reproduces the failure by
+  # editing main fails, names the paths, and files NOTHING. That is the right failure:
+  # loud and empty beats quiet and wrong, and this workflow's whole discipline is that
+  # it never files an issue it cannot prove.
+  - id: investigate
+    include: archon-investigate
+    depends_on: [suite]
+    when: "$suite.output.green == false"
+    # NOT REDUNDANT, for the same reason as `diagnose` below: whatever this writes ends
+    # up quoted in an issue body that a builder reads later. An investigator that can
+    # read .factory/holdout/ can carry an assertion across the wall by a route nobody
+    # is watching, with every check still green.
+    denied_tools:
+      - "Read(.factory/holdout/**)"
+      - "Glob(.factory/holdout/**)"
+      - "Grep(.factory/holdout/**)"
+      - "Bash(gh:*)"
+    with:
+      target: >-
+        The scheduled gate ran against the default branch and went red. The full
+        output is $ARTIFACTS_DIR/regress.log -- read it first. Establish what actually
+        broke and why, to the cause whose fix prevents the symptom. `MISSION.md` in the repository root
+        says what this software is for, which is how you tell a product defect from a
+        harness that failed to run: a dependency that would not install, a port already
+        in use, a checkout that did not complete or a missing environment variable are
+        real problems and are NOT defects in this code. Say so plainly when that is what
+        you find, rather than rooting a cause in software that never ran.
+
+  # Turn the investigator's causal chain into ISSUES. This node no longer does the
+  # detective work -- it does the filing, which is the part that has to be structured.
   - id: diagnose
     command: diagnose
     context: fresh
-    depends_on: [suite]
+    depends_on: [investigate]
+    # `rooted: false` is a valid completion and STILL WORTH FILING. An inconclusive
+    # investigation with the gaps named is a better issue than no issue at all, and the
+    # `infrastructure_failure` gate below is what decides whether anything is filed.
+    # Gating this on `rooted` would silently drop every regression whose cause was hard,
+    # which is the set you most want a human to see.
     when: "$suite.output.green == false"
     # PROVEN BY PROBE, in both directions, before being believed:
     #   allowed_tools: ["Bash(python:*)"]   grants NOTHING -- the node has NO shell.

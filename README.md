@@ -177,6 +177,47 @@ These are not.
 
 ---
 
+## Where the AI steps come from
+
+The factory writes almost none of them. Planning, building, reviewing and
+root-causing are Archon's `sdlc` pack -- the same workflows Archon itself develops
+with -- composed in by `include:` and shipped inside the engine binary, so there is
+nothing to install and nothing to keep in sync.
+
+| Step | What runs | Why not ours |
+|---|---|---|
+| plan | `archon-plan` | Grounds itself against the repo, writes `plan.md`, returns `ready`, and refuses to mutate the checkout while planning. It replaced a prompt *and* the `prime` node that fed it. |
+| implement | `archon-implement` | Loops until done (max 5), returns `{done, green, red_cause}`, and ends in a deterministic guard that fails a node which declined its task. Our one-shot had none of the three. |
+| fix | `archon-implement` | Addressing findings *is* implementing. A second, weaker prompt meant the correction path had no loop and no green verdict while the build path had both. |
+| review | `archon-review` | Six parallel lenses -- code, seams, simplify, tests, errors, docs -- each finding carrying the lens that raised it. On one real PR the tests lens copied the app to a scratch directory, reordered the change, and proved a new test could not fail. |
+| root cause | `archon-investigate` | Establishes a *proven* causal chain rather than the first plausible explanation, and the engine fails it if it edits the repository while investigating. |
+
+Four prompts were deleted outright when these landed. What the factory still owns is
+the part the pack has no opinion about: the state machine, the guard, the gate, the
+merge, the holdout, the ratchet, and the scripts between the AI steps.
+
+**The composition is only safe because of the deny list.** Every node the pack expands
+into grants `Read`, and none of them knows this factory has a holdout. `include:`
+unions `denied_tools` onto every expanded node, so the wall survives a block somebody
+else wrote -- 16 AI nodes across the five workflows, all walled or tool-sealed. That
+primitive did not exist; it was contributed upstream for this. `factory doctor`
+therefore asks the *engine* whether it kept the field rather than trusting a version
+string, and blocks the dial when it did not.
+
+**Two commands, no model calls:**
+
+```bash
+archon workflow test factory     # 11 dry-run fixtures, the real DAG, ~2 seconds
+python factory/doctor.py         # runs them, and 30 other checks
+```
+
+A fixture executes the actual graph with the AI nodes stubbed -- `when:` conditions,
+trigger rules, `if_skipped` defaults, cancel nodes, and the namespaced nodes an
+`include:` expands into. That is the layer where composing somebody else's workflow
+goes wrong, and none of it is visible by reading the YAML.
+
+---
+
 ## Commands
 
 ```bash
@@ -240,7 +281,7 @@ template/            what init copies in
   factory/           the runtime: dispatcher, state machine, guard, gate, merge
   factory/_selftest.py  the harness for that runtime, run by doctor
   harness/           the gate ladder, the mutation runner, END-TO-END.md
-  .archon/workflows/ the five workflows and their prompts
+  .archon/workflows/ the five workflows, their prompts, and their dry-run fixtures
   .claude/skills/    the same loop, by hand
 docs/first-hour.md   what to do after init, in order
 docs/incidents.md    every way this has been wrong, and the mechanism each time
