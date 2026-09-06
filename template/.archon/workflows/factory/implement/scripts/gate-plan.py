@@ -44,6 +44,7 @@ sys.path.insert(0, str(Path.cwd() / "factory"))
 from nodeio import emit, note  # noqa: E402
 
 import config  # noqa: E402
+import gate  # noqa: E402
 import notify  # noqa: E402
 import state  # noqa: E402
 
@@ -58,6 +59,33 @@ def read(name: str) -> str:
 
 plan = read("plan.md")
 escalate = read("ESCALATE")
+
+# THE PACK'S OWN REFUSAL, which is now the primary one. The planner is Archon's
+# `archon-plan`; it returns `ready` and writes no ESCALATE sentinel, so treating a
+# missing sentinel as consent would silently discard every refusal it makes. The
+# sentinel is still read above because a REWRITTEN planner -- this prompt is the
+# personalisation layer -- may still use it, and losing that would be the same bug in
+# the other direction.
+#
+# Anything that is not an explicit "true" is a refusal. An unset binding, an empty
+# string or a malformed value all mean the same thing here: nobody said it was ready,
+# and this is the last gate before an unattended build starts spending.
+plan_ready = (os.environ.get("INPUTS_PLAN_READY") or "").strip().lower()
+if plan_ready and plan_ready != "true":
+    note("PLAN_NOT_READY: archon-plan returned ready=" + plan_ready)
+    try:
+        state.main(["set", target, "state=needs-human"])
+    except Exception:  # noqa: BLE001
+        note("  (could not park " + target + " at needs-human)")
+    try:
+        notify.send(
+            "plan not ready: " + target,
+            "archon-plan declined to plan this as specified. Read plan.md on the run.",
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    emit({"proceed": False, "reason": "archon-plan returned ready=" + plan_ready})
+    sys.exit(0)
 assumptions = read("ASSUMPTIONS")
 followup = read("FOLLOWUP")
 
@@ -106,7 +134,12 @@ if assumptions:
     config.ASSUMPTIONS_DIR.mkdir(parents=True, exist_ok=True)
     dest = config.ASSUMPTIONS_DIR / f"{target.replace(':', '-')}.txt"
     dest.write_text(assumptions, encoding="utf-8")
-    n = len([ln for ln in assumptions.splitlines() if ln.strip()])
+    # COUNT ASSUMPTIONS, NOT LINES -- the identical bug gate.py already documents
+    # fixing. The format is one KEY=value followed by an indented WHY paragraph, so
+    # non-blank lines over-report by roughly the length of the reasoning: three real
+    # assumptions were announced here as 25. The number is the first thing a person
+    # reads, and one that inflates makes a reviewable hold look like a wall.
+    n = len(gate.assumption_keys(assumptions))
     note(f"ASSUMPTIONS_RECORDED {n} -> {dest} (the build continues; the MERGE will be held)")
     for line in assumptions.splitlines()[:20]:
         note(f"    {line}")

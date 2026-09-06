@@ -20,13 +20,14 @@ WHAT COUNTS AS AN ARTIFACT, and why the obvious answer is wrong
 =============================================================================
 
 The first version of this matched on filename alone -- `**/plan.md`,
-`**/investigation.md` -- and it fired on the very first real validation, against
-`.archon/workflows/factory/implement/commands/plan.md`.
+`**/investigation.md` -- and it fired on the very first real validation, against a
+`plan.md` that was one of the workflow's own checked-in PROMPTS.
 
-That file is the workflow's own PROMPT. It is checked into the repository, it is
-byte-identical in every worktree including main, and it says nothing whatsoever about
-how this particular branch was written. Blocking on it does not protect the holdout;
-it stops the factory.
+A prompt is byte-identical in every worktree including main, and it says nothing
+whatsoever about how this particular branch was written. Blocking on it does not
+protect the holdout; it stops the factory. (Those prompt files are gone -- the planner
+is Archon's `archon-plan` now -- but the lesson is about the MATCH, not about that one
+file, and any repository with a `plan.md` of its own re-creates it exactly.)
 
 The distinction that actually matters is not the NAME, it is the PROVENANCE:
 

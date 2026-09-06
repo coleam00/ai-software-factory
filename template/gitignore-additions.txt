@@ -10,6 +10,24 @@ __pycache__/
 *.pyc
 *.pyo
 
+# THE FACTORY'S OWN PYTHON ENVIRONMENT. Every script node declares `runtime: uv`, and
+# uv materialises a virtualenv and a lockfile in the checkout the first time one runs.
+# Same shape as the bytecode above, one level worse: the implement lap's `git add`
+# swept `uv.lock` into a commit that was supposed to be a one-line ORDER BY change, and
+# then the VALIDATOR could never run -- `prepare` checks out the PR branch, git refuses
+# to overwrite an untracked `uv.lock` with the branch's committed one, and the pull
+# request becomes permanently unvalidatable. It parks at needs-human, correctly, forever.
+#
+# Ignored files ARE overwritten by a checkout, which is why ignoring it is the fix and
+# not merely tidiness.
+#
+# IF YOUR PROJECT GENUINELY MANAGES ITS OWN DEPENDENCIES WITH UV, delete these two lines
+# and commit your lockfile -- it is yours, not the factory's, and pinning it is correct.
+# They are here because the common case is a repo that never chose uv and got one
+# because the runner did.
+.venv/
+uv.lock
+
 # factory: runtime state, never committed
 .factory/runs/
 .factory/ledger.jsonl

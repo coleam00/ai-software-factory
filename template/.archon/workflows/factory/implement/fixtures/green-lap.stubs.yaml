@@ -1,0 +1,65 @@
+# A LAP THAT GOES ALL THE WAY, with every AI node stubbed and every wire real.
+#
+# What this actually proves is the composition. Three of the thirteen nodes are
+# somebody else's workflow -- `archon-plan`, `archon-implement`, `archon-review` --
+# expanded into this DAG at load, and the seams between them and the factory's own
+# scripts are where every integration failure so far has lived: an input that had to
+# arrive as a node reference rather than a literal, an output nobody declared, a
+# consumer bound to a producer that skipped. None of those are visible by reading the
+# file, all of them are load-time or first-run failures, and before this fixture the
+# only way to find one was to spend a premium plan node and wait.
+#
+# `review-scope` emits BOTH `errors` and `docs` for a reason recorded in the workflow:
+# the pack's lens gates compare `$INPUTS.errors` against a string, and a literal makes
+# the condition unparseable at load. This fixture exercises the reference form.
+resolve: '{"target":"gh:issue:12","number":"12"}'
+preflight:
+  target: "gh:issue:12"
+  number: "12"
+  branch: "factory/impl-12"
+  title: "Show how many flags are enabled on the home page"
+  base: "main"
+  prior_attempt: ""
+
+plan__plan:
+  ready: true
+  summary: "stub: three tasks, all inside the mission"
+plan__assert-intact: '{"intact":"true"}'
+gate-plan: '{"proceed":true,"reason":"plan ready; 0 assumptions recorded"}'
+
+implement__record-start: '{"start":"recorded"}'
+implement__implement:
+  done: true
+  green: true
+  red_cause: ""
+  summary: "stub: implemented, quick gate green"
+implement__assert-changed: "2 files changed since the recorded start sha"
+
+commit: '{"sha":"0123456789abcdef0123456789abcdef01234567","files":2}'
+guard: "files=2 lines=34 code_lines=5 PROTECTED_OK"
+selfcheck: "GATE_OK mode=quick"
+
+review-scope: '{"errors":"true","docs":"auto"}'
+review__mode: '{"continuation":false}'
+review__scope: '{"docs":false}'
+review__code: "0 findings"
+review__seams: "0 findings"
+review__simplify: "0 findings"
+review__tests: "1 finding (important)"
+review__errors: "0 findings"
+review__review-complete: "settled"
+review__synthesize:
+  ready: true
+  action: none
+  findings_summary: "stub: one important tests finding, no blockers"
+
+pr-record: "wrote .factory/runs/pr-12.md"
+open-pr: '{"pr":"gh:pr:13","url":"https://github.com/example/repo/pull/13"}'
+
+fixture:
+  expect: completed
+  # `review__docs` is deliberately absent from both the stubs and this list: `docs`
+  # arrives as "auto" and `review__scope` reported no shipped documentation in the
+  # diff, so the pack's own gate must skip that lens. An unstubbed node that RAN would
+  # fail, which is what makes the omission an assertion rather than an oversight.
+  reached: [plan__plan, implement__implement, review__errors, review__synthesize, open-pr]

@@ -39,6 +39,13 @@ description: |
 
 model: medium
 
+# EVERY ONE OF THESE WORKFLOWS TALKS TO GITHUB, so say so. Archon hard-blocks a run at
+# invocation -- before a worktree, a clone or a single token -- when the originating
+# user has no GitHub identity connected. On a solo PAT install it is a no-op; on a
+# shared one it turns "the label never moved and nobody knows why" into a refusal with
+# a reason, which is the difference between a dead lap and an answer.
+requires: [github]
+
 inputs:
   target:
     default: ""
@@ -124,6 +131,13 @@ nodes:
     context: fresh
     depends_on: [brief]
     allowed_tools: []
+    # Belt and braces, and free. `allowed_tools: []` is the real control -- a node with
+    # no tools cannot write anything -- so this asserts nothing today. It is here for
+    # the day somebody grants the judge a tool "just to let it read the diff itself",
+    # which is the single most plausible future edit to this file and the one that
+    # quietly ends the holdout. On that day the engine still refuses a judge that
+    # touched the tree.
+    mutates_checkout: false
     # A FORMATTING FAILURE MUST NOT COST THE WHOLE VALIDATION.
     #
     # This node died five times on `error_max_structured_output_retries` and took the

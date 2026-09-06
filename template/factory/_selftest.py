@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 import tempfile
@@ -1223,6 +1224,278 @@ def agentcheck_checks() -> None:
         check("an unset agent command fails rather than skips", True)
 
 
+def undefined_module_checks() -> None:
+    """Every stdlib module a factory file USES, that file also IMPORTS.
+
+    THE INCIDENT: `gate.py` referenced `os.environ` exactly once, on the line that
+    hands the observed counts to the merge, and never imported `os`. That line runs
+    only when the markers, the ratchet and the verdict are ALL green -- so no failing
+    lap ever reached it, and the FIRST fully green validation this repo ever produced
+    died with NameError one statement before the merge it had just earned.
+
+    WHY NOTHING CAUGHT IT. The static rung for a Python project is
+    `python -m compileall`, which proves a file parses, not that its names resolve.
+    A NameError is a runtime event, and the runtime in question is the rarest path in
+    the system: the one where everything else passed.
+
+    This is deliberately narrow -- bare `NAME.attr` where NAME is a stdlib module this
+    factory actually uses. It is not a type checker and it is not trying to be; it
+    exists to make the specific silence above impossible to repeat.
+    """
+    import ast
+
+    watched = {
+        "os", "sys", "json", "re", "subprocess", "time", "shutil", "tempfile",
+        "hashlib", "sqlite3", "socket", "signal", "textwrap", "difflib", "fnmatch",
+    }
+
+    # THE HELPERS TOO, not only modules. The module version of this check shipped and
+    # then failed to catch `note(...)` in a script that never imported it -- a NameError
+    # on the success path of the fix loop, found by running it rather than by reading it.
+    # These two are the factory's own output channel: every node either imports them
+    # from nodeio or prints directly, and calling one that is not there is the same
+    # silence as the missing import, one word narrower.
+    helpers = {"note", "emit"}
+    here = Path(__file__).resolve().parent
+    # BOTH ROOTS. The first version of this scanned only factory/ and therefore never
+    # looked at the workflow scripts -- which is exactly where the NameError it was
+    # written for actually happened. A check aimed at the wrong directory passes for
+    # the same reason a check aimed at nothing passes.
+    roots = [here]
+    pack = here.parent / ".archon" / "workflows" / "factory"
+    if pack.is_dir():
+        roots.append(pack)
+    for path in sorted(q for root in roots for q in root.rglob("*.py")):
+        if path.name.startswith("_test"):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            check("selftest/undefined-module " + path.name, False, "does not parse")
+            continue
+
+        imported: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imported.add((alias.asname or alias.name).split(".")[0])
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    imported.add(alias.asname or alias.name)
+
+        # Names bound anywhere in the file are not module references; a local called
+        # `time` shadows the module and is none of this check's business.
+        bound: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                bound.add(node.id)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                bound.add(node.name)
+                for arg in node.args.args + node.args.kwonlyargs:
+                    bound.add(arg.arg)
+
+        used: set[str] = set()
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id in watched
+            ):
+                used.add(node.value.id)
+
+        called: set[str] = set()
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in helpers
+            ):
+                called.add(node.func.id)
+
+        missing = sorted((used | called) - imported - bound)
+        check(
+            "selftest/undefined-name " + path.name,
+            not missing,
+            "uses " + ", ".join(missing) + " without importing or defining it" if missing else "",
+        )
+
+
+def clean_tree_is_not_empty_work_checks() -> None:
+    """A script that fails on a clean working tree must also ask whether the BRANCH moved.
+
+    THE INCIDENT, TWICE IN ONE DAY. The build step became Archon's `archon-implement`,
+    which commits as it goes. Two scripts asserted "did anything change" by reading
+    `git status --porcelain` and treating a clean tree as "the node did nothing":
+
+      commit.py   would have failed the lap for succeeding.
+      land-fix.py DID -- it threw away a ten-minute opus fix as "changed nothing",
+                  after the fix had been correctly written and committed.
+
+    The question both were asking stopped being the right one the moment the builder
+    started committing its own work. What has to be true is that the branch carries
+    something, not that the tree is dirty.
+
+    This check is narrow and mechanical: a factory script that reads `--porcelain` and
+    can `die`/`exit(1)` on an empty result must also consult `rev-list`. It cannot prove
+    the logic is right; it proves the second question is being asked at all, which is
+    exactly what was missing both times.
+    """
+    here = Path(__file__).resolve().parent
+    roots = [here]
+    pack = here.parent / ".archon" / "workflows" / "factory"
+    if pack.is_dir():
+        roots.append(pack)
+
+    for root in roots:
+        for path in sorted(root.rglob("*.py")):
+            if path.name.startswith("_test") or path.name.startswith("_self"):
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if "--porcelain" not in text:
+                continue
+            # Only scripts that can STOP on the answer are in scope; a script that merely
+            # reports cleanliness is not making a decision this can be wrong about.
+            stops = "die(" in text or "sys.exit(1)" in text
+            if not stops:
+                continue
+            check(
+                "selftest/clean-tree " + path.name,
+                "rev-list" in text,
+                "decides on `git status --porcelain` and can stop, but never consults "
+                "rev-list -- a builder that commits its own work reads as having done "
+                "nothing",
+            )
+
+
+def operator_settings_live_in_config_checks() -> None:
+    """A list a human is invited to edit must live in the ONE file the sync will not
+    overwrite.
+
+    THE INCIDENT, AND IT WAS SILENT IN BOTH DIRECTIONS. The per-project protected-path
+    list was a `PROTECTED +=` block inside `factory/guard.py`. `bin/sync-to.py` copies
+    `factory/` wholesale as machinery, so the first sync after an operator added a path
+    DELETED it. Nothing went red: the guard still ran, still found no violation, still
+    printed `PROTECTED_OK`. Reproduced on flagpole against `app/rollout.py` -- a path a
+    planner had refused to build until it was added, removed again hours later by a
+    routine `sync-to.py` and observed only because the diff happened to be read.
+
+    Then the fix reproduced the same shape one level up: the new settings were declared
+    as `NAME: list[str] = []`, `sync-to.py`'s missing-settings walker matched only
+    `ast.Assign`, and it reported nothing missing while the synced guard raised
+    AttributeError on the next run.
+
+    Two mechanical invariants, because the class is "an edit that vanishes quietly":
+
+      1. NO SYNCED MODULE INVITES AN EDIT. A comment line made of nothing but quoted
+         strings is a commented-out list entry, which is how this template says "add
+         yours here". Only `config.py` -- the sync's NEVER list -- may contain one.
+      2. THE GUARD SOURCES ITS PROJECT LISTS FROM CONFIG, by attribute and with no
+         `getattr` default. A default would substitute an empty list on a stale install
+         and print `PROTECTED_OK`, which is the original silent hole restored by the
+         fix for it.
+    """
+    here = Path(__file__).resolve().parent
+    invite = re.compile(r'^\s+#\s*"[^"]*"(?:\s*,\s*"[^"]*")*\s*,?\s*$')
+    for module in sorted(here.glob("*.py")):
+        if module.name == "config.py":
+            continue
+        offenders = [
+            n for n, line in enumerate(module.read_text(encoding="utf-8",
+                                                        errors="replace").splitlines(), 1)
+            if invite.match(line)
+        ]
+        check(
+            "operator-editable list outside config.py: " + module.name,
+            not offenders,
+            "lines " + ",".join(str(n) for n in offenders) + " read as commented-out list "
+            "entries, i.e. an invitation to edit a file bin/sync-to.py overwrites. Move the "
+            "list to config.py, which the sync never touches",
+        )
+
+    guard_src = (here / "guard.py").read_text(encoding="utf-8", errors="replace")
+    for setting in ("PROTECTED_EXTRA", "BANNED_CATEGORIES", "TEST_PATHS_EXTRA"):
+        check(
+            "guard reads config." + setting,
+            "config." + setting in guard_src,
+            "the per-project list must come from config.py or the next sync deletes it",
+        )
+    # CODE ONLY. The first version scanned the raw text and failed on the comment
+    # ABOVE the assignment, which exists to explain why `getattr` is wrong -- a check
+    # that punishes writing down its own reasoning, and the second one of those in this
+    # sweep. A string-scan invariant has to be told what a comment is.
+    guard_code = "\n".join(
+        line.split("#", 1)[0] for line in guard_src.splitlines()
+    )
+    check(
+        "guard does not default its project lists away",
+        "getattr(config" not in guard_code,
+        "a getattr default turns a stale install into a silently unprotected one -- "
+        "AttributeError is the correct failure here",
+    )
+
+    cfg_src = (here / "config.py").read_text(encoding="utf-8", errors="replace")
+    for setting in ("PROTECTED_EXTRA", "BANNED_CATEGORIES", "TEST_PATHS_EXTRA"):
+        check(
+            "config declares " + setting,
+            re.search(r"^" + setting + r"\s*(:|=)", cfg_src, re.M) is not None,
+            "guard.py reads it at import, so a missing declaration breaks every gate",
+        )
+
+
+def unreachable_code_checks() -> None:
+    """No statement follows a return, raise, break or continue in the same block.
+
+    THE ONE THAT GOT THROUGH. `gate.assumption_keys` ended a branch with two returns:
+
+        return ["(unkeyed " + str(n + 1) + ")" for n in range(len(entries) or 1)]
+        return [f"(unkeyed {i + 1})" for i in range(len(paragraphs) or 1)]
+
+    The second is dead, and it references `paragraphs`, which does not exist anywhere in
+    the file. Left over from rewriting the expression in place. It reached the branch
+    being merged to main, in the module that decides whether a pull request merges.
+
+    Nothing caught it and every check that should have was looking at the wrong thing.
+    It PARSES, so `check_all_scripts_parse` passed. It never RUNS, so no test could fail
+    on it. `undefined_module_checks` scans for unknown modules and nodeio helpers, not
+    local names. And a reviewer's eye slides over a second return the same way it slides
+    over a duplicated word.
+
+    Checked structurally rather than by name resolution, because that is the property
+    with no false positives: a statement after an unconditional exit in the same block is
+    dead however it is spelled. It is also the right shape for the underlying risk --
+    dead code in a gate is one careless reorder away from being live code that raises.
+    """
+    import ast as _ast
+
+    here = Path(__file__).resolve().parent
+    workflows = here.parent / ".archon" / "workflows" / "factory"
+    files = sorted(here.glob("*.py"))
+    if workflows.is_dir():
+        files += sorted(workflows.rglob("scripts/*.py"))
+
+    terminal = (_ast.Return, _ast.Raise, _ast.Break, _ast.Continue)
+    for path in files:
+        try:
+            tree = _ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            continue  # check_all_scripts_parse owns that failure
+        dead: list[str] = []
+        for node in _ast.walk(tree):
+            for field in ("body", "orelse", "finalbody"):
+                block = getattr(node, field, None)
+                if not isinstance(block, list):
+                    continue
+                for i, stmt in enumerate(block[:-1]):
+                    if isinstance(stmt, terminal):
+                        dead.append(f"line {block[i + 1].lineno} after line {stmt.lineno}")
+        check(
+            "no unreachable code in " + path.name,
+            not dead,
+            "; ".join(dead) + " -- a statement after an unconditional exit never runs, "
+            "so nothing can fail on it and it is one reorder away from being live",
+        )
+
+
 def main() -> int:
     quiet = "--quiet" in sys.argv
     # POINT THE LEDGER SOMEWHERE HARMLESS FOR THE WHOLE RUN, before any check fires.
@@ -1254,6 +1527,10 @@ def main() -> int:
     argv_quoting_checks()
     teardown_frees_the_port_checks()
     gh_retry_checks()
+    undefined_module_checks()
+    clean_tree_is_not_empty_work_checks()
+    operator_settings_live_in_config_checks()
+    unreachable_code_checks()
 
     if FAILURES:
         if not quiet:

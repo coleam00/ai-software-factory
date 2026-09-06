@@ -126,6 +126,48 @@ that looks exactly like a quiet one.
 
 ---
 
+## 4c. The protected list, in both places at once
+
+`FACTORY_RULES.md` section 5 says what a builder may never touch, and
+`factory/config.py`'s `PROTECTED_EXTRA` is the half the gate can enforce. Fill both in
+the same sitting: `factory doctor` fails when they disagree, and blocks level 3.
+
+Name what has a blast radius you cannot absorb -- the auth module, the rate-limit
+constant *and* the code that enforces it, payment paths, migrations, Dockerfiles,
+`deploy/`, `infra/`. Not everything that looks important: over-protecting makes ordinary
+issues auto-reject.
+
+Two things worth knowing before you write it:
+
+**A glob cannot express a region of a file.** "the redirect branch in `server.py`" is
+not a rule, it is a wish. Protect the module that owns the decision and write in the
+commentary what is deliberately left open. Both of the factories built on this template
+shipped a clause like that, and in one of them a planner refused to build an issue until
+somebody resolved it.
+
+**Anything you edit goes in `config.py`.** It is the one file `bin/sync-to.py` will not
+overwrite. A list added anywhere else in `factory/` is deleted by the next sync, and the
+guard keeps printing `PROTECTED_OK` the whole time.
+
+---
+
+## 4d. The fixtures already work
+
+```bash
+archon workflow test factory
+```
+
+Eleven dry-run fixtures across the five workflows, about two seconds, no model call and
+no GitHub call. They execute the real graph with the AI nodes stubbed, so a broken
+binding or a `when:` that never fires shows up here instead of eight nodes into a paid
+lap. The doctor runs them and blocks level 1 if any fails.
+
+When you edit a workflow, run this before you dispatch anything. When you add a node,
+add the stub -- an unstubbed node fails, which is deliberate: it is how a fixture says
+"nothing after this point should have run".
+
+---
+
 ## 5. The ratchet
 
 Set the floors to what the gate just asserted. Then understand the one failure

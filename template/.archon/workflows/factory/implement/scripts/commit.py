@@ -51,6 +51,26 @@ if rc != 0:
     sys.exit(1)
 
 changed = [ln for ln in dirty.splitlines() if ln.strip()]
+
+# THE QUESTION IS "IS THERE ANYTHING TO VALIDATE", NOT "ARE THERE UNSAVED EDITS".
+# Those were the same question while the builder was a single command node that edited
+# and left. They stopped being the same the moment the build step became Archon's
+# `archon-implement`, which commits as it goes: the tree is clean BECAUSE the work
+# landed, and a check that reads a clean tree as "nothing happened" fails the lap for
+# succeeding. So a clean tree with commits ahead of base is a pass, and the fatal case
+# is the one that always mattered -- a branch identical to its base.
+rc_ahead, ahead = git("rev-list", "--count", f"{base}..HEAD")
+already_committed = rc_ahead == 0 and ahead.strip().isdigit() and int(ahead.strip()) > 0
+
+if not changed and already_committed:
+    rc, sha = git("rev-parse", "--short", "HEAD")
+    rc2, stat = git("diff", "--stat", f"{base}...HEAD")
+    files = len([ln for ln in stat.splitlines() if "|" in ln])
+    note(f"COMMITTED_BY_BUILDER {sha} commits={ahead.strip()} files={files}")
+    note(stat[-1500:])
+    emit({"sha": sha, "files": files})
+    sys.exit(0)
+
 if not changed:
     hint = ""
     report = artifacts / "implementation.md"

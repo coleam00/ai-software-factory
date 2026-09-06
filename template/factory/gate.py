@@ -21,6 +21,7 @@ Exit codes:
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -223,6 +224,27 @@ def assumption_keys(text: str) -> list[str]:
         m = re.match(r"([A-Za-z_][A-Za-z0-9_]*)\s*=", line)
         if m:
             keys.append(m.group(1))
+
+    # A NON-EMPTY FILE IS NEVER ZERO ASSUMPTIONS. The KEY=value shape was an implicit
+    # contract between this parser and the factory's own plan prompt. The planner is
+    # Archon's `archon-plan` now, which records an assumption as prose and has never
+    # heard of the format -- so a real, merge-holding assumption counted as 0 and the
+    # hold announced itself as "0 recorded assumption(s)".
+    #
+    # That is the exact failure the comment at the call site warns about: the count is
+    # the first thing a person reads on a hold, and one that misdescribes itself gets
+    # rubber-stamped. Under-reporting to zero is the worst direction available, because
+    # it reads as "nothing to review" on a PR that is being held precisely because there
+    # is something to review.
+    #
+    # So: fall back to counting paragraphs. Wrong-by-a-little beats confidently zero,
+    # and the text itself is printed on the hold either way.
+    if not keys and text.strip():
+        # Unindented, non-blank lines: in the KEY=value shape those ARE the keys, and
+        # in free prose it is the block itself. No regex, because the only thing this
+        # has to get right is "not zero".
+        entries = [ln for ln in text.splitlines() if ln.strip() and not ln[0].isspace()]
+        return ["(unkeyed " + str(n + 1) + ")" for n in range(len(entries) or 1)]
     return keys
 
 

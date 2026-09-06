@@ -1,0 +1,30 @@
+# A REAL REGRESSION, ROOTED AND FILED. This is the loop that closes without a human:
+# the scheduled gate goes red on merged code, the investigator establishes the causal
+# chain, diagnose turns it into an issue triage can accept, and the factory builds the
+# fix for a bug nobody reported.
+#
+# The two AI stages are deliberately separate and both are exercised here. Investigation
+# produces ONE causal chain in prose; filing needs N issues with a title, a severity, an
+# area and a body, structured enough for a script to open them. Collapsing them into a
+# single node is how you end up parsing issues out of an essay.
+sync: '{"sha":"abcdef0123456789abcdef0123456789abcdef01","subject":"feat: sort enabled flags first"}'
+suite: '{"green":false,"harness_ran":true,"failed_step":"holdout","summary":"2 of 3 holdout scenarios failed; unit and e2e green"}'
+investigate__investigate:
+  rooted: true
+  summary: >-
+    stub: the listing sort added in the previous merge re-orders the rows the second
+    holdout scenario counts positionally; reproduced against both merges in isolation.
+investigate__assert-intact: '{"intact":"true"}'
+diagnose:
+  infrastructure_failure: false
+  findings:
+    - title: "Flags disappear from the table when two are enabled at the same percentage"
+      severity: high
+      area: listing
+      body: "stub: the observable symptom, the reproduction, and the log excerpt"
+      suspect_commits: "abcdef0 feat: sort enabled flags first"
+  summary: "stub: one high-severity listing defect, rooted to the sort added two merges ago"
+file-issues: "filed 1 issue at abcdef0"
+fixture:
+  expect: completed
+  reached: [investigate__investigate, diagnose, file-issues]

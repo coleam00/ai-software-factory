@@ -546,6 +546,204 @@ that holds for a subset is not a check on the whole.** It appears wherever a che
 written as "something like this exists" rather than "this specific thing is here", and
 the only thing that finds it is a defect aimed at that rung.
 
+### The run that died between two nodes and left the issue reading "being worked on"
+
+**What happened.** An implement lap ran cleanly through prime, plan, implement, commit
+and guard, then stopped. Not failed -- stopped. The last line in the log is
+`selfcheck` starting and its script discovery completing. No error, no exit code, no
+stack. The process was gone, the Archon run row still said `running`, and the issue sat
+at `factory:in-progress` for eighty-six minutes on a node whose declared timeout is
+thirty.
+
+**What made it survivable.** The work was not lost: implement had committed, so the
+branch carried the change. And `state.py next` reported
+`stalled-issue gh:issue:1 in 'in-progress' with no PR` rather than moving on to
+unrelated work. That one line is the difference between this and the three months the
+predecessor factory spent finding no work behind a label nobody lifted.
+
+**What the silence was NOT.** `selfcheck` runs the full gate -- static, unit, the two
+agent-driven rungs, and the whole mutation set, each mutation re-running the gate -- under
+`capture_output=True`. It therefore emits NOTHING to the run log for its entire duration,
+which on this repo is tens of minutes. So "no output for an hour" is not evidence of death
+and must not be read as such; what proved this one dead was that no `bun` process existed.
+Worth knowing before diagnosing the next one, and worth weighing against the node's declared
+30-minute timeout, which is plausibly tighter than the work it is timing.
+
+**What is still unproven.** The cause. The run was launched by hand under `nohup`
+rather than through `dispatch.py`, so no lock existed and no reaper applied, and a
+detached child not surviving its parent shell is the likeliest reading. It is also true
+that it died at the exact moment the one `runtime: uv` node started, and that uv creates
+its virtualenv on first use. Both remain guesses, and they are written down as guesses.
+
+**The rule.** A label that means "being worked on" needs something that notices when
+nothing is working on it. `next` reporting a stalled issue is that something, and it is
+worth more than any amount of care about not crashing -- because the crash will happen
+and the report is what turns a three-month outage into a five-minute one.
+
+### The consumer that would have failed naming itself, eight nodes after the mistake
+
+**What happened.** A new `bash:` node emitted `{"errors":"true","docs":"auto"}` and a
+node further down read `$review-scope.output.errors`. The workflow validated clean and
+`archon validate workflows` said `ok`. The cross-file audit did not:
+
+```
+[FAIL] factory-implement: $review-scope.output.errors is read, but 'review-scope'
+       declares no output_format -- the consumer will fail, naming itself rather
+       than the producer
+```
+
+**Why it mattered here.** The consumer sits after prime, plan and implement. The failure
+would have arrived roughly thirty minutes and one premium model into the lap, and its
+message would have accused the reader rather than the writer.
+
+**The rule.** The audit is not a linter, it is the only thing that reads ACROSS files.
+Schema validation proves each file is well-formed; it cannot know that a producer never
+promised a field. Run the audit after editing the pack, not only after editing the
+machinery -- this one was clean an hour earlier, before the node existed.
+
+### The cancel that reported no live owner for a run that was alive
+
+**What happened.** `archon workflow cancel <id>` answered:
+
+> No live detached CLI owner is reachable for run &lt;id&gt;. The run was not changed.
+> (ENOENT) If you have verified that its process is gone, use
+> `archon workflow abandon <id>` to release its persisted state.
+
+The process was NOT gone. The run was executing normally under a shell the operator had
+started. Taking the message at its word and running `abandon` killed a healthy lap at
+its third node, and the log then read `Failed: Cancelled by user` -- which was true, and
+gave no hint that the user had been told the opposite a second earlier.
+
+**The rule.** "I could not reach it" is not "it is dead", and a message that offers the
+destructive remedy in the same breath invites the confusion. Before abandoning, read the
+run's own log and check for a live process; an abandon is not reversible and the thing
+it destroys is usually the expensive half of a lap.
+
+### The import the merge had always needed, on the only line no failing lap reaches
+
+**What happened.** The first fully green validation this repo ever produced died one
+statement before the merge it had just earned:
+
+```
+MARKERS_OK checked=4
+RATCHET_OK keys=3 e2e_journeys=3/3 holdout_scenarios=3/3 unit_tests=49/45
+GATE_PASS pr=gh:pr:2 markers green, mutations 9/9
+NameError: name 'os' is not defined
+```
+
+`gate.py` used `os.environ` exactly once, on the line handing the observed counts to
+`merge.py`, and never imported `os`.
+
+**Why it survived every earlier lap.** That line runs only when the markers, the ratchet
+AND the verdict are all green. Every lap before this one stopped earlier, so the merge
+path had never executed. A bug reachable only on total success is invisible to exactly
+the testing that finds bugs.
+
+**Why the static rung could not see it.** For a Python project the shipped `static` is
+`python -m compileall`, which proves a file PARSES. A NameError is a runtime event.
+
+**The rule.** `_selftest.py` now parses every factory module and asserts that each stdlib
+module it references by attribute is also imported there. Narrow on purpose -- it is not a
+type checker, it exists to make this one silence impossible to repeat. Proven in both
+directions: removing the import turns the self-test red naming the file.
+
+### The ratchet that did not move on the merge that opened the gap
+
+**What happened.** The lap merged with the gate observing `unit_tests=49` against a floor
+of 45. `floor.json` and `merge.py` both promise the gap is closed "in the same breath as
+the merge". After the merge, main's floor still read 45, and nothing in the run mentioned
+a raise.
+
+**Where it probably goes.** `raise_floor` runs in the checkout the validate workflow owns
+-- a throwaway worktree on `factory/validate-pr-*` -- while the merge itself happens on
+GitHub. A floor commit written there has nowhere to go.
+
+**Why it matters.** The slack is not cosmetic: it is exactly the number of assertions that
+can be deleted with the gate still green. Four here, and it grows every time the harness
+improves, which is the failure mode `floor.json` names in its own header.
+
+**Unfixed, deliberately.** Where the raise should land is a design decision -- a commit on
+main from the machinery, a follow-up issue, or a human line in the PR record -- and picking
+one blind would be guessing. The PR record already prints the exact raise to apply.
+
+### The fix loop that threw away a ten-minute fix as "changed nothing"
+
+**What happened.** The first `factory-fix` run this factory ever executed died at the
+land step: *"the fix node changed nothing. A finding is not addressed by an empty
+diff."* The fix had been written correctly and committed.
+
+**The cause.** `land-fix.py` asked `git status --porcelain` and read a clean tree as an
+empty fix. That question stopped being the right one when the build step became
+`archon-implement`, which commits as it goes. It is the SAME defect that was found and
+fixed in `commit.py` in the same change -- and missed one file over, because the fix was
+applied where the commit happens rather than where the emptiness is asserted.
+
+**Then it died again**, on the corrected path, with `NameError: name 'note' is not
+defined`. `land-fix.py` has `die()` and prints to stderr; it never had `note()`.
+
+**Both were invisible to the checks that existed**, including the ones written that
+morning for exactly this class. The undefined-name self-test watched stdlib MODULE names
+only, and it scanned `factory/` while the workflow scripts live under
+`.archon/workflows/factory/**`. A check aimed at the wrong directory passes for the same
+reason a check aimed at nothing passes.
+
+**The rules.** A script that decides on `--porcelain` and can stop must also consult
+`rev-list` -- the question is whether the BRANCH moved, not whether the tree is dirty.
+And the name check now covers the factory's own output helpers as well as modules, over
+both roots. Both are enforced in `_selftest.py` and both were verified by reintroducing
+the exact failure.
+
+**The general shape:** three bugs, one root. Each was a check asking a question that used
+to be equivalent to the one that mattered, and quietly stopped being.
+
+### Three assumptions announced as twenty-five, and the same bug announced as zero
+
+**What happened.** `gate-plan.py` reported `ASSUMPTIONS_RECORDED 25` for a plan carrying
+three. `gate.py` reported `0 recorded assumption(s)` for a plan carrying one.
+
+**The causes are opposite halves of the same contract.** `gate-plan` counted non-blank
+LINES, so it over-reported by the length of each WHY paragraph -- the identical bug
+`gate.py` documents having already fixed, still present one file over. `gate.py` counted
+`KEY=value` keys, an implicit contract with the plan prompt the factory used to own; the
+planner is Archon's now and recorded its assumption as prose, so it counted none.
+
+**Why it matters more than a number.** The count is the first thing a person reads on a
+hold. Twenty-five reads as a wall nobody can review; zero reads as nothing to review, on
+a pull request being held precisely because there IS something to review. Both directions
+end in a rubber stamp.
+
+**The rule.** One counter, `gate.assumption_keys`, used by both, with a fallback so a
+non-empty file is never zero. The planner is also told the `KEY=value` shape, and the
+next lap came back with three properly keyed assumptions and a hold that named all three.
+
+### The runs that died with the shell that started them, explained at last
+
+**What happened, three times.** A lap stopped mid-node with no error, no exit code and
+no process, while its Archon row still read `running`. The first was diagnosed as
+"cause not established". The third made it obvious: the session that had launched it
+ended, and the run went with it.
+
+**The mechanism.** `archon workflow run` without `--detach` executes IN the calling
+shell. Kill the shell -- close the terminal, end the session, hit a harness timeout --
+and the run dies mid-node. Nothing writes a failure, because nothing is left to write
+one. The DB row stays `running` forever and the PR or issue stays in whatever state the
+last completed node left it.
+
+**How to tell a dead one from a slow one**, which matters because `selfcheck` and
+`gate-run` are legitimately silent for ten minutes under `capture_output`:
+the run log's mtime tells you nothing during those nodes, but the WORKTREE does. A live
+gate is writing `<worktree>/.factory/runs/gate-*.db-wal` every few seconds. Two hours of
+no write there, and no `bun` process, is dead.
+
+**The rule.** Dispatch detached. `dispatch.py` already does -- it passes `--detach` and
+holds a lock until the run settles, which is why no dispatcher-launched lap has ever
+died this way. Every one that did was launched by hand without it.
+
+**And the recovery is not free.** `archon workflow cancel` answers *"No live detached
+CLI owner is reachable"* for these, which reads like "it is already gone" and is really
+"I cannot reach it". Taking that at face value once killed a HEALTHY lap at its third
+node. Check the worktree for writes before abandoning anything.
+
 ## Inherited from the factory this one was built from
 
 These were paid for by an earlier experiment. They are not hypothetical either.
@@ -1324,3 +1522,80 @@ hold them.
 **Worth noting where this came from.** Nothing broke. The factory behaved exactly as
 designed, the monitor reported it exactly as designed, and the design was wrong. The
 only reason it surfaced was an alert firing on a machine nobody was watching.
+
+## A routine sync deleted the protected-path list, and every check stayed green
+
+`archon-plan` refused to plan flagpole's issue #3. One of its two reasons was that
+`FACTORY_RULES` section 5 named `app/rollout.py` -- the bucketing rules, the whole
+security surface of that app -- as protected while `guard.py`'s project list held
+neither it nor anything else. The gate would have printed `PROTECTED_OK` on a change
+the rulebook forbade. The path was added, the planner returned ready, and the lap
+completed.
+
+The next `bin/sync-to.py` deleted it again. `factory/` is on the sync's list of
+machinery -- "the same in every factory and therefore safe to overwrite" -- and the
+per-project `PROTECTED +=` block was sitting inside `factory/guard.py`. Nothing went
+red. The guard still ran, still found no violation, still printed the marker.
+
+**The same defect was live in the other factory the whole time.** snip's section 5
+named `app/shortener.py` (the scheme allowlist and `RESERVED_SLUGS`) and its guard
+list was still the shipped template's commented-out placeholder, through five
+auto-merged pull requests. None of the five happened to touch the file. That is luck,
+not a control.
+
+The lists moved to `factory/config.py`, which the sync will not overwrite, and the
+guard reads them by attribute with **no `getattr` default** -- a default would
+substitute an empty list on a stale install and print `PROTECTED_OK`, which is the
+original hole restored by the fix for it. Three checks came out of it, each proven to
+go red when the shape returns: the doctor cross-checks section 5 against the guard's
+patterns, the self-test refuses an operator-editable list in any synced module, and
+`sync-to.py` reports the settings an install is missing.
+
+**Three separate near-misses in one chain, and only the first was found by a check.**
+The planner found the original gap by reading two files and noticing they disagreed.
+The sync deleting it was found because the diff happened to be read. The
+missing-settings reporter that should have caught the third -- it exists, with a
+docstring describing this exact failure -- matched only `ast.Assign` and silently
+skipped every annotated declaration, so it reported nothing missing while the guard
+raised `AttributeError` on the next run.
+
+**And the first version of the new doctor check punished writing down the reasoning.**
+Section 5 is also where you record what is deliberately NOT protected: snip and
+flagpole both explain, in prose, why a *region* of `server.py` cannot be a rule. The
+check read those disclaimers as demands. It now reads only the `**Category:**` entry
+lines, and prose after a blank line is commentary. The second string-scan check in the
+same sweep failed the same way -- on the comment above the assignment explaining why
+`getattr` is wrong.
+
+## The pack shipped 48 dry-run fixtures and this factory used none of them
+
+Every composition failure in this repo was found the expensive way: dispatch a lap,
+spend a premium plan node, read a log. An input that had to arrive as a node reference
+rather than a literal. An output nobody declared. A consumer bound to a producer that
+skipped. None of them are visible by reading the YAML, and all of them are load-time
+or first-node failures.
+
+`archon workflow test` executes the real DAG with the AI nodes stubbed -- `when:`
+conditions, trigger rules, `if_skipped` defaults, cancel nodes, and the namespaced
+nodes an `include:` expands into -- with no provider call and no GitHub call. The
+`sdlc` pack carries 48 of these. This pack carried zero. Eleven now cover the five
+workflows and run in under two seconds.
+
+Each was mutation-tested against the workflow it covers, because a fixture that has
+never been shown to fail is a fixture that proves nothing. Removing `trigger_rule:
+all_done` from triage's `apply` fails it; so does removing `if_skipped` from the
+decision binding. Either would have meant every rate-limited issue silently staying
+untriaged forever.
+
+**A fixture cannot test the node it stubs, and that limit has a shape.** Severing
+`plan_ready: "$plan.output.ready"` -- the single wire carrying `archon-plan`'s refusal
+into this workflow, since the pack writes no ESCALATE sentinel -- changed nothing in
+the fixture, because the fixture stubs `gate-plan`'s output directly. An unbound input
+is the empty string and these scripts read empty as "nothing to act on", so cutting
+that wire does not break the gate, it opens it. `bin/audit.py` now checks that every
+`INPUTS_` a workflow script reads is bound by a node that runs it, which does catch it.
+
+**A fixture is YAML inside the pack, so every scan that globbed the tree started
+reading test data as workflows.** The node-output check failed on a reference quoted in
+a fixture *comment*, and the doctor cheerfully reported nine workflows in a pack of
+five.

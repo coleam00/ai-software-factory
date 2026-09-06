@@ -23,12 +23,27 @@ process with the approvals removed, and writing it down here is what makes that
 legible to the next person.>
 
 ```
-prime -> plan -> implement -> commit -> guard -> self-check -> review -> open PR
-                                                                            |
-                                            (independent, separate process) |
-                                                                            v
-                              prepare -> guard+gate -> judge -> merge / hold / fix
+plan -> implement -> commit -> guard -> self-check -> review -> open PR
+   ^        ^                                            ^          |
+   |        |                                            |          |
+   +--------+--- Archon's sdlc pack, composed by include:+          |
+                                                                    |
+                                (independent, separate process)     |
+                                                                    v
+                      prepare -> guard+gate -> judge -> merge / hold / fix
+
+           weekly:  sync main -> full gate -> investigate -> file issues
+                                                  ^
+                                       also the pack's (archon-investigate)
 ```
+
+The plan, implement and review steps are `archon-plan`, `archon-implement` and
+`archon-review`; the weekly regression's root-cause step is `archon-investigate`. They
+ship inside the Archon binary, so there is nothing to install and nothing to keep in
+sync, and a same-named workflow in `.archon/workflows/` overrides any of them. The
+`prime` step this diagram used to open with is gone: `archon-plan` does its own
+grounding, so the prompt that existed to feed a planner had exactly one reader and went
+with it.
 
 ---
 

@@ -58,16 +58,37 @@ rc, dirty = git("status", "--porcelain", "--untracked-files=all")
 if rc != 0:
     die(f"git status failed: {dirty}")
 if not dirty.strip():
-    report = artifacts / "fix-report.md"
-    hint = f" It wrote {report}, so read that first." if report.exists() else ""
-    die(
-        "the fix node changed nothing. A finding is not addressed by an empty diff, "
-        "and the usual cause is a denied tool or a finding the node decided it could "
-        "not act on." + hint
-    )
+    # A CLEAN TREE IS NOT AN EMPTY FIX. The fix node is Archon's `archon-implement`,
+    # which commits as it goes, so the ordinary success case arrives here with nothing
+    # left to stage. Asking "is the tree dirty" answers a question that stopped being
+    # the right one when the builder changed: what has to be true is that the BRANCH
+    # carries something the remote does not.
+    #
+    # This is the same defect that was fixed in commit.py and missed here, and it cost
+    # a ten-minute opus fix that was then thrown away as "changed nothing".
+    rc_ahead, ahead = git("rev-list", "--count", f"origin/{branch}..HEAD")
+    carried = rc_ahead == 0 and ahead.strip().isdigit() and int(ahead.strip()) > 0
+    if not carried:
+        report = artifacts / "fix-report.md"
+        hint = f" It wrote {report}, so read that first." if report.exists() else ""
+        die(
+            "the fix node changed nothing. A finding is not addressed by an empty diff, "
+            "and the usual cause is a denied tool or a finding the node decided it could "
+            "not act on." + hint
+        )
+    print(f"FIX_ALREADY_COMMITTED {ahead.strip()} commit(s) ahead of origin/{branch}", file=sys.stderr)
 
 git("add", "-A")
-rc, out = git("commit", "-q", "-m", f"fix: address validator findings (attempt {attempt}) (#{number})")
+# The builder is `archon-implement`, which commits as it goes, so by the time this runs
+# the fix is usually ALREADY committed and there is nothing left to stage. That is
+# success, not failure: what has to be true here is that the branch carries the fix and
+# the remote is about to. Only a branch with nothing new to push is a dead fix.
+rc_dirty, dirty = git("status", "--porcelain", "--untracked-files=all")
+if rc_dirty == 0 and not dirty.strip():
+    print("FIX_ALREADY_COMMITTED - the builder committed its own work; pushing it", file=sys.stderr)
+    rc, out = 0, ""
+else:
+    rc, out = git("commit", "-q", "-m", f"fix: address validator findings (attempt {attempt}) (#{number})")
 if rc != 0:
     die(f"could not commit the fix: {out}")
 

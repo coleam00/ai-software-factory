@@ -21,6 +21,13 @@ description: |
 
 model: medium
 
+# EVERY ONE OF THESE WORKFLOWS TALKS TO GITHUB, so say so. Archon hard-blocks a run at
+# invocation -- before a worktree, a clone or a single token -- when the originating
+# user has no GitHub identity connected. On a solo PAT install it is a no-op; on a
+# shared one it turns "the label never moved and nobody knows why" into a refusal with
+# a reason, which is the difference between a dead lap and an answer.
+requires: [github]
+
 inputs:
   target:
     default: ""
@@ -70,20 +77,37 @@ nodes:
         attempt: { type: integer }
       required: [target, number, branch, base, attempt]
 
+  # ARCHON'S BUILDER, again. Addressing review findings IS implementing -- the only
+  # difference is where the work order came from, and `archon-implement` takes "review
+  # findings" as a first-class input. Keeping a second, weaker fix prompt beside it
+  # meant the correction path had no loop, no green verdict and no decline guard while
+  # the build path had all three.
+  #
+  # `prepare` has already asserted the findings onto disk. The validator recorded what
+  # it objected to, its worktree is gone, and a fix node that re-reads the diff instead
+  # invents an objection -- which is how a confident commit fixes something nobody
+  # asked about.
   - id: fix
-    command: fix
-    context: fresh
+    include: archon-implement
+    denied_tools:
+      - "Read(.factory/holdout/**)"
+      - "Glob(.factory/holdout/**)"
+      - "Grep(.factory/holdout/**)"
+      - "Bash(gh:*)"
     depends_on: [prepare]
-    # PROVEN BY PROBE, in both directions, before being believed:
-    #   allowed_tools: ["Bash(python:*)"]   grants NOTHING -- the node has NO shell.
-    #   allowed_tools: [Bash]               grants a shell.
-    #   denied_tools:  ["Bash(git:*)"]      genuinely blocks it.
-    # So the grant is coarse and the leash is the DENY. The first version scoped the
-    # grant instead, and the build nodes ran for weeks with no shell at all: they
-    # could not run the quick gate, said so politely in prose, and exited 0.
-    allowed_tools: [Read, Glob, Grep, Edit, Write, Bash]
-    denied_tools: ["Read(.factory/holdout/**)", "Glob(.factory/holdout/**)", "Grep(.factory/holdout/**)", "Bash(git:*)", "Bash(gh:*)"]
-    idle_timeout: 900000
+    with:
+      work: >-
+        Address the validator's findings in $ARTIFACTS_DIR/findings.md, and nothing
+        else. Read them first, then $ARTIFACTS_DIR/issue.md for what this change was
+        meant to do and $ARTIFACTS_DIR/gate.log for the raw output of the checks that
+        ran. The rules this repository merges under are
+        $ARTIFACTS_DIR/FACTORY_RULES.md.
+
+        These findings are the record of an INDEPENDENT judge that has already run and
+        whose working copy is gone. Do not re-derive them from the diff: a finding you
+        cannot see the cause of is one to report, not one to reinterpret. Changing
+        anything the findings did not name is out of scope, and nobody reads this diff
+        before it merges.
 
   # Commit, push, bump the attempt counter, and hand back. ONE transition, to
   # `open`: a fixed PR is a PR waiting to be validated, and `validating` is owned by

@@ -186,6 +186,14 @@ than a code fix.
 config file that could hold a token. **Empty output means the next run publishes it.**
 This runs as a node and refuses to start, not as a line in a checklist a human reads.
 
+*This list and `factory/config.py`'s `PROTECTED_EXTRA` are one fact written twice, and
+`factory doctor` fails if they disagree. This half is what the planner and the judge
+read; that half is the only one that can stop a commit, so a path claimed here and
+missing there is a rule the gate prints `PROTECTED_OK` straight through. A path counts
+as claimed when it appears in backticks on a `**Category:**` entry above, up to the
+first blank line; prose after a blank line is commentary, which is where you write down
+what is deliberately NOT protected and why.*
+
 ## 6. Auto-reject triggers (no fix attempt)
 
 1. Any protected-file modification.

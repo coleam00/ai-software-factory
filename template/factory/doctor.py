@@ -101,6 +101,199 @@ def git(*args: str) -> tuple[int, str]:
     return p.returncode, p.stdout.strip()
 
 
+def _include_deny_supported() -> tuple[str, str, str, int]:
+    """Does THIS engine honour `denied_tools` on an `include:`?
+
+    THE FAILURE THIS EXISTS TO CATCH IS SILENT AND IT COSTS THE WHOLE ARGUMENT.
+    `factory-implement` includes Archon's `sdlc` review pack, whose nodes all grant
+    Read and none of which know this factory has a holdout. The include carries the
+    holdout deny and the engine unions it onto every expanded node -- on an engine
+    that supports it. On an older one the field is dropped, the workflow still loads,
+    every check still passes, and the reviewer can read the assertions the builder is
+    blocked from reading. Nothing goes red. A version string would be the easy check
+    and the wrong one, because it tests what the binary CLAIMS.
+
+    So this asks the engine what it did. Loading a workflow whose include carries an
+    inert field makes Archon log `include_node_ai_fields_ignored` naming that field.
+    If the warning names `denied_tools`, the deny was dropped and the wall is gone.
+    Absence of the warning is the pass.
+
+    Unknown is NOT a pass. If the probe cannot run, say so and keep blocking, because
+    "we could not check, so we merged" is the same mistake as counting a skipped check
+    as a passed one.
+    """
+    pack = config.ROOT / ".archon" / "workflows" / "factory"
+    if not pack.is_dir():
+        return (WARN, "include deny", "no factory pack installed yet -- nothing to probe", 99)
+
+    # Only meaningful when this factory actually composes somebody else's block. A pack
+    # whose nodes are all local has no include for the engine to strip, and reporting
+    # OK there would be a check that cannot fail -- which is the shape this whole file
+    # exists to refuse.
+    composed = [
+        y for y in pack.rglob("*.yaml")
+        if y.parent.name != "fixtures"
+        if "include:" in y.read_text(encoding="utf-8", errors="replace")
+    ]
+    if not composed:
+        return (WARN, "include deny",
+                "this pack includes no other workflow, so there is nothing to sandbox", 99)
+    unguarded = [
+        y.name for y in composed
+        if "denied_tools" not in y.read_text(encoding="utf-8", errors="replace")
+    ]
+    if unguarded:
+        return (FAIL, "include deny",
+                f"{', '.join(unguarded)} includes another workflow with NO denied_tools -- "
+                "every node it expands can read the holdout", 1)
+    try:
+        p = subprocess.run(
+            [config.ARCHON_BIN, "validate", "workflows"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=180, cwd=str(config.ROOT),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return (FAIL, "include deny",
+                "could not run `archon validate workflows` -- UNKNOWN is not a pass, and "
+                "this is the check that proves the holdout survives composition", 1)
+
+    blob = (p.stdout or "") + (p.stderr or "")
+    for line in blob.splitlines():
+        if "include_node_ai_fields_ignored" in line and "denied_tools" in line:
+            return (FAIL, "include deny",
+                    "this Archon DROPS denied_tools on an include -- the review pack would "
+                    "run with no holdout deny and every check would still pass. Upgrade the "
+                    "engine, or replace the `include: archon-review` node with a local one", 1)
+    if "factory-implement" not in blob:
+        return (FAIL, "include deny",
+                "`archon validate workflows` never mentioned factory-implement, so the probe "
+                "proved nothing -- UNKNOWN is not a pass", 1)
+    return (OK, "include deny", "the engine keeps denied_tools on an include (holdout survives)")
+
+
+# A backticked token in the rules that names a FILE rather than a symbol. `is_on` and
+# `guard.py` appear in that prose as identifiers, not as paths, so the test is
+# deliberately narrow: a separator, a glob, or a name that actually exists at the root.
+def _looks_like_path(token: str, root: Path) -> bool:
+    if not token or " " in token or "\n" in token:
+        return False
+    if "/" in token or "*" in token or "?" in token:
+        return True
+    return (root / token).exists()
+
+
+def _sample_path(pattern: str) -> str:
+    """A concrete path the pattern would match, so a PATTERN can be tested against
+    `guard.matches`, which takes paths. `deploy/**` becomes `deploy/a/b`, which is
+    matched by guard's own `deploy/**` and by nothing that does not cover it."""
+    p = pattern.replace("**", "\x00").replace("*", "a").replace("\x00", "a/b")
+    return p[:-1] + "a" if p.endswith("/") else p
+
+
+def _rules_match_guard() -> tuple[str, str, str, int]:
+    """FACTORY_RULES section 5 and the guard's list are ONE FACT WRITTEN TWICE.
+
+    Section 5 is prose: it is what the planner reads before it plans and what the
+    judge reads before it judges. `guard.PROTECTED` is the only one of the two that
+    can stop a commit. When they disagree, the gate prints PROTECTED_OK on a change
+    the rulebook forbids -- and the disagreement is invisible from either side.
+
+    NOT HYPOTHETICAL, and it was not caught by a check. On flagpole, section 5 named
+    `app/rollout.py` as a security invariant while the guard's project list was still
+    entirely commented out. `archon-plan` refused an issue over it. A planner reading
+    the prose is the wrong last line of defence, so this makes it mechanical.
+
+    Only tokens the rules give as real paths are checked. Placeholder spans -- the
+    shipped `<Dockerfiles, deploy/, ...>` an operator has not filled in yet -- are
+    dropped, because an unfilled template is an incomplete setup and not a
+    contradiction, and reporting it as one trains people to ignore the check.
+
+    A PATH IS CLAIMED ON ITS CATEGORY'S ENTRY LINE -- the `**Label:** ...` block, up to
+    the first blank line. Everything after that blank line is commentary and is NOT
+    read as a claim. That rule is not parser convenience: section 5 is also where you
+    explain what is deliberately NOT protected and why, and the first version of this
+    check read flagpole's "`app/server.py` is deliberately NOT protected" paragraph as
+    a demand that server.py be protected. A check that punishes writing down the
+    reasoning is a check that deletes the reasoning.
+    """
+    rules = config.ROOT / "FACTORY_RULES.md"
+    if not rules.is_file():
+        return (WARN, "rules vs guard", "no FACTORY_RULES.md to cross-check", 99)
+    text = rules.read_text(encoding="utf-8", errors="replace")
+    section = re.search(r"^##\s*5\.[^\n]*\n(.*?)(?=^##\s|\Z)", text, re.S | re.M)
+    if not section:
+        return (WARN, "rules vs guard",
+                "FACTORY_RULES.md has no section 5 to cross-check", 99)
+    body = re.sub(r"<[^<>]*>", " ", section.group(1), flags=re.S)
+    claims = " ".join(re.findall(r"^\*\*[^*\n]+\*\*.*?(?=\n\s*\n|\Z)", body, re.S | re.M))
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import guard  # noqa: PLC0415
+
+    uncovered = []
+    for token in re.findall(r"`([^`\n]+)`", claims):
+        token = token.strip().strip(",")
+        if not _looks_like_path(token, config.ROOT):
+            continue
+        if not guard.matches(_sample_path(token), guard.PROTECTED):
+            uncovered.append(token)
+    if uncovered:
+        return (FAIL, "rules vs guard",
+                f"FACTORY_RULES section 5 protects {', '.join(sorted(set(uncovered)))} "
+                "and the guard does not -- add them to config.PROTECTED_EXTRA, or stop "
+                "claiming them in the rules. Prose the gate cannot enforce is not a gate",
+                3)
+    return (OK, "rules vs guard", "every path section 5 protects is on the guard's list")
+
+
+def _fixtures_pass() -> tuple[str, str, str, int]:
+    """Run the pack's dry-run fixtures. No provider call, no GitHub call, ~2 seconds.
+
+    THIS IS ARCHON'S OWN TEST HARNESS AND THE FACTORY SHIPPED WITHOUT USING IT. The
+    sdlc pack carries 48 `fixtures/*.stubs.yaml` files; this pack carried none, so
+    every wiring failure in it was found the expensive way -- by dispatching a lap,
+    paying for a premium plan node, and reading a log.
+
+    What a fixture executes is the REAL DAG with the AI nodes stubbed: `when:`
+    conditions, `trigger_rule`s, `if_skipped` defaults, cancel nodes, and the
+    namespaced nodes an `include:` expands into. That is precisely the layer where
+    composing somebody else's workflow goes wrong, and none of it is visible by
+    reading the YAML.
+
+    A fixture also asserts what must NOT happen. A node absent from the stubs must be
+    skipped, because an unstubbed node that RAN fails the fixture -- so "the refusal
+    stopped the lap" and "the docs lens stayed off" are expressible as omissions.
+
+    Blocks level 1, the level at which workflows start dispatching unattended.
+    """
+    pack = config.ROOT / ".archon" / "workflows" / "factory"
+    if not pack.is_dir():
+        return (WARN, "workflow fixtures", "no factory pack installed yet", 99)
+    workflows = sorted(y.parent for y in pack.rglob("*.yaml") if y.parent.name != "fixtures")
+    bare = [w.name for w in workflows if not any((w / "fixtures").glob("*.stubs.yaml"))]
+    if bare:
+        return (FAIL, "workflow fixtures",
+                f"{', '.join(sorted(bare))} has no fixtures/*.stubs.yaml -- its wiring is "
+                "only ever exercised by a real dispatch, which is the expensive way to "
+                "find a binding that was never going to resolve", 1)
+    try:
+        p = subprocess.run(
+            [config.ARCHON_BIN, "workflow", "test", "factory"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=600, cwd=str(config.ROOT),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return (FAIL, "workflow fixtures",
+                "could not run `archon workflow test factory` -- UNKNOWN is not a pass", 1)
+    blob = (p.stdout or "") + (p.stderr or "")
+    tally = re.search(r"(\d+) passed, (\d+) failed", blob)
+    if p.returncode != 0 or not tally or tally.group(2) != "0":
+        detail = tally.group(0) if tally else "the runner reported no tally"
+        return (FAIL, "workflow fixtures",
+                f"{detail} -- run `{config.ARCHON_BIN} workflow test factory` to see which", 1)
+    return (OK, "workflow fixtures", f"{tally.group(1)} pass, no provider or GitHub calls")
+
+
 def main(argv: list[str]) -> int:
     want = None
     if "--level" in argv:
@@ -121,6 +314,8 @@ def main(argv: list[str]) -> int:
         except (OSError, subprocess.SubprocessError, IndexError):
             out = ""
         r.add(OK, "archon", out or "installed")
+        r.add(*_include_deny_supported())
+        r.add(*_fixtures_pass())
     else:
         r.add(FAIL, "archon", f"{config.ARCHON_BIN} not on PATH -- run `factory init`", 1)
 
@@ -284,6 +479,8 @@ def main(argv: list[str]) -> int:
     ):
         r.add(OK if has(path) else FAIL, name, "" if has(path) else "missing", level)
 
+    r.add(*_rules_match_guard())
+
     if config.MARKER_APP_RAN in config.REQUIRED_MARKERS and config.MARKER_E2E in config.REQUIRED_MARKERS:
         r.add(OK, "required markers", " ".join(config.REQUIRED_MARKERS))
     else:
@@ -315,7 +512,10 @@ def main(argv: list[str]) -> int:
 
     # --- the workflow pack ---------------------------------------------------
     pack = root / ".archon" / "workflows" / "factory"
-    found = sorted(p.stem for p in pack.rglob("*.yaml")) if pack.exists() else []
+    # NOT the fixtures/ beside them: a dry-run fixture is YAML about a workflow, not
+    # a workflow, and counting them reported nine in a five-workflow pack.
+    found = sorted(p.stem for p in pack.rglob("*.yaml")
+                   if p.parent.name != "fixtures") if pack.exists() else []
     expected = {
         "factory-triage", "factory-implement", "factory-validate",
         "factory-fix", "factory-regress",

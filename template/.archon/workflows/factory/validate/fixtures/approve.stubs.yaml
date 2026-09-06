@@ -1,0 +1,26 @@
+# The judgement path end to end: fetch narrowly, run the gate, compose the brief,
+# judge with no tools, apply in code.
+#
+# `judge` is the only node here whose output anything branches on, and `apply` is the
+# only node allowed to change state. That split is the whole design -- the model
+# produces a verdict, `factory/gate.py` decides whether the raw markers agree with it,
+# and the raw markers win when they do not.
+resolve: '{"target":"gh:pr:14","number":"14"}'
+prepare:
+  target: "gh:pr:14"
+  number: "14"
+  issue: "gh:issue:12"
+  branch: "factory/impl-12"
+  base: "main"
+gate-run: '{"markers_present":true,"exit_code":0,"summary":"PROTECTED_OK APP_STARTED E2E_PASSED HOLDOUT_PASSED MUTATIONS_OK GATE_OK"}'
+brief: "wrote the judge brief: diff, issue as filed, governance from base, gate log"
+judge:
+  verdict: approve
+  solves_issue: "yes"
+  summary: "stub: the diff does what the issue asked and nothing else"
+  issues_to_fix: []
+  rules_cited: []
+apply: "gh:pr:14 -> merged"
+fixture:
+  expect: completed
+  reached: [gate-run, brief, judge, apply]

@@ -18,6 +18,25 @@ description: |
   state the table forbids, and then the table is decoration.
 
 model: small
+
+# EVERY ONE OF THESE WORKFLOWS TALKS TO GITHUB, so say so. Archon hard-blocks a run at
+# invocation -- before a worktree, a clone or a single token -- when the originating
+# user has no GitHub identity connected. On a solo PAT install it is a no-op; on a
+# shared one it turns "the label never moved and nobody knows why" into a refusal with
+# a reason, which is the difference between a dead lap and an answer.
+requires: [github]
+
+# WORKFLOW-LEVEL `mutates_checkout` IS NOT THE NODE-LEVEL ONE, and the names being
+# identical is a trap worth naming here. On a NODE it is a post-run tree-integrity
+# assertion: the engine snapshots the working tree and fails the node if it changed.
+# On a WORKFLOW it means something else entirely -- skip the path-exclusive lock, so
+# several runs may share one live checkout. This is the second thing: triage runs
+# `--no-worktree` against the main checkout, writes nothing to it, and the dispatcher
+# hands it up to TRIAGE_BATCH issues, so serialising them would be pure latency.
+#
+# Do not "fix" this into a node-level assertion expecting the same guarantee. The
+# classifier's tree safety comes from `allowed_tools: []`, which is stronger: it has
+# no tool with which to write anything at all.
 mutates_checkout: false
 
 inputs:
