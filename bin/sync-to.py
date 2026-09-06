@@ -63,6 +63,42 @@ NEVER = {
 }
 
 
+CRLF, NL = chr(13) + chr(10), chr(10)
+
+# Text extensions, for the line-ending-insensitive compare below. Everything else is
+# compared byte for byte, which is what you want for anything that is not source.
+TEXT_SUFFIXES = {".py", ".md", ".yaml", ".yml", ".json", ".txt", ".sh", ".bat", ".ps1"}
+
+
+def same_content(src: Path, dest: Path) -> bool:
+    """Is the destination already this file, ignoring how the lines end?
+
+    A BYTE COMPARE IS THE WRONG QUESTION ON WINDOWS. git normalises line endings on
+    checkout per repository, so the same committed file is CRLF in one clone and LF in
+    another. `filecmp.cmp(shallow=False)` then calls every text file different, and the
+    sync:
+
+      - rewrites files nobody changed, flipping their endings back and forth, so every
+        run reports work it did not do and every repo shows a diff it did not make;
+      - reports every add-only file as diverged. That report exists to say "the template
+        changed and this install never got it", and a report that fires on all of them
+        every time is one people learn to scroll past. `pr-record.md` was reported as
+        diverged in both factories while being byte-identical apart from 
+.
+
+    So text is compared as text. Binary keeps the byte compare, where a stray byte IS
+    the difference.
+    """
+    if src.suffix.lower() not in TEXT_SUFFIXES:
+        return filecmp.cmp(src, dest, shallow=False)
+    try:
+        a = src.read_text(encoding="utf-8", errors="replace")
+        b = dest.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return a.replace(CRLF, NL) == b.replace(CRLF, NL)
+
+
 def missing_settings(dest: Path) -> list[tuple[str, str]]:
     """Settings the template has and this install does not.
 
@@ -162,7 +198,7 @@ def main(argv: list[str]) -> int:
         print(f"{dest} has no factory/ -- run `factory init` there first.", file=sys.stderr)
         return 1
 
-    changed, skipped = [], []
+    changed, skipped, protected = [], [], []
     for entry in SYNC:
         src = TEMPLATE / entry
         if not src.exists():
@@ -178,10 +214,15 @@ def main(argv: list[str]) -> int:
         for f in files:
             rel = f.relative_to(TEMPLATE).as_posix()
             if rel in NEVER:
-                skipped.append(rel)
+                # Checked BEFORE the content compare, so nothing is known about whether
+                # this one differs -- it is skipped because of what it IS. Reported
+                # separately for exactly that reason: the add-only list below can only
+                # contain files that genuinely diverged, and collapsing the two into one
+                # label makes a claim about these that was never tested.
+                protected.append(rel)
                 continue
             target = dest / rel
-            if target.exists() and filecmp.cmp(f, target, shallow=False):
+            if target.exists() and same_content(f, target):
                 continue
             if target.exists() and (
                 rel.startswith(ADD_ONLY_PREFIXES) or any(c in rel for c in ADD_ONLY_CONTAINS)
@@ -195,17 +236,19 @@ def main(argv: list[str]) -> int:
 
     for rel in changed:
         print(("would update " if dry else "updated ") + rel)
-    # "kept" only ever prints for a file that DIFFERS -- an identical one is skipped by
-    # the content compare above and never reaches here. So every line below is a real
-    # divergence, and it has two possible causes the sync cannot tell apart: you rewrote
-    # it, or the template changed and add-only meant the change never arrived. Saying
-    # "kept (yours)" asserts the first, and the second is the one that bites: both
-    # factories built on this template were still running the pre-integration `diagnose`
-    # prompt weeks after the workflow around it changed.
+    for rel in sorted(set(protected)):
+        print(f"yours, never synced  {rel}")
+    # THESE ONES GENUINELY DIFFER. An identical file is caught by the content compare
+    # above and never reaches the add-only branch, so every line here is a real
+    # divergence -- with two causes this cannot tell apart: you rewrote it, or the
+    # template changed and add-only meant the change never arrived. The old label said
+    # "kept (yours)", which asserts the first, and the second is the one that bites:
+    # both factories built on this template were still running the pre-integration
+    # `diagnose` prompt weeks after the workflow around it had changed.
     for rel in sorted(set(skipped)):
-        print(f"differs, kept  {rel}")
+        print(f"differs, kept        {rel}")
     print(f"\n{len(changed)} file(s) {'would change' if dry else 'changed'}, "
-          f"{len(set(skipped))} left alone")
+          f"{len(set(skipped)) + len(set(protected))} left alone")
 
     gaps = missing_settings(dest)
     if gaps:
