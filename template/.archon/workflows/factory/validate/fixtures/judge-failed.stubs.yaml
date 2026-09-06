@@ -1,0 +1,35 @@
+# THE JUDGE DIES, AND THIS FIXTURE PINS WHAT ACTUALLY HAPPENS NEXT.
+#
+# It is not hypothetical: the judge node died five times on
+# `error_max_structured_output_retries` -- a synonym off an enum on a field nobody
+# branches on -- and took a fifty-two-second validation, a live worktree and a human's
+# evening with it. The schema was narrowed to the one field the gate reads and one real
+# retry was added, and both fixes are still in the workflow.
+#
+# What was NOT fixed, deliberately, is the binding: `apply` reads `$judge.output`, and a
+# binding never falls back to `if_skipped` for a FAILED producer -- only for a skipped
+# one. So when the judge genuinely fails, `apply` cannot run either, and the PR is left
+# in `validating` for the dispatcher's stale-claim sweep to reclaim rather than being
+# reported by the node that exists to report.
+#
+# `fail-node` naming BOTH is the honest record of that. If someone later makes `apply`
+# survive a failed judge -- a `when:` that excludes the failed branch, or a separate
+# reporter bound to `resolve` -- this fixture goes red and the fix is to update it,
+# which is exactly when a limitation should be re-read. A fixture that only ever
+# describes the happy path cannot do that.
+#
+# `judge` carries no stub. An unstubbed node fails, which is how a fixture expresses
+# "this node died" without needing the failure to be simulable any other way.
+resolve: '{"target":"gh:pr:14","number":"14"}'
+prepare:
+  target: "gh:pr:14"
+  number: "14"
+  issue: "gh:issue:12"
+  branch: "factory/impl-12"
+  base: "main"
+gate-run: '{"markers_present":true,"exit_code":0,"summary":"PROTECTED_OK APP_STARTED E2E_PASSED GATE_OK"}'
+brief: "wrote the judge brief"
+fixture:
+  expect: failed
+  fail-node: [judge, apply]
+  reached: [gate-run, brief]

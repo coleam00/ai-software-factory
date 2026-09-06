@@ -132,6 +132,7 @@ def _include_deny_supported() -> tuple[str, str, str, int]:
     # exists to refuse.
     composed = [
         y for y in pack.rglob("*.yaml")
+        if y.parent.name != "fixtures"
         if "include:" in y.read_text(encoding="utf-8", errors="replace")
     ]
     if not composed:
@@ -245,6 +246,54 @@ def _rules_match_guard() -> tuple[str, str, str, int]:
     return (OK, "rules vs guard", "every path section 5 protects is on the guard's list")
 
 
+def _fixtures_pass() -> tuple[str, str, str, int]:
+    """Run the pack's dry-run fixtures. No provider call, no GitHub call, ~2 seconds.
+
+    THIS IS ARCHON'S OWN TEST HARNESS AND THE FACTORY SHIPPED WITHOUT USING IT. The
+    sdlc pack carries 48 `fixtures/*.stubs.yaml` files; this pack carried none, so
+    every wiring failure in it was found the expensive way -- by dispatching a lap,
+    paying for a premium plan node, and reading a log.
+
+    What a fixture executes is the REAL DAG with the AI nodes stubbed: `when:`
+    conditions, `trigger_rule`s, `if_skipped` defaults, cancel nodes, and the
+    namespaced nodes an `include:` expands into. That is precisely the layer where
+    composing somebody else's workflow goes wrong, and none of it is visible by
+    reading the YAML.
+
+    A fixture also asserts what must NOT happen. A node absent from the stubs must be
+    skipped, because an unstubbed node that RAN fails the fixture -- so "the refusal
+    stopped the lap" and "the docs lens stayed off" are expressible as omissions.
+
+    Blocks level 1, the level at which workflows start dispatching unattended.
+    """
+    pack = config.ROOT / ".archon" / "workflows" / "factory"
+    if not pack.is_dir():
+        return (WARN, "workflow fixtures", "no factory pack installed yet", 99)
+    workflows = sorted(y.parent for y in pack.rglob("*.yaml") if y.parent.name != "fixtures")
+    bare = [w.name for w in workflows if not any((w / "fixtures").glob("*.stubs.yaml"))]
+    if bare:
+        return (FAIL, "workflow fixtures",
+                f"{', '.join(sorted(bare))} has no fixtures/*.stubs.yaml -- its wiring is "
+                "only ever exercised by a real dispatch, which is the expensive way to "
+                "find a binding that was never going to resolve", 1)
+    try:
+        p = subprocess.run(
+            [config.ARCHON_BIN, "workflow", "test", "factory"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=600, cwd=str(config.ROOT),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return (FAIL, "workflow fixtures",
+                "could not run `archon workflow test factory` -- UNKNOWN is not a pass", 1)
+    blob = (p.stdout or "") + (p.stderr or "")
+    tally = re.search(r"(\d+) passed, (\d+) failed", blob)
+    if p.returncode != 0 or not tally or tally.group(2) != "0":
+        detail = tally.group(0) if tally else "the runner reported no tally"
+        return (FAIL, "workflow fixtures",
+                f"{detail} -- run `{config.ARCHON_BIN} workflow test factory` to see which", 1)
+    return (OK, "workflow fixtures", f"{tally.group(1)} pass, no provider or GitHub calls")
+
+
 def main(argv: list[str]) -> int:
     want = None
     if "--level" in argv:
@@ -266,6 +315,7 @@ def main(argv: list[str]) -> int:
             out = ""
         r.add(OK, "archon", out or "installed")
         r.add(*_include_deny_supported())
+        r.add(*_fixtures_pass())
     else:
         r.add(FAIL, "archon", f"{config.ARCHON_BIN} not on PATH -- run `factory init`", 1)
 
@@ -462,7 +512,10 @@ def main(argv: list[str]) -> int:
 
     # --- the workflow pack ---------------------------------------------------
     pack = root / ".archon" / "workflows" / "factory"
-    found = sorted(p.stem for p in pack.rglob("*.yaml")) if pack.exists() else []
+    # NOT the fixtures/ beside them: a dry-run fixture is YAML about a workflow, not
+    # a workflow, and counting them reported nine in a five-workflow pack.
+    found = sorted(p.stem for p in pack.rglob("*.yaml")
+                   if p.parent.name != "fixtures") if pack.exists() else []
     expected = {
         "factory-triage", "factory-implement", "factory-validate",
         "factory-fix", "factory-regress",

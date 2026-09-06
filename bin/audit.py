@@ -66,6 +66,18 @@ def _mini_yaml(path: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def workflow_yamls(pack: Path) -> list[Path]:
+    """The workflow definitions, and NOT the dry-run fixtures beside them.
+
+    `fixtures/*.stubs.yaml` live inside the pack and are YAML, so every scan that
+    globbed the tree started reading them as workflows the moment the first one landed:
+    the node-output check fails on `$plan.output.ready` quoted in a fixture COMMENT, and
+    the doctor cheerfully reported nine workflows in a five-workflow pack. A fixture is
+    test data about a workflow, not a workflow.
+    """
+    return sorted(y for y in pack.rglob("*.yaml") if y.parent.name != "fixtures")
+
+
 def check_node_outputs(root: Path) -> None:
     """Every `$node.output.field` must be a field the producer actually declares.
 
@@ -82,7 +94,7 @@ def check_node_outputs(root: Path) -> None:
         fail("workflow pack", f"not found at {pack}")
         return
 
-    for wf in sorted(pack.rglob("*.yaml")):
+    for wf in workflow_yamls(pack):
         text = wf.read_text(encoding="utf-8")
         declared: dict[str, set[str]] = {}
         # A node whose output this file cannot describe: `include:` inlines another
@@ -136,7 +148,7 @@ def check_emitting_scripts(root: Path) -> None:
         return
 
     consumed: set[str] = set()
-    for wf in sorted(pack.rglob("*.yaml")):
+    for wf in workflow_yamls(pack):
         text = wf.read_text(encoding="utf-8")
         for block in re.split(r"^  - id:\s*", text, flags=re.M)[1:]:
             node_id = block.split("\n", 1)[0].strip()
@@ -173,6 +185,70 @@ def check_emitting_scripts(root: Path) -> None:
             ast.parse(src)
         except SyntaxError as e:
             fail("emitting script", f"{key} does not parse: line {e.lineno}, {e.msg}")
+
+
+def check_script_inputs_are_bound(root: Path) -> None:
+    """Every INPUTS_ a workflow script reads is bound by the node that runs it.
+
+    THE FAILURE MODE IS PERMISSIVE, WHICH IS WHY THIS IS A FAIL AND NOT A WARNING.
+    A workflow script reads its inputs out of the environment:
+
+        plan_ready = (os.environ.get("INPUTS_PLAN_READY") or "").strip().lower()
+
+    An unbound name is not an error. It is the empty string, and every one of these
+    scripts treats empty as "nothing to act on" -- so severing the binding does not
+    break the gate, it opens it. `gate-plan.py` with no `plan_ready:` in its `with:`
+    block cannot see a planner's refusal and every issue proceeds, including the ones
+    archon-plan explicitly declined to plan. Nothing fails, nothing is logged, and the
+    only symptom is a factory that never escalates.
+
+    That binding is also the ONLY thing carrying the pack's refusal into this
+    workflow: `archon-plan` writes no ESCALATE sentinel, so the field is the whole
+    mechanism. It is exactly the kind of one-line wire that survives every test
+    because every test stubs the node that reads it.
+
+    Bindings are unioned across every node that runs a given script inside one
+    workflow folder, because a script is shared between the workflows in it.
+    """
+    pack = root / ".archon" / "workflows" / "factory"
+    if not pack.is_dir():
+        return
+
+    bound: dict[str, set[str]] = {}
+    for wf in workflow_yamls(pack):
+        text = wf.read_text(encoding="utf-8")
+        for block in re.split(r"^  - id:\s*", text, flags=re.M)[1:]:
+            script = re.search(r"^\s{4}script:\s*(\S+)", block, re.M)
+            if not script:
+                continue
+            with_block = re.search(r"^\s{4}with:\s*$(.*?)(?=^\s{0,4}\S|\Z)", block,
+                                   re.M | re.S)
+            keys = set()
+            if with_block:
+                keys = {m.group(1).upper()
+                        for m in re.finditer(r"^\s{6}(\w+):", with_block.group(1), re.M)}
+            bound.setdefault(f"{wf.parent.name}/{script.group(1)}", set()).update(keys)
+
+    for key, keys in sorted(bound.items()):
+        folder, name = key.split("/", 1)
+        path = pack / folder / "scripts" / f"{name}.py"
+        if not path.exists():
+            continue
+        src = path.read_text(encoding="utf-8", errors="replace")
+        read = {m.group(1) for m in re.finditer(r"INPUTS_([A-Z0-9_]+)", src)}
+        for missing in sorted(read - keys):
+            fail(
+                "script inputs",
+                f"{key} reads INPUTS_{missing} and no node running it binds "
+                f"'{missing.lower()}' -- an unbound input is the empty string, and "
+                f"these scripts read empty as 'nothing to act on', so the gate opens "
+                f"instead of failing",
+            )
+        for unused in sorted(keys - read):
+            warn(
+                "script inputs",
+                f"{key} is passed '{unused.lower()}' and never reads INPUTS_{unused}",
+            )
 
 
 def check_all_scripts_parse(root: Path) -> None:
@@ -212,7 +288,7 @@ def check_scoped_grants(root: Path) -> None:
     pack = root / ".archon" / "workflows" / "factory"
     if not pack.is_dir():
         return
-    for wf in sorted(pack.rglob("*.yaml")):
+    for wf in workflow_yamls(pack):
         for i, line in enumerate(wf.read_text(encoding="utf-8").splitlines(), 1):
             stripped = line.strip()
             if stripped.startswith("#"):
@@ -242,7 +318,7 @@ def check_yaml_booleans(root: Path) -> None:
     except ImportError:
         warn("yaml booleans", "PyYAML not installed; this check was skipped")
         return
-    for wf in sorted(pack.rglob("*.yaml")):
+    for wf in workflow_yamls(pack):
         spec = yaml.safe_load(wf.read_text(encoding="utf-8")) or {}
         for node in spec.get("nodes", []) or []:
             props = ((node.get("output_format") or {}).get("properties") or {})
@@ -370,7 +446,7 @@ def check_no_freelance_writes(root: Path) -> None:
         (r"gh\s+issue\s+close", "disposes of an issue outside the transition table"),
     ]
     pack = root / ".archon" / "workflows" / "factory"
-    for p in list(pack.rglob("*.py")) + list(pack.rglob("*.md")) + list(pack.rglob("*.yaml")):
+    for p in list(pack.rglob("*.py")) + list(pack.rglob("*.md")) + workflow_yamls(pack):
         text = p.read_text(encoding="utf-8", errors="replace")
         for pattern, why in banned:
             if re.search(pattern, text):
@@ -493,7 +569,7 @@ def check_deny_lists(root: Path) -> None:
     code aimed at exactly those assertions instead of at the problem.
     """
     pack = root / ".archon" / "workflows" / "factory"
-    for wf in sorted(pack.rglob("*.yaml")):
+    for wf in workflow_yamls(pack):
         text = wf.read_text(encoding="utf-8")
         for block in re.split(r"^  - id:\s*", text, flags=re.M)[1:]:
             node_id = block.split("\n", 1)[0].strip()
@@ -906,6 +982,7 @@ def main(argv: list[str]) -> int:
 
     print(f"auditing {root}\n")
 
+    check_script_inputs_are_bound(root)
     check_all_scripts_parse(root)
     check_node_outputs(root)
     check_emitting_scripts(root)

@@ -1,0 +1,21 @@
+# THE HARNESS ITSELF FAILED, AND THE CORRECT NUMBER OF ISSUES TO FILE IS ZERO.
+#
+# A port collision, a missing dependency, a checkout that did not complete: the suite
+# is red and the product is fine. The diagnose node is reached -- the gate is on
+# `green == false`, not on the cause -- and reports `infrastructure_failure: true`,
+# which is the signal `file-issues` must read before it opens anything.
+#
+# Getting this wrong is worse than missing a bug. A factory that files product bugs
+# whenever it cannot prove its own harness ran poisons its own backlog with fiction,
+# and at level 4 it then TRIAGES that fiction, builds against it, and spends a premium
+# model on a defect that never existed.
+sync: '{"sha":"fedcba9876543210fedcba9876543210fedcba98","subject":"chore: bump the runner"}'
+suite: '{"green":false,"harness_ran":false,"failed_step":"app start","summary":"port 8080 already in use; no journey ran"}'
+diagnose:
+  infrastructure_failure: true
+  findings: []
+  summary: "stub: the app never started, so nothing was exercised and nothing is known about the code"
+file-issues: "harness did not run; 0 issues filed"
+fixture:
+  expect: completed
+  reached: [diagnose, file-issues]
