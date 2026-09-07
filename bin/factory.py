@@ -99,6 +99,18 @@ ARCHON_SOURCE = "https://github.com/coleam00/Archon"
 ARCHON_REF = "feat/include-tool-policy"
 
 
+def _bun_global_bin() -> Path:
+    """Where bun puts global binaries. `bun pm bin -g` knows, but on a home with no
+    global installs yet it prints advice instead of a path, so fall back to the
+    documented default."""
+    rc, out = run(["bun", "pm", "bin", "-g"], timeout=60)
+    for line in (out or "").splitlines():
+        line = line.strip()
+        if rc == 0 and line and os.path.isabs(line) and " " not in line:
+            return Path(line)
+    return Path(os.environ.get("BUN_INSTALL", "") or (Path.home() / ".bun")) / "bin"
+
+
 def ensure_archon(auto: bool) -> bool:
     """Install Archon if it is not here. The OpenClaw/Pi step.
 
@@ -161,18 +173,40 @@ def ensure_archon(auto: bool) -> bool:
     if rc != 0:
         warn(f"bun install failed:\n{out[-1200:]}")
         return False
-    step("linking       bun link  (puts `archon` on PATH via ~/.bun/bin)")
-    rc, out = run(["bun", "link"], timeout=300, cwd=dest)
-    if rc != 0:
-        warn(f"bun link failed:\n{out[-800:]}")
+    # THE BINARY IS A SYMLINK TO THE CLI ENTRY, which is how a working install looks
+    # (`~/.bun/bin/archon -> .../@archon/cli/src/cli.ts`, shebang `#!/usr/bin/env bun`).
+    # `bun link` alone only registers the package name and puts nothing on PATH --
+    # verified in an isolated home on a VPS: linked, and `archon` still not found.
+    entry = dest / "packages" / "cli" / "src" / "cli.ts"
+    if not entry.exists():
+        warn(f"the clone has no packages/cli/src/cli.ts; the layout changed and this "
+             f"installer needs updating.")
         return False
+    bin_dir = _bun_global_bin()
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        if os.name == "nt":
+            shim = bin_dir / "archon.cmd"
+            shim.write_text(f'@echo off\r\nbun "{entry}" %*\r\n', encoding="utf-8")
+        else:
+            link = bin_dir / "archon"
+            if link.is_symlink() or link.exists():
+                link.unlink()
+            os.symlink(entry, link)
+            entry.chmod(entry.stat().st_mode | 0o111)
+    except OSError as e:
+        warn(f"could not put `archon` in {bin_dir}: {e}")
+        return False
+    step(f"linking       {bin_dir / 'archon'} -> {entry}")
 
-    if not shutil.which("archon"):
-        bun_bin = Path.home() / ".bun" / "bin"
+    if str(bin_dir) not in os.environ.get("PATH", "").split(os.pathsep):
+        os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
         warn(
-            f"Archon is linked but `archon` is not on PATH in this shell.\n"
-            f"    Add {bun_bin} to PATH (bun's installer does this in a NEW shell) and re-run."
+            f"{bin_dir} is not on your PATH. It is for the rest of this install; add it to\n"
+            f"    your shell profile (bun's installer does this) so the factory finds it later."
         )
+    if not shutil.which("archon"):
+        warn(f"`archon` is still not on PATH after linking into {bin_dir}.")
         return False
     rc, out = run(["archon", "version"], timeout=120)
     step(f"engine        {out.strip().splitlines()[0] if out.strip() else 'archon installed'}")
