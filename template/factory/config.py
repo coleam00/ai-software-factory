@@ -381,7 +381,7 @@ HOLDOUT_DIR = ROOT / _env("FACTORY_HOLDOUT_DIR", ".factory/holdout")
 # Config files that must be git-ignored before any node that can commit runs. An
 # empty `git check-ignore` result means your next run publishes your key.
 SECRET_FILES = _env(
-    "FACTORY_SECRET_FILES", ".env .env.local secrets.json credentials.json"
+    "FACTORY_SECRET_FILES", ".env .env.local secrets.json credentials.json .factory/cron.env"
 ).split()
 
 # SHARED, not ROOT. Every one of these must outlive the worktree that wrote it --

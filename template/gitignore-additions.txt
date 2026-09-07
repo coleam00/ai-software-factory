@@ -45,6 +45,9 @@ uv.lock
 .factory/loop.pid
 .factory/assumptions/
 .factory/followups/
+# The arming shell's environment, snapshotted for cron (which has none). It carries
+# the agent's login and the provider keys, so it is a secret, mode 600, never committed.
+.factory/cron.env
 
 # What the agent-driven rungs wrote THIS run. Evidence for one gate, not source.
 # Committing them would let a stale result from a build that no longer exists be

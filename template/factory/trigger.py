@@ -65,6 +65,44 @@ def status() -> int:
     return 0
 
 
+CRON_ENV_PREFIXES = (
+    "FACTORY_", "CLAUDE_", "ANTHROPIC_", "ARCHON_", "OPENAI_", "OPENROUTER_",
+    "GEMINI_", "GOOGLE_", "KIMI_", "MOONSHOT_", "DEEPSEEK_", "MINIMAX_", "XAI_",
+    "GH_", "GITHUB_",
+)
+
+
+def write_cron_env() -> Path:
+    """Snapshot the arming shell's environment for cron, which has none.
+
+    A crontab entry runs with PATH=/usr/bin:/bin and nothing else. The engine lives in
+    ~/.bun/bin, the coding agent in ~/.local/bin, and its login is an environment
+    variable that only the interactive shell exports. So the shipped entry woke up
+    every N minutes, found neither `archon` nor a logged-in agent, and wrote an error to
+    a log nobody reads -- which is indistinguishable, from the outside, from a factory
+    with nothing to do. Found by running the tick under `env -i` on a real VPS.
+
+    PATH plus every variable a provider or this factory reads, shell-quoted, mode 600,
+    gitignored. The cron line sources it before dispatching, so the tick sees exactly
+    what `factory arm` saw.
+    """
+    env_file = config.SHARED / ".factory" / "cron.env"
+    env_file.parent.mkdir(parents=True, exist_ok=True)
+    keep = {k: v for k, v in os.environ.items()
+            if k == "PATH" or k == "HOME" or k.startswith(CRON_ENV_PREFIXES)}
+    body = "\n".join(f"export {k}={_sh_quote(v)}" for k, v in sorted(keep.items())) + "\n"
+    env_file.write_text("# written by `factory arm`; re-arm to refresh\n" + body, encoding="utf-8")
+    try:
+        os.chmod(env_file, 0o600)
+    except OSError:
+        pass
+    return env_file
+
+
+def _sh_quote(value: str) -> str:
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
 def install_cron() -> int:
     rc = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=60)
     existing = rc.stdout if rc.returncode == 0 else ""
@@ -73,12 +111,13 @@ def install_cron() -> int:
         return 0
 
     log = config.SHARED / ".factory" / "factory.log"
+    env_file = write_cron_env()
     lines = [
         existing.rstrip(),
         f"# {config.TASK_NAME} -- the factory dispatcher",
-        f"*/{config.INTERVAL_MINUTES} * * * * cd {config.SHARED} && {DISPATCH} >> {log} 2>&1",
+        f"*/{config.INTERVAL_MINUTES} * * * * cd {config.SHARED} && . {env_file} && {DISPATCH} >> {log} 2>&1",
         f"# {config.TASK_NAME} -- the scheduled regression",
-        f"{config.REGRESS_CRON} cd {config.SHARED} && {REGRESS} >> {log} 2>&1",
+        f"{config.REGRESS_CRON} cd {config.SHARED} && . {env_file} && {REGRESS} >> {log} 2>&1",
         "",
     ]
     p = subprocess.run(["crontab", "-"], input="\n".join(lines), text=True, timeout=60)
@@ -209,6 +248,9 @@ def remove() -> int:
             subprocess.run(["crontab", "-"], input="\n".join(kept) + "\n", text=True, timeout=60)
             removed = True
     config.TRIGGER_FILE.unlink(missing_ok=True)
+    # The env snapshot holds the agent's login. Nothing reads it once the entry is
+    # gone, so leaving it is a secret on disk for no reason.
+    (config.SHARED / ".factory" / "cron.env").unlink(missing_ok=True)
     print("DISARMED" if removed else "DISARMED (nothing was armed)")
     return 0
 
