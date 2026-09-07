@@ -137,12 +137,35 @@ def _in_window(events: list[dict], now: datetime, minutes: int) -> list[dict]:
     return keep
 
 
+def _after_last_halt(events: list[dict]) -> list[dict]:
+    """A HALT IS A BOUNDARY. Everything before it has been judged, written to STOP,
+    and handed to a human; deleting STOP is that human saying they read it.
+
+    Without this the factory could never be resumed. The first version re-read the
+    whole window on the tick after STOP was removed, found the same escalation and
+    the same dispatch, and halted again on evidence a person had already acted on --
+    forever, until the ledger itself was edited. On a real VPS: cleared at 16:37,
+    halted again at 16:38, on two events from an hour earlier. A stop button that
+    cannot be un-pressed is a different failure from a runaway, but it is still the
+    safety system being the outage.
+
+    The cost is honest and worth saying: a spend cap is now "since the last halt" rather
+    than "in the last window". A human who resumes after a spend halt has chosen to
+    spend again, which is what resuming means.
+    """
+    last = -1
+    for i, e in enumerate(events):
+        if e.get("kind") == ledger.HALT:
+            last = i
+    return events[last + 1:] if last >= 0 else events
+
+
 def assess(events: list[dict], now: datetime | None = None,
            limits: Limits | None = None) -> list[Finding]:
     """PURE. Given a history, what is wrong with it? No I/O, no clock of its own."""
     now = now or datetime.now(timezone.utc)
     lim = limits or Limits()
-    win = _in_window(events, now, lim.window_minutes)
+    win = _after_last_halt(_in_window(events, now, lim.window_minutes))
     findings: list[Finding] = []
 
     dispatches = [e for e in win if e.get("kind") == ledger.DISPATCH]

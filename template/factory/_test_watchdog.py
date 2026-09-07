@@ -133,6 +133,21 @@ def detector_proofs() -> None:
     check("D2 does NOT fire when the dispatch PRECEDES the escalation",
           not fired(ordered, "escalation-ignored"),
           "escalating after a run is the normal path and must not halt")
+    # A HALT IS A BOUNDARY. Once the watchdog has halted on these two events and a
+    # human has cleared STOP, re-reading them must not halt again -- on a real VPS the
+    # factory was cleared at 16:37 and halted at 16:38 on an hour-old pair, forever.
+    acknowledged = ignored + [ev(ledger.HALT, 10, reason="escalation-ignored")]
+    check("D2 does NOT re-fire on events before the most recent halt",
+          not fired(acknowledged, "escalation-ignored"),
+          "a cleared halt came straight back on evidence a human already acted on; "
+          "the stop button could never be un-pressed")
+    # ...but the boundary is not amnesty. The same shape AFTER the halt fires again.
+    repeated = acknowledged + [
+        ev(ledger.ESCALATE, 8, target="gh:pr:14", reason="size cap"),
+        ev(ledger.DISPATCH, 4, action="validate", target="gh:pr:14", run="x3"),
+    ]
+    check("D2 fires again on an escalate-then-dispatch AFTER the halt",
+          fired(repeated, "escalation-ignored"))
 
     # --- D3 all-failing --------------------------------------------------------
     failing = [ev(ledger.SETTLE, 50 - i * 5, run=f"f{i}", status="failed", cost_usd=0.2)
