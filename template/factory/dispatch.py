@@ -651,6 +651,67 @@ def release_settled_locks(payload_override: dict | list | None = None,
             lock.unlink(missing_ok=True)
 
 
+def run_deploy(reason: str, quiet_noop: bool = False) -> None:
+    """Run the deploy poll and REPORT what it did. Called after the dispatcher's own
+    merge, and once per tick regardless.
+
+    THE MERGE IS NOT ALWAYS THE DISPATCHER'S. When the validate workflow merges
+    inline it prints "NEXT: python factory/deploy.py" and finishes, and the first
+    version of this only deployed on the dispatcher's own merge action -- so main
+    advanced, the running service did not, and the loop the fifth component exists
+    to close stayed open. Found on a real VPS: pull request merged at 16:49, three
+    ticks of "nothing to do", the live page serving the new template through the old
+    process. deploy.py already no-ops when nothing changed, so polling it every tick
+    costs one fetch and is the mechanism its own docstring asks for: a poll cannot be
+    silently skipped.
+    """
+    deploy = Path(__file__).parent / "deploy.py"
+    if not deploy.exists():
+        return
+    # THE RESULT IS CHECKED. This used to discard it, so a deploy that failed after
+    # a successful merge was completely silent: the code landed, the deploy broke,
+    # and the lap reported clean. It never mattered while FACTORY_DEPLOY_CMD was
+    # unset, because deploy.py then prints DEPLOY_NOT_CONFIGURED and exits 0 --
+    # wiring the fifth component turned a dormant hole into a live one.
+    dep = subprocess.run(
+        [sys.executable, str(deploy)], cwd=str(config.ROOT),
+        capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=1800,
+    )
+    tail = ((dep.stdout or "") + (dep.stderr or "")).strip()
+    if dep.returncode != 0:
+        # NOT an escalation of a pull request. The merge succeeded and the code is
+        # on main; marking a merged PR needs-human sends a person to look at
+        # something already done while leaving the real problem -- an undeployed
+        # main -- unnamed.
+        log(f"DEPLOY_FAILED {reason} (exit {dep.returncode})")
+        for line in tail.splitlines()[-6:]:
+            log(f"  {line[:200]}")
+        log("  THE CODE IS MERGED. What failed is the deploy, so main is "
+            "ahead of what is running.")
+        try:
+            config.NEEDS_HUMAN.parent.mkdir(parents=True, exist_ok=True)
+            with config.NEEDS_HUMAN.open("a", encoding="utf-8") as fh:
+                fh.write(
+                    f"- {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}  "
+                    f"main  (deploy)  the deploy failed {reason} (exit "
+                    f"{dep.returncode}). main is ahead of what is running.\n"
+                )
+        except OSError:
+            pass
+        log(notify.send(
+            "the deploy",
+            f"the deploy failed {reason} (exit {dep.returncode}). main is ahead of "
+            f"what is running.",
+        ))
+        return
+    marker = "DEPLOYED" if "DEPLOYED" in tail else (
+        "DEPLOY_NOOP" if "DEPLOY_NOOP" in tail else "deploy ran")
+    if quiet_noop and marker == "DEPLOY_NOOP":
+        return
+    log(f"DEPLOY_OK {reason}: {marker}")
+
+
 def main() -> int:
     # =========================================================================
     # 1. THE STOP BUTTON. Checked first, every time, before anything else is read.
@@ -722,6 +783,15 @@ def main() -> int:
     release_settled_locks()
     reap_locks()
     held = {p.stem for p in in_flight()}
+
+    # =========================================================================
+    # 2b. CLOSE THE LOOP. Every tick, not only after this process merged.
+    # =========================================================================
+    # A merge can land from the validate workflow, from a human, or from a tick that
+    # died between merge and deploy. deploy.py no-ops when main is already what is
+    # running, so this is one fetch per tick and never a second deploy.
+    if config.DEPLOY_CMD and not DRY_RUN:
+        run_deploy("on the tick's deploy poll", quiet_noop=True)
 
     # WHAT THIS TICK ESCALATED, so the same tick cannot dispatch it again.
     #
@@ -837,50 +907,7 @@ def main() -> int:
                 cwd=str(config.ROOT),
             ).returncode
             if rc == 0:
-                deploy = Path(__file__).parent / "deploy.py"
-                if deploy.exists():
-                    # THE RESULT IS CHECKED. This used to discard it, so a deploy that
-                    # failed after a successful merge was completely silent: the code
-                    # landed, the deploy broke, and the lap reported clean. It never
-                    # mattered while FACTORY_DEPLOY_CMD was unset, because deploy.py
-                    # then prints DEPLOY_NOT_CONFIGURED and exits 0 -- wiring the fifth
-                    # component turned a dormant hole into a live one.
-                    dep = subprocess.run(
-                        [sys.executable, str(deploy)], cwd=str(config.ROOT),
-                        capture_output=True, text=True, encoding="utf-8",
-                        errors="replace", timeout=1800,
-                    )
-                    tail = ((dep.stdout or "") + (dep.stderr or "")).strip()
-                    if dep.returncode != 0:
-                        # NOT an escalation of the pull request. The merge succeeded and
-                        # the code is on main; marking a merged PR needs-human sends a
-                        # person to look at something already done while leaving the real
-                        # problem -- an undeployed main -- unnamed.
-                        log(f"DEPLOY_FAILED after merging {target} (exit {dep.returncode})")
-                        for line in tail.splitlines()[-6:]:
-                            log(f"  {line[:200]}")
-                        log("  THE CODE IS MERGED. What failed is the deploy, so main is "
-                            "ahead of what is running.")
-                        try:
-                            config.NEEDS_HUMAN.parent.mkdir(parents=True, exist_ok=True)
-                            with config.NEEDS_HUMAN.open("a", encoding="utf-8") as fh:
-                                fh.write(
-                                    f"- {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}  "
-                                    f"{target}  (deploy)  merged, but the deploy failed "
-                                    f"(exit {dep.returncode}). main is ahead of what is "
-                                    f"running.\n"
-                                )
-                        except OSError:
-                            pass
-                        log(notify.send(
-                            "the deploy",
-                            f"{target} merged but the deploy failed (exit "
-                            f"{dep.returncode}). main is ahead of what is running.",
-                        ))
-                    else:
-                        marker = "DEPLOYED" if "DEPLOYED" in tail else (
-                            "DEPLOY_NOOP" if "DEPLOY_NOOP" in tail else "deploy ran")
-                        log(f"DEPLOY_OK after merging {target}: {marker}")
+                run_deploy(f"after merging {target}")
             elif rc == 2:
                 # ALREADY HANDLED. The branch went stale while it was in flight --
                 # somebody pushed to main, which on any repo with velocity is Tuesday

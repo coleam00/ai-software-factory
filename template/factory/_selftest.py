@@ -572,6 +572,20 @@ def deploy_checks() -> None:
     check("the marker loop still runs after both guards",
           "for marker in config.HEALTH_MARKERS:" in src)
 
+    # THE MERGE IS NOT ALWAYS THE DISPATCHER'S. The validate workflow merges inline
+    # and prints "NEXT: python factory/deploy.py"; the first dispatcher only deployed
+    # after its own merge action, so main advanced and the running service did not.
+    # The poll has to run every tick, before the priority order, so a merge from any
+    # source reaches a user within one interval.
+    disp = (Path(__file__).resolve().parent / "dispatch.py").read_text(encoding="utf-8")
+    main_body = disp[disp.find("\ndef main() -> int:"):]
+    poll = main_body.find("run_deploy(")
+    order = main_body.find("PRIORITY ORDER")
+    check("the dispatcher polls the deploy on every tick, before the priority order",
+          0 <= poll < order,
+          "a merge the validate workflow made was never deployed: three ticks of "
+          "'nothing to do' with main ahead of what was running")
+
 
 # --- one issue, one lap ------------------------------------------------------
 
