@@ -265,6 +265,51 @@ factory on its own. It cannot tell you that it did.
 
 ---
 
+## Running it on a server
+
+A factory that only runs while your laptop is open is a demo. It wants a Linux box
+that never sleeps: root, cron, a firewall you control, and a way to reach it. Any
+provider. The steps are the same everywhere; only who you ask differs.
+
+**1. The box.** The smallest plan with 8 GB of RAM is plenty; the expensive part is the
+model, not the server. Most hosts now have an MCP server, a CLI, or an API your coding
+agent can drive, so the provisioning, the SSH key, the firewall and the snapshot can all
+be one conversation. Make a key on your laptop first:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/factory -N ""
+```
+
+then ask the agent to install the public half, open only 22/80/443, and snapshot.
+
+**2. The toolchain.** One script, idempotent, Ubuntu:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/coleam00/ai-software-factory/main/bin/bootstrap-ubuntu.sh | bash
+```
+
+**3. The two logins only a person can do.** Both need a browser once, on your laptop.
+
+```bash
+gh auth login --hostname github.com --git-protocol https --web   # device code
+gh auth setup-git                                                 # so git itself can push
+claude setup-token          # on your LAPTOP; then on the box:
+echo 'export CLAUDE_CODE_OAUTH_TOKEN=<token>' >> ~/.bashrc && source ~/.bashrc
+```
+
+**4. Install and arm.** `factory init` in your repo, the three files, `factory doctor`
+until it is green, then `factory arm` writes the crontab entry. It snapshots the shell's
+environment into `.factory/cron.env` (mode 600, gitignored) because cron has no PATH and
+no login of its own. Set `FACTORY_NTFY_TOPIC` or `FACTORY_WEBHOOK_URL` before you arm.
+
+**5. Close the loop.** Three lines in `factory/config.py`: `DEPLOY_CMD` (for a Python
+app behind Caddy: `git pull --ff-only origin main && systemctl restart <app>`),
+`HEALTH_CMD` (`curl -fsS https://<domain>/health`) and `HEALTH_MARKERS` (`ok`). The
+dispatcher polls the deploy every tick and only moves the pointer when the health check
+answers, so a merge reaches a user within one interval or is reported.
+
+---
+
 ## What it does not do
 
 **It does not push.** Filing an issue does not trigger a run. A scheduler wakes on
