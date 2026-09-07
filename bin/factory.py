@@ -554,7 +554,21 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     # --- what now -------------------------------------------------------------
     say()
-    say("  Installed. The dial is at 0, so nothing dispatches until you raise it.")
+    # Read the dial back rather than assuming a fresh install: a repo that already
+    # carries a committed factory/config.py (a clone of a working factory) installs
+    # at whatever level that file says, and telling its owner "0" is a lie.
+    dial = 0
+    try:
+        m = re.search(r'AUTONOMY = _env_int\("FACTORY_AUTONOMY", (\d+)\)',
+                      (root / "factory" / "config.py").read_text(encoding="utf-8"))
+        dial = int(m.group(1)) if m else 0
+    except OSError:
+        pass
+    if dial == 0:
+        say("  Installed. The dial is at 0, so nothing dispatches until you raise it.")
+    else:
+        say(f"  Installed. The dial is at {dial} (from the committed factory/config.py); "
+            f"run the doctor before arming it here.")
     say()
     say("  Three files are yours. Nothing can write them for you:")
     say()
