@@ -80,6 +80,24 @@ def lock_checks(tmp: Path) -> None:
         check("the run id is read back off the lock",
               dispatch.lock_run_id(lk) == run_id)
 
+        # THE ENGINE'S ID SHAPE IS NOT OURS TO ASSUME. A newer Archon writes 32 bare
+        # hex characters; a parser that only knew the hyphenated form read every such
+        # lock as "names no run" and the pid reaper freed it under a live lap.
+        bare = "114b224f5e16b94b312599f0828a3edf"
+        lk_bare = config.LOCKS_RUNTIME / "implement-gh-issue-14.lock"
+        lk_bare.unlink(missing_ok=True)
+        assert dispatch.acquire(lk_bare)
+        with lk_bare.open("a", encoding="utf-8") as fh:
+            fh.write("run " + bare + "\n")
+        check("a bare 32-hex run id is read back off the lock",
+              dispatch.lock_run_id(lk_bare) == bare,
+              "a lock holding a live run read back as 'names no run' and was reaped "
+              "under it; the lap went on to open a pull request")
+        check("a bare id does not match inside a 40-character commit sha",
+              dispatch.RUN_ID_RE.search(
+                  "at 0123456789abcdef0123456789abcdef01234567 on main") is None)
+        lk_bare.unlink(missing_ok=True)
+
         dispatch.release_settled_locks(payload_override={"runs": []})
         check("an EMPTY run list keeps the lock", lk.exists(),
               "empty was treated as an answer; this is the original incident")

@@ -112,8 +112,16 @@ def escalate(target: str, why: str) -> set[str]:
     return parked
 
 
+# BOTH SHAPES. One Archon build writes hyphenated UUIDs, a newer one writes 32 bare
+# hex characters, and the factory has to read the id it was given back off its own
+# lock either way. The first version matched only the hyphenated form; on the bare
+# form every lock read back as "names no run", the five-minute pid reaper freed it
+# under a live lap, and the reconcile sweep escalated a lap that went on to open a
+# pull request. The word boundaries keep a bare id from matching the first 32
+# characters of a 40-character commit sha in the same log.
 RUN_ID_RE = re.compile(
-    r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+    r"\b([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+    r"|[0-9a-fA-F]{32})\b"
 )
 # A run in any of these is over. Anything else -- INCLUDING a status this version of
 # the engine has never been seen to emit -- counts as still running, because the
@@ -531,11 +539,20 @@ def run_cost(run_id: str) -> float | None:
 
 
 def lock_run_id(lock: Path) -> str:
-    """The Archon run id recorded on a lock, or empty if it carries none."""
+    """The Archon run id recorded on a lock, or empty if it carries none.
+
+    Read the `run <id>` line dispatch() wrote rather than pattern-matching the file:
+    the id is whatever the engine said it was, and a parser that only recognises one
+    engine's id shape turns a held lock into a reaped one (see RUN_ID_RE).
+    """
     try:
-        m = RUN_ID_RE.search(lock.read_text(encoding="utf-8", errors="replace"))
+        text = lock.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
+    for line in text.splitlines():
+        if line.startswith("run "):
+            return line[4:].strip()
+    m = RUN_ID_RE.search(text)
     return m.group(1) if m else ""
 
 
