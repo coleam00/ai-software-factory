@@ -201,6 +201,14 @@ The pack ships ten workflows; these four cover every AI step here.
 keeps a human at the pull request, which is the one step this factory does not have.
 One, `archon-upkeep`, is not a refusal but a gap: nothing here updates a dependency.
 
+> [!IMPORTANT]
+> **This needs an Archon that carries one unreleased primitive.** `include:` must be able
+> to carry `denied_tools`, or the holdout wall does not survive composition -- and it
+> fails silently, with every check still green. No released Archon has it yet; it is
+> branch `feat/include-tool-policy`. `factory doctor` asks the engine directly and
+> refuses to leave level 0 without it, so you cannot run into this by accident, but you
+> do have to build Archon from that branch to use this as intended.
+
 **The composition is only safe because of the deny list.** Every node the pack expands
 into grants `Read`, and none of them knows this factory has a holdout. `include:`
 unions `denied_tools` onto every expanded node, so the wall survives a block somebody
