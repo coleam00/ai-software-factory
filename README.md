@@ -211,9 +211,11 @@ One, `archon-upkeep`, is not a refusal but a gap: nothing here updates a depende
 > **This needs an Archon that carries one unreleased primitive.** `include:` must be able
 > to carry `denied_tools`, or the holdout wall does not survive composition -- and it
 > fails silently, with every check still green. No released Archon has it yet; it is
-> branch `feat/include-tool-policy`. `factory doctor` asks the engine directly and
-> refuses to leave level 0 without it, so you cannot run into this by accident, but you
-> do have to build Archon from that branch to use this as intended.
+> branch `feat/include-tool-policy`. `factory init` builds Archon from that branch when
+> no `archon` is on PATH (clone, `bun install`, and a symlink into `~/.bun/bin`), and
+> `factory doctor` asks the engine directly rather than trusting a version string, so
+> you cannot run into this by accident. If you already have a released Archon installed,
+> the doctor will tell you it drops the deny and will refuse to leave level 0.
 
 **The composition is only safe because of the deny list.** Every node the pack expands
 into grants `Read`, and none of them knows this factory has a holdout. `include:`
