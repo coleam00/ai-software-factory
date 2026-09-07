@@ -91,6 +91,14 @@ def repo_root() -> Path:
 # --- the engine ---------------------------------------------------------------
 
 
+# Where the engine comes from when it is not already installed. The ref moves to a
+# release tag the day one carries `include: ... denied_tools`; until then the branch
+# is the only Archon this factory is safe on, and `factory doctor` asks the engine
+# rather than trusting the name.
+ARCHON_SOURCE = "https://github.com/coleam00/Archon"
+ARCHON_REF = "feat/include-tool-policy"
+
+
 def ensure_archon(auto: bool) -> bool:
     """Install Archon if it is not here. The OpenClaw/Pi step.
 
@@ -109,33 +117,65 @@ def ensure_archon(auto: bool) -> bool:
     say("  every node you will read about in .archon/workflows/ is executed by it.")
     say()
 
-    installer = None
-    if shutil.which("bun"):
-        installer = ["bun", "add", "-g", "@coleam00/archon"]
-    elif shutil.which("npm"):
-        installer = ["npm", "install", "-g", "@coleam00/archon"]
-
-    if not installer:
+    # FROM SOURCE, NOT FROM NPM. Archon is not published to a registry (the `archon`
+    # package on npm is an unrelated tool), so the first version of this ran
+    # `bun add -g @coleam00/archon`, got a 404, and every viewer following the README
+    # stopped there. Verified on a fresh Ubuntu VPS. And this factory needs the ref
+    # below, which no release carries yet: `include:` has to keep `denied_tools` or
+    # the holdout wall does not survive composition (see README).
+    if not shutil.which("git") or not shutil.which("bun"):
         warn(
-            "Neither bun nor npm is on PATH, so it cannot be installed automatically.\n"
-            "    Install bun (https://bun.sh) and re-run, or install Archon yourself:\n"
+            "Archon is built from source and needs git and bun on PATH.\n"
+            "    Install bun (curl -fsSL https://bun.sh/install | bash), open a new\n"
+            "    shell, and re-run. Or install Archon yourself:\n"
             "      https://github.com/coleam00/archon"
         )
         return False
 
+    source = os.environ.get("FACTORY_ARCHON_SOURCE", ARCHON_SOURCE)
+    ref = os.environ.get("FACTORY_ARCHON_REF", ARCHON_REF)
+    dest = Path(os.environ.get("FACTORY_ARCHON_DIR", "") or (Path.home() / "archon-src"))
+
     if not auto:
-        say(f"  Install it now with `{' '.join(installer)}`? [Y/n] ", )
+        say(f"  Clone {source} at `{ref}` into {dest} and link it? [Y/n] ")
         answer = input().strip().lower()
         if answer and not answer.startswith("y"):
             warn("Skipped. The factory will not dispatch anything until it is installed.")
             return False
 
-    step(f"installing    {' '.join(installer)}")
-    rc, out = run(installer, timeout=900)
-    if rc != 0 or not shutil.which("archon"):
-        warn(f"install failed:\n{out[-1200:]}")
+    if (dest / ".git").exists():
+        step(f"engine        {dest} exists; fetching {ref}")
+        rc, out = run(["git", "-C", str(dest), "fetch", "--quiet", "origin", ref], timeout=600)
+        if rc == 0:
+            rc, out = run(["git", "-C", str(dest), "checkout", "--quiet", "FETCH_HEAD"], timeout=120)
+    else:
+        step(f"cloning       {source} @ {ref}")
+        rc, out = run(["git", "clone", "--quiet", "--depth", "1", "--branch", ref,
+                       source, str(dest)], timeout=900)
+    if rc != 0:
+        warn(f"could not fetch Archon at `{ref}`:\n{out[-800:]}")
         return False
-    step("engine        archon installed")
+
+    step("installing    bun install (in the clone)")
+    rc, out = run(["bun", "install", "--silent"], timeout=1800, cwd=dest)
+    if rc != 0:
+        warn(f"bun install failed:\n{out[-1200:]}")
+        return False
+    step("linking       bun link  (puts `archon` on PATH via ~/.bun/bin)")
+    rc, out = run(["bun", "link"], timeout=300, cwd=dest)
+    if rc != 0:
+        warn(f"bun link failed:\n{out[-800:]}")
+        return False
+
+    if not shutil.which("archon"):
+        bun_bin = Path.home() / ".bun" / "bin"
+        warn(
+            f"Archon is linked but `archon` is not on PATH in this shell.\n"
+            f"    Add {bun_bin} to PATH (bun's installer does this in a NEW shell) and re-run."
+        )
+        return False
+    rc, out = run(["archon", "version"], timeout=120)
+    step(f"engine        {out.strip().splitlines()[0] if out.strip() else 'archon installed'}")
     return True
 
 

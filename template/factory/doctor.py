@@ -323,6 +323,16 @@ def main(argv: list[str]) -> int:
     else:
         r.add(FAIL, "archon", f"{config.ARCHON_BIN} not on PATH -- run `factory init`", 1)
 
+    # Every script node in the five workflows declares `runtime: uv`, so a box without
+    # it dies on the first lap with `Executable not found: "uv"` -- forty minutes after
+    # the doctor said everything was fine. Seen on a fresh VPS; free to catch here.
+    if shutil.which("uv"):
+        r.add(OK, "uv", "the script nodes' runtime")
+    else:
+        r.add(FAIL, "uv",
+              "not on PATH -- every script node runs under uv "
+              "(curl -LsSf https://astral.sh/uv/install.sh | sh)", 1)
+
     if shutil.which("gh"):
         rc, _ = 0, ""
         p = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True, timeout=60)

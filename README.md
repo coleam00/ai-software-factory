@@ -29,9 +29,15 @@ Read its README and follow the "Instructions for the agent" section.
 That is the install. It clones this, runs the installer, then walks you through
 the three files nobody can write for you.
 
-**You need:** git, Python 3.10+, [`gh`](https://cli.github.com) authenticated, a
-GitHub remote, and a coding agent CLI. Everything else it installs, including the
-workflow engine.
+**You need:** git, Python 3.10+, [`gh`](https://cli.github.com) authenticated (and
+`gh auth setup-git`, so git itself can push), a GitHub remote, a coding agent CLI,
+[`bun`](https://bun.sh) and [`uv`](https://docs.astral.sh/uv/). Everything else it
+installs, including the workflow engine, which is built from source with bun and runs
+its script nodes with uv.
+
+On a server with no browser, the coding agent still needs to sign in: for Claude Code,
+run `claude setup-token` on a machine that has one and put the token on the server as
+`CLAUDE_CODE_OAUTH_TOKEN`.
 
 If you would rather do it by hand:
 
