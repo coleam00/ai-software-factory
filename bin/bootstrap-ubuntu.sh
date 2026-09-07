@@ -61,9 +61,12 @@ if ! [ -x "$HOME/.local/bin/claude" ]; then
 fi
 
 say "PATH for future shells"
-PROFILE="$HOME/.bashrc"
+# Both files. Ubuntu's .bashrc returns early for non-interactive shells, before any
+# line appended to it, so `ssh host cmd` and login shells read .profile instead.
 LINE='export PATH="$HOME/.bun/bin:$HOME/.local/bin:$PATH"'
-grep -qF '.bun/bin' "$PROFILE" 2>/dev/null || echo "$LINE" >> "$PROFILE"
+for PROFILE in "$HOME/.bashrc" "$HOME/.profile"; do
+  grep -qF '.bun/bin:$HOME/.local/bin' "$PROFILE" 2>/dev/null || echo "$LINE" >> "$PROFILE"
+done
 git config --global init.defaultBranch main >/dev/null 2>&1 || true
 
 export PATH="$HOME/.bun/bin:$HOME/.local/bin:$PATH"
