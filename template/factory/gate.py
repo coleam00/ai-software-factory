@@ -594,18 +594,24 @@ def main(argv: list[str]) -> int:
                 "This is not a failure and re-running will not change it. It clears when a "
                 "human commits the raised floor / the answered assumption.",
                 "",
-                "**Then hand it back rather than merging it yourself:**",
+                "**Then accept it. Do not merge it yourself:**",
                 "",
                 "```",
-                "python factory/state.py set " + str(target) + " state=open",
+                "factory accept " + str(target),
                 "```",
                 "",
-                "It revalidates and merges itself. That is deliberate and it is not "
-                "ceremony: what you just committed can CHANGE WHAT THE GATE CHECKS -- a "
-                "raised floor is a new ratchet comparison -- so the verdict has to be "
-                "earned again against what you wrote, not reused from before you wrote "
-                "it. `factory/merge.py` refuses a held pull request for the same reason, "
-                "and the state table has no held -> passed edge at all.",
+                "That archives what was chosen under `.factory/assumptions/accepted/` "
+                "with the date somebody agreed -- the record of HOW this was decided, "
+                "which is what you will want when the same question returns in three "
+                "months -- and sends the pull request back to `open`.",
+                "",
+                "It does NOT merge. The next validation runs against the tree as it "
+                "stands and merges only if that run is green. That is deliberate: what "
+                "you just committed can CHANGE WHAT THE GATE CHECKS -- a raised floor is "
+                "a new ratchet comparison -- so the verdict is earned again against what "
+                "you wrote rather than reused from before you wrote it. `factory/merge.py` "
+                "refuses a held pull request for the same reason, and the state table has "
+                "no held -> passed edge at all.",
             ]
             post(target, "\n".join(body))
             print(f"GATE_PASS_HELD pr={target} held={'; '.join(held_why)}")

@@ -440,9 +440,12 @@ def enforcement_checks() -> None:
         # the ratchet raise, the labels and the issue close. Guidance that contradicts
         # the mechanism is worse than none: it is trusted.
         held_msg = (Path(__file__).resolve().parent / "gate.py").read_text(encoding="utf-8")
-        check("the hold message tells the human to hand it back, not to merge it",
-              "state=open" in held_msg and "waits for a human to merge it" not in held_msg,
-              "the hold comment must name the transition that actually clears it")
+        check("the hold message names `factory accept`, not a raw transition",
+              "factory accept" in held_msg and "waits for a human to merge it" not in held_msg,
+              "the comment must name the command that ARCHIVES what was chosen. The first "
+              "version of this fix printed `state.py set ... state=open`, which clears the "
+              "hold and throws away the record of who agreed and when -- the same mistake "
+              "as the original message, one layer down")
         gate_src = (Path(__file__).resolve().parent / "gate.py").read_text(encoding="utf-8")
         check("the gate writes held rather than passed when it holds",
               'state.set_state(target, "held")' in gate_src,
