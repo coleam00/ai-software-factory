@@ -144,6 +144,82 @@ def _bun_global_bin() -> Path:
     return Path(os.environ.get("BUN_INSTALL", "") or (Path.home() / ".bun")) / "bin"
 
 
+# The engine's own config. `defaultAssistant` and the per-provider block are what
+# decide which coding agent every AI node runs on.
+ARCHON_CONFIG = Path.home() / ".archon" / "config.yaml"
+
+# The model the factory runs on when the box is signed in to Codex. One constant, like
+# the engine pin: which model is not a per-run decision either.
+CODEX_MODEL = "gpt-6-astra"
+
+
+def signed_in_agents() -> dict[str, str]:
+    """Which coding agents this box can run headless, from evidence on disk.
+
+    A CLI on PATH is not an agent that can work: both need a login that only a browser
+    can do. Codex leaves `~/.codex/auth.json`; Claude Code leaves `~/.claude/.credentials.json`
+    or is handed `CLAUDE_CODE_OAUTH_TOKEN`. The files are checked for existence only;
+    nothing in them is read.
+    """
+    found: dict[str, str] = {}
+    codex = shutil.which("codex")
+    if codex and (Path.home() / ".codex" / "auth.json").is_file():
+        found["codex"] = codex
+    claude = shutil.which("claude")
+    if claude and (os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+                   or (Path.home() / ".claude" / ".credentials.json").is_file()):
+        found["claude"] = claude
+    return found
+
+
+def ensure_engine_config() -> None:
+    """Point the engine at the coding agent that is signed in. Written once, never rewritten.
+
+    Archon defaults to Claude Code. A box whose only login is Codex therefore dispatched
+    six workflows that each died on the first AI node, forty seconds in, with an auth
+    error from a provider nobody had chosen. And the engine bundles its own Codex
+    binary, which can be older than the model asks for (0.151 could not run
+    gpt-6-astra; the CLI the bootstrap installs could), so the config also pins the
+    provider to the CLI on PATH. An existing config is the operator's and is left alone.
+    """
+    if ARCHON_CONFIG.exists():
+        text = ARCHON_CONFIG.read_text(encoding="utf-8", errors="replace")
+        first = next((line.strip() for line in text.splitlines()
+                      if line.startswith("defaultAssistant:")), "defaultAssistant unset")
+        step(f"engine config {ARCHON_CONFIG} exists ({first}); left alone")
+        return
+    agents = signed_in_agents()
+    if "codex" in agents:
+        ARCHON_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+        ARCHON_CONFIG.write_text(
+            "# Written by `factory init`: this box is signed in to Codex, so every AI node\n"
+            "# in the factory's workflows runs there. Edit freely; init never rewrites it.\n"
+            "defaultAssistant: codex\n"
+            "\n"
+            "assistants:\n"
+            "  codex:\n"
+            f"    model: {CODEX_MODEL}\n"
+            "    modelReasoningEffort: medium\n"
+            "    # The engine bundles its own Codex binary, which can lag the model. This is\n"
+            "    # the CLI you logged in with.\n"
+            f"    codexBinaryPath: {agents['codex']}\n"
+            "\n"
+            "# The workflows ask for tiers, not model names.\n"
+            f"tiers:\n"
+            f"  large: {{ provider: codex, model: {CODEX_MODEL}, effort: high }}\n"
+            f"  medium: {{ provider: codex, model: {CODEX_MODEL}, effort: medium }}\n"
+            f"  small: {{ provider: codex, model: {CODEX_MODEL}, effort: low }}\n",
+            encoding="utf-8")
+        step(f"engine config codex ({CODEX_MODEL}) via {agents['codex']} -> {ARCHON_CONFIG}")
+    elif "claude" in agents:
+        step("engine config Claude Code is signed in; that is the engine's default provider")
+    else:
+        warn("no coding agent is signed in on this box, so the engine has nothing to run\n"
+             "    AI nodes on. Sign one in, then re-run init:\n"
+             "      codex login --device-auth        (Codex; code on your laptop)\n"
+             "      claude setup-token on a laptop, then CLAUDE_CODE_OAUTH_TOKEN here")
+
+
 def ensure_archon(auto: bool) -> bool:
     """Install Archon if it is not here. The OpenClaw/Pi step.
 
@@ -453,6 +529,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     # --- the engine -----------------------------------------------------------
     have_engine = ensure_archon(args.yes)
+    ensure_engine_config()
 
     # --- what is here already -------------------------------------------------
     green = is_greenfield(root)

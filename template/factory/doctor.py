@@ -231,6 +231,47 @@ def _pack_fixtures_pass() -> tuple[str, str, str, int]:
     return (OK, "workflow fixtures", f"{len(names)} workflows, fixtures green")
 
 
+def _coding_agent() -> tuple[str, str, str, int]:
+    """The engine has an agent to run AI nodes on, and that agent is signed in.
+
+    Archon defaults to Claude Code; `~/.archon/config.yaml` can point it at Codex. Either
+    way the login is a file only a browser can produce, and a box without it fails on the
+    first AI node of the first lap, not here. Existence only; nothing is read from the
+    credential files.
+    """
+    home = Path.home()
+    config_file = home / ".archon" / "config.yaml"
+    text = config_file.read_text(encoding="utf-8", errors="replace") if config_file.is_file() else ""
+    assistant = "claude"
+    binary_pin = ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("defaultAssistant:"):
+            assistant = stripped.split(":", 1)[1].strip().strip("'\"") or assistant
+        elif stripped.startswith("codexBinaryPath:"):
+            binary_pin = stripped.split(":", 1)[1].strip().strip("'\"")
+    if assistant == "codex":
+        if not (home / ".codex" / "auth.json").is_file():
+            return (FAIL, "coding agent",
+                    "the engine is set to Codex but this box is not signed in "
+                    "(codex login --device-auth)", 1)
+        binary = binary_pin or os.environ.get("CODEX_BIN_PATH") or ""
+        if binary and not Path(binary).is_file():
+            return (FAIL, "coding agent", f"codexBinaryPath {binary} does not exist", 1)
+        if not binary:
+            return (WARN, "coding agent",
+                    "codex, signed in; no codexBinaryPath in ~/.archon/config.yaml, so the "
+                    "engine runs its bundled Codex, which can be older than the model needs", 99)
+        return (OK, "coding agent", f"codex, signed in, via {binary}")
+    if assistant == "claude":
+        if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or (home / ".claude" / ".credentials.json").is_file():
+            return (OK, "coding agent", "claude, signed in")
+        return (FAIL, "coding agent",
+                "the engine defaults to Claude Code but this box is not signed in "
+                "(claude setup-token on a laptop, CLAUDE_CODE_OAUTH_TOKEN here)", 1)
+    return (WARN, "coding agent", f"engine set to {assistant!r}; not checked", 99)
+
+
 def _pack_installed() -> tuple[str, str, str, int]:
     """The engine must have the six workflows this factory dispatches, by name.
 
@@ -376,6 +417,8 @@ def main(argv: list[str]) -> int:
 
     rc, remote = git("remote", "get-url", "origin")
     r.add(OK if rc == 0 else FAIL, "origin remote", remote if rc == 0 else "none -- labels are the state machine", 1)
+
+    r.add(*_coding_agent())
 
     # --- the guidance layer --------------------------------------------------
     for name in ("MISSION.md", "FACTORY_RULES.md"):

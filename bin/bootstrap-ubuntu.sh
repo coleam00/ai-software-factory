@@ -13,9 +13,13 @@
 #   uv                            every factory script node runs under it
 #   claude                        Claude Code, the coding agent (swap for your own)
 #
+#   codex                         Codex (OpenAI), the other coding agent. Sign in to
+#                                 whichever you use; `factory init` points the engine at it.
+#
 # What it deliberately does NOT do: log anything in. GitHub and the coding agent both
-# need a browser once, on your laptop (`gh auth login` device code, `claude setup-token`).
-# Those two commands are the only part of a server setup a person has to do.
+# need a browser once, on your laptop (`gh auth login` device code; `codex login
+# --device-auth` or `claude setup-token`). Those are the only part of a server setup a
+# person has to do.
 #
 # On Hostinger this file can be saved as a post-install script so a new VPS comes up with
 # all of it already there. On any other host, ssh in and run the line above.
@@ -83,14 +87,16 @@ printf '  %-8s %s\n' git "$(git --version | cut -d' ' -f3)" \
   caddy "$(caddy version | cut -d' ' -f1)" \
   bun "$(bun --version)" \
   uv "$(uv --version | cut -d' ' -f2)" \
-  claude "$(claude --version 2>/dev/null | cut -d' ' -f1)"
+  claude "$(claude --version 2>/dev/null | cut -d' ' -f1)" \
+  codex "$(codex --version 2>/dev/null | cut -d' ' -f2)"
 cat <<'EOF'
 
 Next, the two logins only you can do:
   gh auth login --hostname github.com --git-protocol https --web
   gh auth setup-git
-  # on your laptop:  claude setup-token
-  # here:            echo 'export CLAUDE_CODE_OAUTH_TOKEN=<token>' >> ~/.bashrc && source ~/.bashrc
+  codex login --device-auth      # Codex: short code, approve on your laptop
+  # or Claude Code, on your laptop:  claude setup-token
+  #   then here:  echo 'export CLAUDE_CODE_OAUTH_TOKEN=<token>' >> ~/.bashrc && source ~/.bashrc
 Then, in your repo:
   git clone https://github.com/coleam00/ai-software-factory ~/ai-software-factory
   python3 ~/ai-software-factory/bin/factory.py init

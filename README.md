@@ -35,9 +35,11 @@ the three files nobody can write for you.
 installs, including the workflow engine, which is built from source with bun and runs
 its script nodes with uv.
 
-On a server with no browser, the coding agent still needs to sign in: for Claude Code,
-run `claude setup-token` on a machine that has one and put the token on the server as
-`CLAUDE_CODE_OAUTH_TOKEN`.
+On a server with no browser, the coding agent still needs to sign in. For Codex, run
+`codex login --device-auth` on the server and approve the code on your laptop. For
+Claude Code, run `claude setup-token` on a machine that has a browser and put the token
+on the server as `CLAUDE_CODE_OAUTH_TOKEN`. `init` writes the engine's config for
+whichever one is signed in (`~/.archon/config.yaml`, never rewritten once it exists).
 
 If you would rather do it by hand:
 
