@@ -101,17 +101,15 @@ REQUIRED_WORKFLOWS = ("archon-admit", "archon-ship", "archon-accept", "archon-re
 # Where the engine comes from when it is not already installed, at the EXACT revision
 # this factory has been tested against.
 #
-# A PLACEHOLDER, AND IT REFUSES TO INSTALL. The upstream SDLC pack and this consumer
-# land together; until the integrating operator replaces this with the 40-character SHA
-# they actually validated, building from source is refused rather than attempted
-# against whatever the branch happens to say today. An installer that guesses a ref is
-# an installer that reports success and leaves a factory that cannot dispatch.
+# This is the tested integration revision of the focused SDLC pull requests. The PRs
+# remain separate for upstream review. Pinning the commit makes this consumer usable
+# while that review proceeds and prevents a moving branch from changing new installs.
 #
 # It is a constant rather than an environment variable on purpose: a pin somebody can
 # override from the shell is a pin that gets overridden by a copied command line, and
 # the whole reason it exists is that "which Archon" is not a per-run decision.
 ARCHON_SOURCE = "https://github.com/coleam00/Archon"
-ARCHON_REF = "PARENT_MUST_SET_TESTED_SDLC_SHA"
+ARCHON_REF = "b18a6f82b631eff4d46529499952e0f85a250c19"
 
 
 ARCHON_BIN = os.environ.get("FACTORY_ARCHON_BIN") or "archon"

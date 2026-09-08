@@ -153,5 +153,3 @@ def assumption_keys(text: str) -> list[str]:
         entries = [ln for ln in text.splitlines() if ln.strip() and not ln[0].isspace()]
         return ["(unkeyed " + str(n + 1) + ")" for n in range(len(entries) or 1)]
     return keys
-
-
