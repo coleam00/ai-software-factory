@@ -135,6 +135,14 @@ def reach(config: dict, app, rung_noun: str = "journey") -> str:
             "each status code, Location and body immediately. A script that fires every "
             "request and prints everything at the end loses the evidence, and an "
             "assertion whose evidence was lost is a failed assertion."
+            # ONLY THE ASSERTIONS THE JOURNEY STATES. An agent probed the app in the
+            # middle of its own restart, before the new process was up, and reported
+            # the refused connection as a failed assertion nobody had asked for
+            # (2026-09-08). The journey is the contract; the report answers it.
+            "\nREPORT ONLY WHAT THE " + rung_noun.upper() + " STATES. One assertion per "
+            "expectation it makes, nothing you added yourself. During a restart, wait "
+            "for the health endpoint before any other request; a probe you make while "
+            "the app is down is not an assertion, it is noise."
         )
     if driver == "cli":
         return (
