@@ -242,6 +242,14 @@ judges it, and that is now structural rather than a rule somebody has to follow.
 > engine there cannot run these workflows it tells you to update it or to point
 > `FACTORY_ARCHON_BIN` somewhere else, rather than linking a second one behind it.
 
+The current source pin is the SDLC integration revision under review in Archon
+PRs [#3201](https://github.com/coleam00/Archon/pull/3201) through
+[#3206](https://github.com/coleam00/Archon/pull/3206), with supporting source-install
+and fixture fixes in [#3200](https://github.com/coleam00/Archon/pull/3200) and
+[#3207](https://github.com/coleam00/Archon/pull/3207). These changes are available
+at that exact revision; they are not yet an upstream release. The factory consumes
+the bundled workflows directly, so updating their implementation happens in Archon.
+
 > [!WARNING]
 > **The holdout can be read by the thing that writes the code.** `.factory/holdout/**`
 > is on the protected list, so nothing can edit it. Reading is a tool policy, and
