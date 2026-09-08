@@ -63,6 +63,10 @@ git clone https://github.com/coleam00/ai-software-factory ~/ai-software-factory
 python ~/ai-software-factory/bin/factory.py init
 ```
 
+If the user's repo lives on a server, run every command there over `ssh` from where
+you are; nothing here needs a terminal on the box (`init` asks no questions when it
+has no tty, and installs the engine).
+
 Run `init` from the root of the user's repo. It writes the runtime, the workflow
 pack, the skills and the governance templates, creates the GitHub labels that are
 the state machine, and installs [Archon](https://github.com/coleam00/archon) if it
