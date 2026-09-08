@@ -67,8 +67,8 @@ If the user's repo lives on a server, run every command there over `ssh` from wh
 you are; nothing here needs a terminal on the box (`init` asks no questions when it
 has no tty, and installs the engine).
 
-Run `init` from the root of the user's repo. It writes the runtime, the workflow
-pack, the skills and the governance templates, creates the GitHub labels that are
+Run `init` from the root of the user's repo. It writes the runtime, the skills
+and the governance templates, creates the GitHub labels that are
 the state machine, and installs [Archon](https://github.com/coleam00/archon) if it
 is not already there. It changes no application code.
 
@@ -204,7 +204,7 @@ These are not.
 The factory writes none of them. Judging an issue, taking it to a pull request,
 accepting that pull request, repairing it, re-testing what merged and performing the
 merge are all Archon's `sdlc` pack -- the same workflows Archon itself develops with,
-shipped inside the engine binary, so there is nothing to install and nothing to keep in
+bundled with the engine, so there is no separate workflow copy to install or keep in
 sync.
 
 | Factory action | What runs | What the factory hands it |
