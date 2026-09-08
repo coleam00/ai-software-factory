@@ -125,6 +125,16 @@ def reach(config: dict, app, rung_noun: str = "journey") -> str:
             "cannot stop the process afterwards."
             f"\nThe {rung_noun}s below run IN ORDER against this one app and SHARE "
             f"its state. Only restart when a {rung_noun} cannot be true otherwise."
+            # RECORD EVIDENCE AS YOU GO. An agent batched a whole scenario into one
+            # script, its tool truncated the output, and thirteen assertions were
+            # reported as "evidence lost" on a healthy app (2026-09-08). Evidence
+            # that never reached the report is a failed assertion, so the prompt says
+            # how to keep it.
+            "\nRECORD EVIDENCE AS YOU GO. Your tool output is truncated past a few "
+            "thousand characters. Make one or two requests per command and write down "
+            "each status code, Location and body immediately. A script that fires every "
+            "request and prints everything at the end loses the evidence, and an "
+            "assertion whose evidence was lost is a failed assertion."
         )
     if driver == "cli":
         return (
