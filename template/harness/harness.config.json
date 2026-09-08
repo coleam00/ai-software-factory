@@ -62,6 +62,16 @@
     "run. Point it at a cheaper model than the one writing the code -- the job is",
     "using an app and writing down what happened."
   ],
+  "_agent": [
+    "The coding agent that drives the end-to-end and holdout rungs. It reads the",
+    "journey markdown on stdin and must be able to run the app, hit it, and restart it.",
+    "  Claude Code:  claude -p --dangerously-skip-permissions",
+    "  Codex:        codex exec -m gpt-6-astra --sandbox danger-full-access -",
+    "Codex's default sandbox is a private PID namespace: the agent cannot see, stop or",
+    "restart the server the harness started, so every restart journey fails against a",
+    "product that is fine. This runs on a throwaway checkout on your factory box; give",
+    "it the host. The doctor refuses a sandboxed Codex here."
+  ],
   "agent": {
     "cmd": "",
     "timeout_s": 900

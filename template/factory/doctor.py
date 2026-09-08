@@ -505,9 +505,23 @@ def main(argv: list[str]) -> int:
             agent_cmd = ""
     if agent_cmd:
         exe = shlex.split(agent_cmd, posix=os.name != "nt")[0] if agent_cmd else ""
-        if shutil.which(exe):
+        if not shutil.which(exe):
+            pass
+        elif os.path.basename(exe).startswith("codex") and "danger-full-access" not in agent_cmd:
+            # CODEX'S SANDBOX IS A PID NAMESPACE. Under `--sandbox workspace-write` the
+            # agent sees five processes, none of them the app the harness started, so
+            # "stop the server and restart it on the same port" cannot be done and every
+            # persistence-across-restart journey fails against a product that is fine
+            # (PR #26 on the reference app, 2026-09-08). The harness runs the agent on a
+            # throwaway checkout on a box that exists to run this; give it the host.
+            r.add(FAIL, "journey agent",
+                  f"`{agent_cmd}` runs Codex in its sandbox, a private PID namespace "
+                  f"that cannot see or restart the app the harness started -- use "
+                  f"`--sandbox danger-full-access` (see harness.config.json)", 2)
+        if shutil.which(exe) and not (
+                os.path.basename(exe).startswith("codex") and "danger-full-access" not in agent_cmd):
             r.add(OK, "journey agent", agent_cmd)
-        else:
+        elif not shutil.which(exe):
             # ON PATH IS THE CLAIM THAT MATTERS. A configured command that does not
             # exist fails at gate time, in an unattended run, as a harness error --
             # and it is free to catch here instead.
