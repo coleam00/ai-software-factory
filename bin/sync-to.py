@@ -170,7 +170,20 @@ def missing_settings(dest: Path) -> list[tuple[str, str]]:
 
     theirs = names(dest / "factory" / "config.py")
     ours = names(TEMPLATE / "factory" / "config.py")
-    return [(k, v) for k, v in ours.items() if k not in theirs]
+    changes = [(k, v) for k, v in ours.items() if k not in theirs]
+    legacy = {"WORKFLOW_TRIAGE": "factory-triage", "WORKFLOW_IMPLEMENT": "factory-implement",
+              "WORKFLOW_VALIDATE": "factory-validate", "WORKFLOW_FIX": "factory-fix",
+              "WORKFLOW_REGRESS": "factory-regress"}
+    for key, old in legacy.items():
+        if key not in theirs or key not in ours:
+            continue
+        statement = _ast.parse(theirs[key]).body[0]
+        value = statement.value
+        if isinstance(value, _ast.Call) and isinstance(value.func, _ast.Name) and value.func.id == "_env":
+            value = value.args[1] if len(value.args) == 2 else None
+        if isinstance(value, _ast.Constant) and value.value == old:
+            changes.append((key, ours[key]))
+    return changes
 
 
 # WHAT THE TEMPLATE USED TO OWN AND NO LONGER SHIPS.
@@ -251,6 +264,8 @@ def retire(dest: Path, dry: bool) -> tuple[list[str], list[str]]:
         files = sorted(p for p in source.rglob("*")
                        if p.is_file() and "__pycache__" not in p.parts)             if source.is_dir() else [source]
         for path in files:
+            if not path.resolve().is_relative_to(dest.resolve()):
+                raise ValueError(f"Retired path resolves outside the install: {path}")
             rel = path.relative_to(dest).as_posix()
             try:
                 text = path.read_text(encoding="utf-8", errors="replace").replace(CRLF, NL)
@@ -262,6 +277,13 @@ def retire(dest: Path, dry: bool) -> tuple[list[str], list[str]]:
                     path.unlink()
                 continue
             backup = dest / RETIRED_BACKUP / rel
+            if not backup.resolve().is_relative_to(dest.resolve()):
+                raise ValueError(f"Retirement backup resolves outside the install: {backup}")
+            original_backup = backup
+            suffix = 1
+            while backup.exists():
+                backup = original_backup.with_name(original_backup.name + f".{suffix}")
+                suffix += 1
             backed_up.append(rel)
             if not dry:
                 backup.parent.mkdir(parents=True, exist_ok=True)
@@ -366,9 +388,9 @@ def main(argv: list[str]) -> int:
     gaps = missing_settings(dest)
     if gaps:
         print()
-        print("SETTINGS THIS INSTALL IS MISSING -- the synced code reads them and will")
-        print("raise AttributeError without them. factory/config.py is yours, so paste")
-        print("these in rather than having them overwritten:")
+        print("SETTINGS TO ADD OR REPLACE -- missing settings or retired workflow defaults")
+        print("would prevent this install from running. factory/config.py remains yours.")
+        print("Add missing definitions and replace the named retired defaults with:")
         print()
         for name, line in gaps:
             for ln in line.splitlines():
@@ -416,7 +438,7 @@ def main(argv: list[str]) -> int:
         print()
     if not changed and not deleted and not backed_up:
         print("Nothing to do -- the machinery here already matches the template.")
-    return 0
+    return 1 if gaps and not dry else 0
 
 
 if __name__ == "__main__":
