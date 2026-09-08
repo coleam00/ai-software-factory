@@ -209,15 +209,28 @@ def assess(events: list[dict], now: datetime | None = None,
     # dispatch after an escalation means something is reading that state wrongly. This
     # is the incident's root cause expressed as a behaviour rather than as a table, so
     # it survives any future bug that produces the same effect by another route.
+    #
+    # THE EXCEPTION IS A PERSON. The factory never removes the needs-human label, so a
+    # dispatcher that finds it gone records a RESUME naming the state it read. An
+    # escalation followed by a RESUME followed by the dispatch is the sanctioned path
+    # (a human unparked it), not the incident; without this the sanctioned path halted
+    # the factory every time (a real box, 2026-09-08, 27s after a hand unpark).
     escalated_at: dict[str, datetime] = {}
     for e in escalations:
         tgt, ts = str(e.get("target") or ""), ledger.parse_t(e)
         if tgt and ts and (tgt not in escalated_at or ts < escalated_at[tgt]):
             escalated_at[tgt] = ts
+    resumed_at: dict[str, list[datetime]] = {}
+    for e in win:
+        if e.get("kind") == ledger.RESUME and str(e.get("state_seen") or "") != "needs-human":
+            tgt, ts = str(e.get("target") or ""), ledger.parse_t(e)
+            if tgt and ts:
+                resumed_at.setdefault(tgt, []).append(ts)
     for d in dispatches:
         tgt, ts = str(d.get("target") or ""), ledger.parse_t(d)
         first = escalated_at.get(tgt)
-        if first and ts and ts > first:
+        if first and ts and ts > first and not any(
+                first < r <= ts for r in resumed_at.get(tgt, [])):
             findings.append(Finding(
                 "escalation-ignored", HALT,
                 f"{tgt} was escalated to a human at {first.isoformat()} and then dispatched "

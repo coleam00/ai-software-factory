@@ -3483,6 +3483,18 @@ def terminal_repair_checks(tmp: Path) -> None:
 
             sdlc.prepare = lambda *args: {"inputs": {}, "base_sha": SHA_B}
             dispatch.lock_path = lambda *args: tmp / "launch-failure.lock"
+            # PARKED MEANS PARKED. The escalation above left the PR at needs-human, and
+            # a launch on it -- even a manual one -- is refused until a person removes
+            # the label. The refusal also releases the lock it had just taken.
+            try:
+                sdlc.launch("fix", "gh:pr:12", manual=True)
+                check("a launch on a target still parked at needs-human is refused", False)
+            except ValueError as error:
+                check("a launch on a target still parked at needs-human is refused",
+                      "only a person" in str(error)
+                      and not (tmp / "launch-failure.lock").exists())
+            # The person removes the label. The next launch records that release.
+            rec.state_of["gh:pr:12"] = "failed"
             def cannot_launch(argv):
                 check("the repair attempt is spent before the engine can fail", rec.attempts == 1)
                 raise RuntimeError("engine unavailable")
@@ -3492,6 +3504,11 @@ def terminal_repair_checks(tmp: Path) -> None:
                 check("a failed repair launch remains a visible error", False)
             except RuntimeError:
                 check("a failed repair launch remains a visible error", rec.attempts == 1)
+            resumes = [e for e in ledger_module.read() if e.get("kind") == ledger_module.RESUME]
+            check("the release was recorded on the ledger with the state the dispatcher read",
+                  len(resumes) == 1 and resumes[0].get("target") == "gh:pr:12"
+                  and resumes[0].get("state_seen") == "failed",
+                  "without it the watchdog halts on a human unpark (2026-09-08)")
         finally:
             sdlc.engine, sdlc.prepare, dispatch.lock_path = saved
     with_consumer(tmp, rec, exercise)

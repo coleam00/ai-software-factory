@@ -148,6 +148,32 @@ def detector_proofs() -> None:
     ]
     check("D2 fires again on an escalate-then-dispatch AFTER the halt",
           fired(repeated, "escalation-ignored"))
+    # THE EXCEPTION IS A PERSON. The factory never removes needs-human, so a RESUME
+    # between the escalation and the dispatch, naming a state that is not needs-human,
+    # is a human's release. Halting on it made the sanctioned unpark path a halt.
+    released = base + [
+        ev(ledger.ESCALATE, 40, target="gh:pr:14", reason="size cap"),
+        ev(ledger.RESUME, 30, target="gh:pr:14", state_seen="accepted"),
+        ev(ledger.DISPATCH, 20, action="validate", target="gh:pr:14", run="x4"),
+    ]
+    check("D2 does NOT fire when a person released the target between the two",
+          not fired(released, "escalation-ignored"),
+          "a hand unpark halted a real box 27s later (2026-09-08)")
+    still_parked = base + [
+        ev(ledger.ESCALATE, 40, target="gh:pr:14", reason="size cap"),
+        ev(ledger.RESUME, 30, target="gh:pr:14", state_seen="needs-human"),
+        ev(ledger.DISPATCH, 20, action="validate", target="gh:pr:14", run="x5"),
+    ]
+    check("D2 still fires when the 'release' saw the label still on",
+          fired(still_parked, "escalation-ignored"),
+          "a resume that read needs-human is not a release, it is the bug")
+    late = base + [
+        ev(ledger.RESUME, 50, target="gh:pr:14", state_seen="accepted"),
+        ev(ledger.ESCALATE, 40, target="gh:pr:14", reason="size cap"),
+        ev(ledger.DISPATCH, 20, action="validate", target="gh:pr:14", run="x6"),
+    ]
+    check("D2 still fires when the release predates the escalation",
+          fired(late, "escalation-ignored"))
 
     # --- D3 all-failing --------------------------------------------------------
     failing = [ev(ledger.SETTLE, 50 - i * 5, run=f"f{i}", status="failed", cost_usd=0.2)

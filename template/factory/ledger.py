@@ -66,7 +66,11 @@ DISPATCH = "dispatch"
 SETTLE = "settle"
 ESCALATE = "escalate"
 HALT = "halt"
-KINDS = {DISPATCH, SETTLE, ESCALATE, HALT}
+# A target that had been handed to a human came back. The factory never removes the
+# needs-human label, so its absence after an escalation is a person's signature;
+# the dispatcher records what it saw before it takes the target again.
+RESUME = "resume"
+KINDS = {DISPATCH, SETTLE, ESCALATE, HALT, RESUME}
 
 
 def now_iso() -> str:

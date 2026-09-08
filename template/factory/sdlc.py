@@ -561,6 +561,37 @@ def prepare(action: str, target: str, directory: Path, manual: bool) -> dict:
     return record
 
 
+def resume_if_released(target: str) -> None:
+    """A target that was escalated may only come back through a person.
+
+    needs-human is terminal for the factory (TRANSITIONS["needs-human"] is empty), so
+    the only way an escalated target is dispatchable again is that someone removed the
+    label. Two things follow. A target still wearing it is REFUSED here, whatever the
+    queue said. And a target that lost it gets a RESUME event on the ledger naming the
+    state the dispatcher actually read, so the watchdog can tell a person's release
+    from the factory taking the work back (its D2 halted a real box on exactly that
+    confusion, 2026-09-08, twenty-seven seconds after a hand unpark).
+    """
+    if not target:
+        return
+    escalated = released = None
+    for event in ledger.read():
+        if str(event.get("target") or "") != target:
+            continue
+        if event.get("kind") == ledger.ESCALATE:
+            escalated = ledger.parse_t(event) or escalated
+        elif event.get("kind") == ledger.RESUME:
+            released = ledger.parse_t(event) or released
+    if escalated is None or (released is not None and released >= escalated):
+        return
+    seen = state.fetch(target)["_state"]
+    if seen == "needs-human":
+        raise ValueError(f"{target} is parked at needs-human; only a person may release it")
+    ledger.record(ledger.RESUME, target=target, state_seen=seen,
+                  reason="needs-human label absent after an escalation; the factory never "
+                         "removes it, so a person released this target")
+
+
 def launch(action: str, target: str, *, manual: bool = False, detach: bool = True) -> bool:
     """Dispatch one unit of work. Returns False when there was nothing to dispatch.
 
@@ -579,6 +610,11 @@ def launch(action: str, target: str, *, manual: bool = False, detach: bool = Tru
     lock = dispatch.lock_path(action, target)
     if not dispatch.acquire(lock):
         return False
+    try:
+        resume_if_released(target)
+    except Exception:
+        lock.unlink(missing_ok=True)
+        raise
     directory = runtime.root() / "runs" / uuid.uuid4().hex
     directory.mkdir(parents=True)
     journal = directory / "record.json"
