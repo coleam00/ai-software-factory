@@ -101,6 +101,50 @@ def git(*args: str) -> tuple[int, str]:
     return p.returncode, p.stdout.strip()
 
 
+def _operator_runtime() -> tuple[str, str, str, int]:
+    """Where the dispatch journals live, and whether any of them is stuck.
+
+    THE JOURNALS ARE OUTSIDE EVERY CHECKOUT ON PURPOSE. A dispatch's record has to
+    survive the worktree the run used and the clone a cold repair made, so it lives
+    under the operator's own state directory -- which means nothing in the repository
+    points at it, and an operator who has never been told where it is cannot look.
+
+    AND A STUCK APPLY HAS TO BE VISIBLE HERE. `sdlc.reconcile` retries a result whose
+    effects did not all land and prints the reason to stderr, which on a cron loop is a
+    line in a log file. The failure it is retrying -- a label edit GitHub refused, a
+    ratchet raise waiting on a dirty checkout -- is exactly the kind that never clears
+    on its own, so it is reported as a fault rather than left to whoever reads the log.
+    """
+    import runtime
+
+    try:
+        home = runtime.root()
+    except (OSError, RuntimeError) as error:
+        return (FAIL, "operator runtime",
+                f"cannot use the operator state directory: {error}", 1)
+    journals = sorted((home / "runs").glob("*/record.json"))
+    pending, stuck = [], []
+    for journal in journals:
+        try:
+            record = runtime.read(journal)
+        except (OSError, ValueError):
+            stuck.append(journal.parent.name + " (unreadable)")
+            continue
+        if record.get("status") == "applied":
+            continue
+        pending.append(record)
+        if record.get("error"):
+            stuck.append(f"{record.get('action')} {record.get('target') or '-'}: "
+                         f"{record['error'][:120]}")
+    if stuck:
+        return (FAIL, "operator runtime",
+                f"{home} -- {len(stuck)} dispatch(es) whose result could not be applied: "
+                + "; ".join(stuck[:3]), 1)
+    if pending:
+        return (OK, "operator runtime", f"{home} ({len(pending)} in flight)")
+    return (OK, "operator runtime", str(home))
+
+
 def _holdout_read_barrier() -> tuple[str, str, str, int]:
     """Can the thing that writes the code read the assertions it is measured against?
 
@@ -514,6 +558,7 @@ def main(argv: list[str]) -> int:
           "" if rc == 0 else "builder artifacts would be committed")
 
     # --- the holdout's other half --------------------------------------------
+    r.add(*_operator_runtime())
     r.add(*_holdout_read_barrier())
 
     # --- the factory's own machinery -----------------------------------------

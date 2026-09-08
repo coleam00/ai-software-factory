@@ -942,6 +942,34 @@ def cmd_status(args: argparse.Namespace) -> int:
     say(f"  in flight     {len(locks)}/{config.MAX_PARALLEL}" + (
         "  " + " ".join(p.stem for p in locks) if locks else ""))
 
+    # WHERE A DISPATCH ACTUALLY LIVES, and whether one of them is stuck. The journals
+    # are outside every checkout so they survive the worktree a run used, which also
+    # means nothing in the repository points at them. A result whose effects did not
+    # all land is retried every tick and says so on stderr; on a cron loop that is a
+    # line in a file, so it gets a line here too.
+    try:
+        import runtime  # type: ignore  # noqa: E402
+
+        home = runtime.root()
+        say(f"  runtime       {home}")
+        stuck = []
+        for journal in sorted((home / "runs").glob("*/record.json")):
+            try:
+                record = runtime.read(journal)
+            except (OSError, ValueError):
+                continue
+            if record.get("status") != "applied" and record.get("error"):
+                stuck.append((record, journal))
+        if stuck:
+            say()
+            say(f"  NOT APPLIED ({len(stuck)}) -- a run finished and its result did not land:")
+            for record, journal in stuck[:5]:
+                say(f"    {record.get('action')} {record.get('target') or '-'}: "
+                    f"{str(record.get('error'))[:140]}")
+                say(f"      {journal}")
+    except Exception as e:  # noqa: BLE001
+        say(f"  runtime       unavailable: {e}")
+
     try:
         action, target, reason = state.next_action()
         # SAY THE SAME THING THE DISPATCHER WOULD. `next_action` reads labels and
