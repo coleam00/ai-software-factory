@@ -885,7 +885,12 @@ def apply(journal: Path, record: dict, result: dict) -> None:
                lambda: state.set_state(item, value, force=value == "needs-human"))
 
     summary = result["summary"]
-    if action == "triage":
+    if result.get("engine_failure"):
+        # No workflow result to interpret. The target parks at needs-human, so nothing
+        # picks it up again underneath the person reading the escalation.
+        if target:
+            transition(target, "needs-human")
+    elif action == "triage":
         apply_triage(journal, record, result, transition)
     elif action in {"implement", "fix"}:
         apply_delivery(journal, record, result, transition)
@@ -896,7 +901,8 @@ def apply(journal: Path, record: dict, result: dict) -> None:
     elif action == "regress":
         apply_regress(record, result)
 
-    if (action == "validate" and result["verdict"] in {"reject", "inconclusive"}
+    if (result.get("engine_failure")
+            or action == "validate" and result["verdict"] in {"reject", "inconclusive"}
             or action in {"implement", "fix"} and result["outcome"] != "delivered"
             or action == "merge" and result["status"] == "failed"
             or action == "regress" and result["status"] != "clean"):
@@ -906,6 +912,29 @@ def apply(journal: Path, record: dict, result: dict) -> None:
     if target and not (action == "merge" and result["status"] in {"held", "merged"}):
         effect(journal, record, "comment",
                lambda: comment_once(target, record["run_id"], summary))
+
+
+def engine_failure(record: dict, run: dict, root: Path) -> dict:
+    """The result of a run that ended without one. Escalates; never claims success."""
+    action, run_id = record["action"], record["run_id"]
+    status = str(run.get("status", "")).lower()
+    error = run.get("error")
+    detail = f" Engine error: {str(error)[:300]}" if error else ""
+    if action in {"implement", "fix"}:
+        # A repair can correctly diagnose an inherited red gate and stop before
+        # publication. Its spent attempt must end at a human, not an eternal
+        # missing-artifact retry.
+        report = artifact(root, "implementation.md")
+        return {"outcome": "blocked", "pr": None,
+                "summary": f"Run {run_id} ended without a verified publication result. "
+                           "Inspect the remote pull request and its implementation report "
+                           "and execution trace in the Archon run artifacts before retrying."
+                           + detail,
+                "reports": [str(report)] if report.is_file() else []}
+    return {"engine_failure": True,
+            "summary": f"Run {run_id} ({WORKFLOWS[action]}) ended {status or 'unknown'} "
+                       f"without writing {ARTIFACTS[action]}, so there is no result to apply. "
+                       f"Inspect the run in the Archon workspace before retrying.{detail}"}
 
 
 def consume(journal: Path) -> bool:
@@ -938,21 +967,18 @@ def consume(journal: Path) -> bool:
     if not result_file.exists():
         root = artifact_root(run, record["run_id"])
         returned = artifact(root, ARTIFACTS[record["action"]])
-        if (record["action"] in {"implement", "fix"}
-                and str(run.get("status", "")).lower() != "completed"
-                and not returned.exists()):
-            # A repair can correctly diagnose an inherited red gate and stop before
-            # publication. Its spent attempt must end at a human, not an eternal
-            # missing-artifact retry. Never synthesize a successful delivery.
-            report = artifact(root, "implementation.md")
-            result = {"outcome": "blocked", "pr": None,
-                      "summary": f"Run {record['run_id']} ended without a verified publication result. "
-                                 "Inspect the remote pull request and its implementation report "
-                                 "and execution trace in the Archon run artifacts before retrying.",
-                      "reports": [str(report)] if report.is_file() else []}
+        ended = str(run.get("status", "")).lower()
+        if ended != "completed" and not returned.exists():
+            # The engine ended this run without the result it promised. Asking again
+            # returns the same missing file, so an eternal retry is not "not applied
+            # yet", it is a lock held forever: one provider error wedged a factory at
+            # capacity 1/1 for good (2026-09-08, a Codex binary too old for the model).
+            # The spent attempt ends at a human and the target is released. Never
+            # synthesize a successful result.
+            result = engine_failure(record, run, root)
         else:
             result = runtime.read(returned)
-        if record["action"] == "validate":
+        if record["action"] == "validate" and not result.get("engine_failure"):
             validate_receipt(result, record["identity"])
             for key in ("work_order_sha256", "policy_sha256"):
                 if result.get(key) != record[key]:
@@ -962,9 +988,11 @@ def consume(journal: Path) -> bool:
     # The dial can fall between dispatch and settle. Applying anyway would let a factory
     # turned down to 1 go on validating; refusing to apply a MERGE that already happened
     # would lose it, so a merge settles on the authority the engine already acted under.
-    if record["action"] != "merge" and not authorized(record["action"], record["manual"]):
+    result = runtime.read(result_file)
+    if (record["action"] != "merge" and not result.get("engine_failure")
+            and not authorized(record["action"], record["manual"])):
         return False
-    apply(journal, record, runtime.read(result_file))
+    apply(journal, record, result)
     record["status"] = "applied"
     record.pop("error", None)
     runtime.write(journal, record)

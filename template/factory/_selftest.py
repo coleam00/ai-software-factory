@@ -2042,6 +2042,38 @@ def state_adapter_checks(tmp: Path) -> None:
 
     with_consumer(tmp, rec, admission)
 
+    # --- a run the engine ended without a result -------------------------------
+    rec = Recorder({"gh:issue:23": "untriaged"})
+
+    def engine_failed() -> None:
+        saved_engine = sdlc.engine
+        journal, record = journal_for(tmp, action="triage", target="gh:issue:23",
+                                      run_id="t9", identity=None)
+        record["lock"] = str(tmp / "runs" / "t9" / "triage.lock")
+        Path(record["lock"]).write_text("held", encoding="utf-8")
+        runtime.write(journal, record)
+        out = tmp / "runs" / "t9" / "out"
+        (out / "artifacts" / "runs" / "t9").mkdir(parents=True)
+        sdlc.engine = lambda argv: {"id": "t9", "workflow_name": config.WORKFLOW_TRIAGE,
+                                    "status": "failed", "output_root": str(out),
+                                    "error": "provider.codex: model requires a newer Codex"}
+        try:
+            settled = sdlc.consume(journal)
+        finally:
+            sdlc.engine = saved_engine
+        check("a run that ended without its artifact settles instead of retrying forever",
+              settled is True and runtime.read(journal)["status"] == "applied",
+              "one provider error held the only lock for good (2026-09-08)")
+        check("and parks the target at needs-human",
+              ("gh:issue:23", "needs-human") in rec.transitions)
+        check("and escalates, naming the engine's error",
+              rec.notified and "newer Codex" in rec.notified[0])
+        check("and frees the lock", not Path(record["lock"]).exists())
+        check("and never invents a disposition or a priority",
+              not rec.priorities and runtime.read(journal.parent / "result.json").get("engine_failure") is True)
+
+    with_consumer(tmp, rec, engine_failed)
+
     # --- delivery -----------------------------------------------------------
     rec = Recorder({"gh:issue:5": "in-progress"})
 
