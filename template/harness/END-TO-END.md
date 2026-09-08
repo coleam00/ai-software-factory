@@ -1,47 +1,7 @@
-# End-to-end journeys
+# Runtime scenarios
 
-<!--
-  YOURS TO WRITE. This file and MISSION.md are the two the factory cannot fill in.
-
-  An agent reads this every validation run, drives your app, and reports what it
-  saw. There is no script to keep in sync, so a journey stays true to the product
-  as the product changes.
-
-  Write journeys, not test cases. A journey is the whole path a person takes to
-  get something they wanted, start to finish.
--->
-
-## How to write one
-
-Each journey is a `##` heading and a numbered list of steps. Write them the way
-you would tell a person on a call. The agent decides how to click, type or curl.
-
-**Name the value you expect.** "The page loads" passes against an app that
-returns an empty body forever. "Ana is owed exactly 666" does not.
-
-**Assert what a person would notice and complain about.** Wrong total, missing
-row, a button that does nothing, the wrong name on the receipt.
-
-**Use values that appear nowhere else in the repo.** A string the builder can
-grep is a string it can special-case.
-
-**Two to five journeys is right.** More than that and you are writing a test
-suite, which is what `unit` is for.
-
-**Describe what it does today, not what it should do.** A journey for behaviour
-that does not exist yet makes the gate red before the first lap, and a permanently
-red gate means nothing merges, including the change that would make the journey
-pass. Scope goes in `MISSION.md`. A gap goes in an issue.
-
----
-
-<!-- SCAFFOLD_EXAMPLE_DELETE_THIS_LINE_WHEN_YOU_WRITE_YOUR_OWN -->
-<!--
-  Everything below is an example against a small task service. Delete it and the
-  marker line above once these are your journeys. `factory doctor` blocks level 2
-  until you do, because a gate that is green about the example product is worse
-  than no gate: it is green.
--->
+Example task-service data. Replace these with the observable journeys for your app.
+Shared runtime verification owns execution and evidence.
 
 ## A person captures a task and finishes it
 

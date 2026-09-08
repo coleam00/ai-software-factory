@@ -1,62 +1,16 @@
 #!/usr/bin/env python3
-"""The gate's entrypoint. `FACTORY_VALIDATE_CMD` points here.
-
-    python harness/ci.py            the whole gate
-    python harness/ci.py --quick    the cheap subset an implementing node runs on itself
-
-THIS FILE IS THE STEP LADDER, AND THE LADDER IS THE SAME IN EVERY FACTORY.
-
-That is not an assumption. Two people built this harness independently, on different
-products, never seeing each other's work, and both wrote this shape: an ordered
-ladder, a positive marker per rung with a count, a namer that reports WHICH rung
-stopped the run, and a `--quick` subset. Both separately invented a "zero tests
-discovered is not a pass" guard. The structure is determined by the marker contract,
-not by the app.
-
-EVERY COMMAND IT RUNS LIVES IN `harness.config.json`, not here. Hardcoding
-`python -m pytest` would make a scaffold claiming to be universal quietly
-Python-only: a Go repo, a Node repo or a CLI with no HTTP surface would have to
-rewrite the ladder to change two strings.
-
-WHAT IS STILL NOT TEMPLATABLE IS EVERY ASSERTION. What "working" means for your
-product is the one thing nobody can write in advance. It lives in two markdown
-files an agent reads on every run -- `harness/END-TO-END.md` and, above the
-independence line, `.factory/holdout/HOLDOUT.md`.
-
-THE CONTRACT, in four parts:
-
-  1. A POSITIVE marker for every rung that RAN. The gate greps these by name from
-     REQUIRED_MARKERS; it never tests for the absence of "error".
-  2. A COUNT wherever one exists. A skipped check and a passed check are
-     indistinguishable without one.
-  3. Exit NON-ZERO when the software is broken.
-  4. Print to STDOUT. The runner appends this to the guard's output in one gate log.
-"""
-
+"""Ordinary static and unit checks. Runtime verification is a separate shared workflow."""
 from __future__ import annotations
-
 import json
-import os
 import re
 import shlex
 import shutil
 import subprocess
 import sys
-import threading
 from pathlib import Path
-
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-QUICK = "--quick" in sys.argv
-
-for _s in (sys.stdout, sys.stderr):
-    try:
-        _s.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
-    except (AttributeError, ValueError):
-        pass
-
 CONFIG = json.loads((HERE / "harness.config.json").read_text(encoding="utf-8"))
-
 
 def unquote(token: str) -> str:
     """Take one layer of matching surrounding quotes off a token.
@@ -120,49 +74,6 @@ def run(step: str, cmd: str | list[str], timeout: int = 600) -> tuple[int, str]:
         return 127, f"could not run {argv[0] if argv else cmd!r}: {e}"
 
 
-def watchdog(seconds: int, label: str, app=None):
-    """A hard deadline for the one rung that cannot have a subprocess timeout.
-
-    THE RUNG MOST LIKELY TO HANG IS THE ONLY UNPROTECTED ONE. Every other rung goes
-    through `run()`, which passes a timeout to subprocess. The e2e rung does not: it
-    imports `run_e2e` and calls it in-process, so nothing upstream can interrupt it.
-
-    Browser CLIs -- Playwright's driver server, chromedriver, agent-browser -- spawn
-    a PERSISTENT DAEMON that inherits the stdout pipe, so a captured subprocess
-    inside a journey blocks on EOF forever after the CLI itself has exited. The gate
-    prints APP_STARTED and then nothing at all: no marker, no GATE_FAILED, no exit.
-    Five minutes of silence is indistinguishable from a slow test, and an unattended
-    factory waits for it all night while holding its dispatch lock.
-
-    A timeout is a FAILURE and not a skip, so this prints the marker and exits
-    non-zero. It tears the app down first on a best-effort basis: a hard exit skips
-    context managers, and a leaked server holding the port poisons the next lap.
-    """
-
-    def bark() -> None:
-        print(
-            f"E2E_TIMEOUT after {seconds}s - the journey never returned. Nothing upstream "
-            f"can interrupt this rung, so the run is being killed here. If a browser CLI "
-            f"is involved, the usual cause is capturing the output of a process that "
-            f"spawns a daemon: redirect to a real file handle instead. Raise "
-            f"e2e_timeout_s in harness.config.json if the journey is genuinely this slow.",
-            flush=True,
-        )
-        print(f"GATE_FAILED: {label}", flush=True)
-        try:
-            if app is not None:
-                app.__exit__(None, None, None)
-        except Exception:  # noqa: BLE001
-            pass
-        sys.stdout.flush()
-        os._exit(124)
-
-    t = threading.Timer(seconds, bark)
-    t.daemon = True
-    t.start()
-    return t
-
-
 def fail(step: str, detail: str = "") -> int:
     """Name the rung that actually stopped the run.
 
@@ -188,13 +99,14 @@ def skipped(name: str, marker: str) -> None:
 
 
 def main() -> int:
-    print(
-        f"HARNESS_START mode={'quick' if QUICK else 'full'} driver={CONFIG.get('driver')}",
-        flush=True,
-    )
-
+    if any(arg not in {"--quick"} for arg in sys.argv[1:]):
+        print("Usage: python harness/ci.py [--quick] (static and unit checks only)")
+        return 2
+    print("HARNESS_START mode=ordinary", flush=True)
+    if not CONFIG.get("static") and not CONFIG.get("unit"):
+        return fail("configuration", "NO_CHECKS: configure static or unit commands")
     # --- 1. static -----------------------------------------------------------
-    static_cmd = (CONFIG.get("static") or "").strip()
+    static_cmd = CONFIG.get("static") or ""
     if not static_cmd:
         skipped("static", "STATIC")
     else:
@@ -204,7 +116,7 @@ def main() -> int:
         print("STATIC_OK", flush=True)
 
     # --- 2. unit -------------------------------------------------------------
-    unit_cmd = (CONFIG.get("unit") or "").strip()
+    unit_cmd = CONFIG.get("unit") or ""
     if not unit_cmd:
         skipped("unit", "UNIT")
     else:
@@ -233,174 +145,9 @@ def main() -> int:
                 flush=True,
             )
 
-    if QUICK:
-        # The subset an implementing node runs on itself. A STRICT subset: never a
-        # check the full run lacks. Nothing downstream trusts it -- the full gate
-        # re-runs everything independently, which is why the builder may run it at all.
-        print("GATE_OK mode=quick", flush=True)
-        return 0
-
-    # --- 3. the app actually works -------------------------------------------
-    # ONE OF THE TWO GATES THAT MUST BE CODE. Without a positive assertion here, a
-    # crashed app produces a validator that reports "not testable" and something
-    # downstream counts that as fine.
-    #
-    # The JOURNEYS are markdown and an agent drives them (see agentcheck.py). What
-    # stays code is everything that decides whether the rung passed: the app really
-    # started, the result really exists, every assertion carries an observed value,
-    # and the counts meet the ratchet. The agent supplies evidence; it does not get
-    # a vote on the verdict.
-    sys.path.insert(0, str(HERE))
-    from agentcheck import AgentCheckFailed, MalformedResult, run_rung  # noqa: E402
-    from appproc import AppDidNotStart, make_driver  # noqa: E402
-
-    def rung_with_one_retry(kind: str, app):
-        """Run a rung; if the agent's REPORT was malformed, once more on a fresh app.
-
-        A missing `observed`, an unreadable file, a contentless answer: none of it
-        says anything about the product, and failing the gate on it sends a healthy
-        pull request to a repair run that can only diagnose the harness. One retry,
-        on a fresh app so the scenarios start from nothing again. The second
-        malformed report is the harness failure it looks like.
-        """
-        def fresh(app):
-            app.__exit__(None, None, None)
-            app = make_driver(CONFIG)
-            app.__enter__()
-            return app
-
-        try:
-            result = run_rung(kind, CONFIG, app)
-        except MalformedResult as e:
-            print(f"{kind.upper()}_RETRY the agent's report was malformed; once more on a "
-                  f"fresh app: {e}", flush=True)
-            app = fresh(app)
-            result = run_rung(kind, CONFIG, app)
-        # A FAILED AGENT-DRIVEN RUNG RUNS ONCE MORE. The driver is a language model:
-        # measured over five gate runs on one healthy app it failed itself three times
-        # (a probe during its own restart, evidence lost to output truncation, an empty
-        # field), and not once on the product. A defect fails both attempts, and the
-        # mutation rung keeps proving that. The second verdict is the verdict; the first
-        # is printed so a real flake in the product is still visible in the log.
-        # NOT INSIDE A MUTATION COPY. There the rung is SUPPOSED to fail, so a rerun
-        # buys nothing and doubles the cost of every caught defect: nine mutations
-        # stopped fitting the rung's 30-minute budget and a healthy candidate went
-        # red on TIMEOUT (2026-09-08).
-        _, _, failures = result
-        if failures and os.environ.get("FACTORY_IN_MUTATION") != "1":
-            print(f"{kind.upper()}_RETRY {len(failures)} assertion(s) failed; once more on a "
-                  f"fresh app before the verdict:", flush=True)
-            for f in failures:
-                print(f"  first attempt: {f}", flush=True)
-            app = fresh(app)
-            result = run_rung(kind, CONFIG, app)
-        return result, app
-
-    app = make_driver(CONFIG)
-    try:
-        app.__enter__()  # prints APP_STARTED
-    except AppDidNotStart as e:
-        # NAMED, not a traceback. "The app did not start" is a specific rung with a
-        # specific remedy, and a stack trace ending inside the driver reports the
-        # place the exception surfaced rather than the thing that broke. An
-        # unattended system that misnames its own failure sends whoever reads the log
-        # at 3am to the wrong file, which is most of the cost of a failure nobody
-        # watched.
-        return fail("app-start", str(e))
-    except Exception as e:  # noqa: BLE001
-        return fail("app-start", f"{type(e).__name__}: {e}")
-
-    try:
-        wd = watchdog(int(CONFIG.get("e2e_timeout_s", 300)), "e2e", app)
-        try:
-            (journeys, steps, failures), app = rung_with_one_retry("e2e", app)
-        except AgentCheckFailed as e:
-            # The rung could not be RUN. Named separately from a failing journey
-            # because the remedy is different and the log has to say which one it
-            # was: a broken harness reads as a broken product otherwise, and
-            # somebody spends the morning in the wrong file.
-            return fail("e2e-harness", str(e))
-        finally:
-            wd.cancel()
-        if failures:
-            for f in failures:
-                print(f"  E2E_FAIL  {f}", flush=True)
-            return fail("e2e", f"{len(failures)} of {steps} assertions failed")
-        print(f"E2E_PASSED journeys={journeys} steps={steps}", flush=True)
-
-        # --- 4. holdout ------------------------------------------------------
-        # Assertions the BUILDER cannot read. Everything below the independence line
-        # sits inside the agent's optimisation loop; given enough attempts it
-        # satisfies those rather than the thing you meant. The step change is
-        # independence, not volume -- more tests below the line is not the fix.
-        #
-        # The SCENARIOS stay in .factory/holdout/, which every builder node is
-        # denied. Only the method is public, in .claude/skills/factory-holdout.
-        # Knowing that the holdout composes features does not help anybody pass it.
-        holdout = ROOT / ".factory" / "holdout" / "HOLDOUT.md"
-        if holdout.exists():
-            # A FRESH APP, A FRESH DATABASE. The holdout asserts exact figures ("still
-            # two links", "exactly one link"), and it used to run against the app the
-            # journeys had just filled: seven links where it expected three, five
-            # assertions red against a product that was fine (reference app,
-            # 2026-09-08). An agent that tidied up after its journeys hid this; one
-            # that did not, exposed it. The scenarios describe a user starting from
-            # nothing, so that is what they get: a new port, and with it the new state
-            # file the config's `{port}` names.
-            try:
-                app.__exit__(None, None, None)
-                app = make_driver(CONFIG)
-                app.__enter__()  # prints APP_STARTED again, on a new port
-            except AppDidNotStart as e:
-                return fail("holdout-harness", f"the app did not restart for the holdout: {e}")
-            except Exception as e:  # noqa: BLE001
-                return fail("holdout-harness", f"{type(e).__name__}: {e}")
-            try:
-                (scen, asserts, failures), app = rung_with_one_retry("holdout", app)
-            except AgentCheckFailed as e:
-                return fail("holdout-harness", str(e))
-            if failures:
-                for f in failures:
-                    print(f"  HOLDOUT_FAIL  {f}", flush=True)
-                return fail("holdout", f"{len(failures)} of {asserts} assertions failed")
-            print(
-                f"HOLDOUT_PASSED scenarios={scen} assertions={asserts}", flush=True
-            )
-        else:
-            print(
-                "HOLDOUT_ABSENT no .factory/holdout/HOLDOUT.md - NOTHING above the "
-                "independence line ran. Every check in this gate is one the builder "
-                "could read and iterate against.",
-                flush=True,
-            )
-    finally:
-        # Torn down on EVERY path including failure, or a leaked process holds the
-        # port and poisons the next lap.
-        app.__exit__(None, None, None)
-
-    # --- 5. mutations ---------------------------------------------------------
-    # NOT INSIDE A MUTATION RUN. The mutation runner copies harness/ into each
-    # throwaway build, so without this the inner gate re-runs the whole suite -- 6
-    # defects becomes 36 gate runs, and it also misattributes which rung caught the
-    # defect.
-    mutate = HERE / "mutations" / "run.py"
-    if os.environ.get("FACTORY_IN_MUTATION") == "1":
-        print("MUTATIONS_SKIPPED running inside a mutation build", flush=True)
-    elif mutate.exists():
-        rc, out = run("mutations", [sys.executable, str(mutate)], timeout=1800)
-        print(out.strip(), flush=True)
-        if rc != 0:
-            return fail("mutations")
-    else:
-        print(
-            "MUTATIONS_ABSENT no harness/mutations/run.py - this gate has never been "
-            "shown to fail. A gate that has never failed is a gate nobody has tested.",
-            flush=True,
-        )
-
-    print("GATE_OK mode=full", flush=True)
+    print("RUNTIME_NOT_RUN: shared workflow verification is separate", flush=True)
+    print("CHECKS_OK mode=ordinary", flush=True)
     return 0
 
-
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

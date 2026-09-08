@@ -1,75 +1,12 @@
-# Appended to your .gitignore by `factory init`.
-
-# THE FACTORY'S OWN BYTECODE. Every factory script is Python, and running one inside a
-# worktree writes `factory/__pycache__/*.pyc` -- inside `factory/`, which is on the
-# PROTECTED list. A builder's `git add -A` then sweeps them in and the guard blocks the
-# change for touching a protected path, which is exactly right and completely useless:
-# the lap dies with five .pyc files named as the violation and the actual work sitting
-# beside them, correct and unmergeable.
+# Consumer machine-local settings, backups and observations
 __pycache__/
 *.pyc
 *.pyo
-
-# THE FACTORY'S OWN PYTHON ENVIRONMENT. Every script node declares `runtime: uv`, and
-# uv materialises a virtualenv and a lockfile in the checkout the first time one runs.
-# Same shape as the bytecode above, one level worse: the implement lap's `git add`
-# swept `uv.lock` into a commit that was supposed to be a one-line ORDER BY change, and
-# then the VALIDATOR could never run -- `prepare` checks out the PR branch, git refuses
-# to overwrite an untracked `uv.lock` with the branch's committed one, and the pull
-# request becomes permanently unvalidatable. It parks at needs-human, correctly, forever.
-#
-# Ignored files ARE overwritten by a checkout, which is why ignoring it is the fix and
-# not merely tidiness.
-#
-# IF YOUR PROJECT GENUINELY MANAGES ITS OWN DEPENDENCIES WITH UV, delete these two lines
-# and commit your lockfile -- it is yours, not the factory's, and pinning it is correct.
-# They are here because the common case is a repo that never chose uv and got one
-# because the runner did.
-.venv/
-uv.lock
-
-# factory: runtime state, never committed
-.factory/runs/
-.factory/ledger.jsonl
-.factory/locks-runtime/
-.factory/findings/
-.factory/needs-human.md
-.factory/escalations.log
-.factory/trigger.json
-.factory/deployed.json
-.factory/deploy-history.log
+.factory/consumer.json
+.factory/retired/
 .factory/STOP
-# The singleton's pid file. Per-machine runtime state: committing it puts one
-# machine's pid in another machine's checkout, where it is at best noise and at
-# worst a number that happens to belong to something else and wedges the loop.
-.factory/loop.pid
-.factory/assumptions/
-.factory/followups/
-# The report the fixed gate writes for the acceptance judge. It is produced inside
-# the temporary candidate checkout acceptance owns, and acceptance REFUSES it if the
-# path is tracked at the candidate SHA -- so a committed copy does not become stale
-# evidence, it stops every validation this repository will ever run.
-.factory/acceptance-report.json
-# Where the cron entry `factory arm` writes sends every tick's output.
-.factory/factory.log
-# The arming shell's environment, snapshotted for cron (which has none). It carries
-# the agent's login and the provider keys, so it is a secret, mode 600, never committed.
-.factory/cron.env
-
-# What the agent-driven rungs wrote THIS run. Evidence for one gate, not source.
-# Committing them would let a stale result from a build that no longer exists be
-# read as the current answer.
 harness/.results/
 .factory/holdout/.results/
-
-# Secrets. THE PRE-FLIGHT REFUSES TO START while any of these is unignored, and that
-# refusal is the point: an empty `git check-ignore` result means the next run that
-# commits publishes your key. On a public repo that is publication, not a mistake you
-# can take back -- rotating afterwards is the cleanup, not the fix.
-#
-# Being unable to EDIT a protected file does not stop a broad `git add` from
-# committing one that appears for the first time next month, which is why this list
-# is separate from the protected list and checked before every committing workflow.
 .env
 .env.*
 !.env.example

@@ -1,0 +1,47 @@
+{
+  "repository": "https://github.com/coleam00/Archon",
+  "integration_revision_required": "27b8fe6debae7adb4d622431e3addb9031589c07",
+  "description": "Shared workflow integration candidate. No new forge or scheduling engine features. Live validation is pending.",
+  "source_directory": ".archon/workflows/sdlc",
+  "entries": {
+    "archon-triage": "Assess one request against current repository evidence",
+    "archon-ship": "Take a ready request through reviewed delivery",
+    "archon-deliver": "Deliver prepared work, or repair using native --adopt",
+    "archon-review": "Review an existing candidate",
+    "archon-validate": "Run applicable project validation",
+    "archon-verify-runtime": "Verify runtime scenarios with engine-owned agents",
+    "archon-discoveries": "Revalidate findings and optionally publish with gh",
+    "archon-merge-queue": "Assess and merge an authorized batch with gh",
+    "archon-lifecycle": "Issue through delivery, runtime, holdout, discovery and merge",
+    "archon-regress": "Validate and diagnose regressions",
+    "archon-verify-runtime-suite": "Run baseline and deliberate runtime controls"
+  },
+  "capabilities": {
+    "run": [
+      "--workflow-source",
+      "--input",
+      "--adopt",
+      "--detach",
+      "--json"
+    ],
+    "list": [
+      "--json"
+    ],
+    "get": [
+      "--json",
+      "--events"
+    ],
+    "status": [
+      "--json"
+    ],
+    "approve": [
+      "--comment"
+    ],
+    "reject": [
+      "--reason"
+    ],
+    "respond": [],
+    "cancel": [],
+    "resume": []
+  }
+}

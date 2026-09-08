@@ -14,7 +14,7 @@
 #   claude                        Claude Code, the coding agent (swap for your own)
 #
 #   codex                         Codex (OpenAI), the other coding agent. Sign in to
-#                                 whichever you use; `factory init` points the engine at it.
+#                                 whichever you use; configure the provider through native Archon settings.
 #
 # What it deliberately does NOT do: log anything in. GitHub and the coding agent both
 # need a browser once, on your laptop (`gh auth login` device code; `codex login
@@ -86,9 +86,7 @@ printf '  %-8s %s\n' git "$(git --version | cut -d' ' -f3)" \
   gh "$(gh --version | head -1 | cut -d' ' -f3)" \
   caddy "$(caddy version | cut -d' ' -f1)" \
   bun "$(bun --version)" \
-  uv "$(uv --version | cut -d' ' -f2)" \
-  claude "$(claude --version 2>/dev/null | cut -d' ' -f1)" \
-  codex "$(codex --version 2>/dev/null | cut -d' ' -f2)"
+  uv "$(uv --version | cut -d' ' -f2)"
 cat <<'EOF'
 
 Next, the two logins only you can do:
