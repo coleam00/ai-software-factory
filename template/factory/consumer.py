@@ -183,8 +183,7 @@ def doctor(settings: dict) -> dict:
 RETIRED = {
     "accept": "Use factory approve/respond <run-id> for an actual declared Archon gate.",
     "level": "The autonomy dial is retired and cannot authorize work or merges.",
-    "tick": "Standing intake belongs to a shared lifecycle workflow. No stage scheduler is installed.",
-    "arm": "Standing intake belongs to a shared lifecycle workflow. No stage scheduler is installed.",
+    "arm": "Use an OS timer to invoke factory tick; see the README.",
     "disarm": "Remove the old factory cron/Task Scheduler entries explicitly. Use cancel <run-id> for native runs.",
     "merge": "Use a shared queue workflow when present in the integration source; its gate owns merge authorization.",
     "deploy": "Move deployment into a shared release workflow with an explicit gate.",
@@ -224,6 +223,26 @@ def invoke(root: Path, action: str, args: list[str]) -> int:
             args.pop(index)
         if not runtime_config:
             raise ValueError("--runtime-host requires a configuration path")
+    if action == "tick":
+        if args:
+            raise ValueError("tick takes no arguments; configure .factory/schedule.json")
+        schedule = json.loads((shared_root(root) / ".factory/schedule.json").read_text(encoding="utf-8"))
+        workflow = schedule.get("workflow", "archon-lifecycle")
+        inputs = schedule.get("inputs")
+        if not isinstance(workflow, str) or not isinstance(inputs, dict):
+            raise ValueError("schedule.json requires a shared workflow and inputs object")
+        args = [workflow]
+        for key, value in inputs.items():
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                raise ValueError("Invalid scheduled workflow input name")
+            args += ["--input", key + "=" + (value if isinstance(value, str) else json.dumps(value))]
+        host = schedule.get("runtime_host")
+        if host:
+            if not isinstance(host, str):
+                raise ValueError("runtime_host must be a configuration path")
+            args += ["--runtime-host", host]
+        # Scheduling submits exactly one shared workflow, never individual stages.
+        return invoke(root, "run", args)
     if action in RETIRED:
         return refuse(action)
     if action not in {"run", "list", "get", "status", "approve", "reject", "respond",
@@ -289,6 +308,7 @@ def main(argv: list[str] | None = None) -> int:
         print("factory run <shared-workflow> [native arguments]\n"
               "factory run <shared-workflow> --runtime-host <config.json> [foreground native arguments]\n"
               "Runtime host: fresh ordinary apps; detach/resume unsupported. Manual: python factory/runtime_host.py serve --help\n"
+              "factory tick (one scheduled shared workflow, foreground)\n"
               "factory list | doctor | status | get <run-id>\n"
               "factory approve | reject | respond | cancel | resume <run-id>\n"
               "factory halt | unhalt (local launch brake only)")

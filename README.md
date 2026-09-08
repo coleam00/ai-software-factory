@@ -4,10 +4,10 @@ Factory installs and invokes the shared Archon SDLC pack. Archon owns every codi
 agent, workflow sequence, retry, approval gate, tracker write and merge decision.
 Factory owns installation, project input data, native invocation and state display.
 
-This migration is a supervised integration milestone. The final complete producer
-revision is still required. Queue, regression, standing intake, release automation
-and live runtime integration need verification before unattended operation can
-be advertised.
+This branch consumes a workflow-only integration candidate. Discovery and merging
+use gh inside shared command nodes. Factory may schedule whole runs; it never
+launches a coding agent or dispatches individual stages. The simplified integration
+has not been run end-to-end. Earlier test results do not validate these edits.
 
 ## Install
 
@@ -27,10 +27,10 @@ and validates discovered workflows and their command/script references. It never
 repoints an existing source directory. Keep every old source directory while any
 run or runtime child can still use it. Do not edit a pin in place.
 
-Required entry names, descriptions, capabilities and the future integration pin
-have one owner: [pack.json](template/factory/pack.json). Its null
-`integration_revision_required` deliberately prevents an unqualified install from
-claiming readiness. Supply a tested revision explicitly until integration lands.
+Required entry names, descriptions, capabilities and the integration pin have
+one owner: [pack.json](template/factory/pack.json). The pinned source is an
+unmerged, untested workflow-only candidate, not an Archon release. It excludes
+all newly proposed engine features. A pin fixes source identity, not readiness.
 `init --scaffold-only` installs project files without claiming engine readiness.
 
 The machine-local `.factory/consumer.json` records the absolute source path, SHA
@@ -59,7 +59,7 @@ factory resume <run-id> --detach --json
 ```
 
 `run` accepts exact shared workflow names discovered from the pinned SDLC source,
-including future compositions. Declared inputs and native run arguments pass
+including archon-lifecycle for the complete sequence. Declared inputs and native run arguments pass
 through unchanged. Archon validates them and owns worktree isolation. Native
 output and exit codes pass through without receipt interpretation or follow-up
 dispatch. Resume uses the engine's captured source. Factory does not synthesize a
@@ -97,7 +97,15 @@ settings. Replaced machinery and retired prompt skills are backed up byte for by
 under `.factory/retired/`; references to retired paths are reported before removal.
 Existing scheduler entries and running old processes require explicit retirement.
 Old tick, arm, level, accept, merge and deployment paths fail with migration guidance.
-No factory cron scheduler is installed.
+Factory scheduling is optional and external to Archon. Configure
+`.factory/schedule.json` with `workflow: "archon-lifecycle"`, an `inputs` object
+(target, absolute scenario/holdout paths, merge_mode and discovery_publication),
+and optionally `runtime_host` pointing to the trusted environment configuration.
+Run `factory tick` for one foreground invocation, or `bash .factory/loop.sh` for
+serial invocations separated by FACTORY_INTERVAL_SECONDS (default 300). An OS
+timer can also call tick with overlapping runs disabled. No timer is installed
+or started by this migration. The schedule submits one whole shared workflow;
+all issue interpretation and stage decisions remain in its Archon nodes.
 
 ## Verify this repository
 
@@ -114,3 +122,17 @@ python bin/selfcheck-mutations.py
 
 These checks establish the consumer boundary, installation preservation and ordinary
 harness behavior. They do not replace final live acceptance on the integrated pack.
+
+## Workflow-only review set
+
+- Triage: Archon #3229; existing ship/deliver improvements: #3204 and #3205.
+- Runtime verification and control suite: #3227 and #3235.
+- Regression diagnosis: #3230.
+- Discovery, including gh publication: #3231.
+- Merge queue, including gh CI checks and authorization: #3243.
+- Shared lifecycle composition: Archon #3246.
+
+The forge extensions, native trigger admission and separate publication/automatic
+queue follow-ups are not dependencies. Existing Archon review/PR command nodes
+remain the implementation; the experimental forge review publisher is excluded.
+No tests, agent runs or application upgrades were performed in this cleanup.
