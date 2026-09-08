@@ -1,0 +1,26 @@
+{
+  "repository": "https://github.com/coleam00/Archon",
+  "integration_revision_required": null,
+  "description": "Integration pin required: select a complete tested Archon source revision. This is not an upstream release or an unattended factory.",
+  "source_directory": ".archon/workflows/sdlc",
+  "entries": {
+    "archon-triage": "Assess one request against current repository evidence",
+    "archon-ship": "Take a ready request through reviewed delivery",
+    "archon-deliver": "Deliver prepared work, or repair using native --adopt",
+    "archon-review": "Review an existing candidate",
+    "archon-validate": "Run applicable project validation",
+    "archon-verify-runtime": "Verify runtime scenarios with engine-owned agents",
+    "archon-discoveries": "Prepare governed discovery proposals"
+  },
+  "capabilities": {
+    "run": ["--workflow-source", "--input", "--adopt", "--detach", "--json"],
+    "list": ["--json"],
+    "get": ["--json", "--events"],
+    "status": ["--json"],
+    "approve": ["--comment"],
+    "reject": ["--reason"],
+    "respond": [],
+    "cancel": [],
+    "resume": []
+  }
+}
