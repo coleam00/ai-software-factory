@@ -297,6 +297,22 @@ def main() -> int:
         # Knowing that the holdout composes features does not help anybody pass it.
         holdout = ROOT / ".factory" / "holdout" / "HOLDOUT.md"
         if holdout.exists():
+            # A FRESH APP, A FRESH DATABASE. The holdout asserts exact figures ("still
+            # two links", "exactly one link"), and it used to run against the app the
+            # journeys had just filled: seven links where it expected three, five
+            # assertions red against a product that was fine (reference app,
+            # 2026-09-08). An agent that tidied up after its journeys hid this; one
+            # that did not, exposed it. The scenarios describe a user starting from
+            # nothing, so that is what they get: a new port, and with it the new state
+            # file the config's `{port}` names.
+            try:
+                app.__exit__(None, None, None)
+                app = make_driver(CONFIG)
+                app.__enter__()  # prints APP_STARTED again, on a new port
+            except AppDidNotStart as e:
+                return fail("holdout-harness", f"the app did not restart for the holdout: {e}")
+            except Exception as e:  # noqa: BLE001
+                return fail("holdout-harness", f"{type(e).__name__}: {e}")
             try:
                 scen, asserts, failures = run_rung("holdout", CONFIG, app)
             except AgentCheckFailed as e:
