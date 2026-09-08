@@ -51,6 +51,16 @@ class AgentCheckFailed(RuntimeError):
     """The rung did not pass. The message is what the log says."""
 
 
+class MalformedResult(AgentCheckFailed):
+    """The agent ran, but its REPORT is unusable: a missing file, unreadable JSON, an
+    assertion with nothing observed, a contentless answer. None of that is evidence
+    about the product either way, so the rung is worth exactly one more attempt on a
+    fresh app (ci.py does that). A second malformed report is a real harness failure.
+    Measured: one empty `observed` in 71 otherwise-correct assertions took the whole
+    holdout red on a healthy app (2026-09-08)."""
+
+
+
 # --- what each rung is made of ------------------------------------------------
 
 RUNGS = {
@@ -250,7 +260,7 @@ def run_rung(kind: str, config: dict, app, only: str = "") -> tuple[int, int, li
         # DELIBERATELY NOT A SKIP. The agent exiting 0 having written nothing is the
         # most likely quiet failure here, and reading that as "nothing to report"
         # would turn a rung that never ran into a rung that passed.
-        raise AgentCheckFailed(
+        raise MalformedResult(
             f"the agent wrote no result file at {rung['result']} (exit {proc.returncode}). "
             f"Last output:\n{tail[-1500:]}"
         )
@@ -258,7 +268,7 @@ def run_rung(kind: str, config: dict, app, only: str = "") -> tuple[int, int, li
     try:
         data = json.loads(result_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
-        raise AgentCheckFailed(f"the result file is not readable JSON: {e}") from None
+        raise MalformedResult(f"the result file is not readable JSON: {e}") from None
 
     # "I COULD NOT CHECK" IS A DIFFERENT ANSWER FROM "IT IS BROKEN", and the log has
     # to say which. Measured here: an agent whose shell was locked down could not
@@ -400,7 +410,7 @@ def _validate(kind: str, data: object) -> tuple[int, int, list[str]]:
             expected = str(a.get("expected") or "").strip()
             name = str(a.get("name") or f"assertion {j + 1}")
             if not observed:
-                raise AgentCheckFailed(
+                raise MalformedResult(
                     f"'{gname}' / '{name}' reports no observed value. An assertion with "
                     f"nothing observed did not run."
                 )
@@ -425,12 +435,12 @@ def _validate(kind: str, data: object) -> tuple[int, int, list[str]]:
             # assertion's own NAME is a restatement, because the name is the question
             # and the observation is supposed to be the answer.
             if observed.lower() in _EMPTY_ANSWERS:
-                raise AgentCheckFailed(
+                raise MalformedResult(
                     f"'{gname}' / '{name}' observed {observed!r}, which says nothing "
                     f"about what happened. Report the value the app actually produced."
                 )
             if observed.lower() == name.lower():
-                raise AgentCheckFailed(
+                raise MalformedResult(
                     f"'{gname}' / '{name}' observed {observed!r}, which restates the "
                     f"assertion instead of answering it. Report the value the app "
                     f"actually produced."
@@ -440,7 +450,7 @@ def _validate(kind: str, data: object) -> tuple[int, int, list[str]]:
                 failures.append(f"{gname} / {name}: expected {expected}, observed {observed}")
 
     if assertions == 0:
-        raise AgentCheckFailed("zero assertions ran. That is a failure, never a pass.")
+        raise MalformedResult("zero assertions ran. That is a failure, never a pass.")
 
     return len(groups), assertions, failures
 

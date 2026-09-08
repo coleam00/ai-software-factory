@@ -251,8 +251,27 @@ def main() -> int:
     # and the counts meet the ratchet. The agent supplies evidence; it does not get
     # a vote on the verdict.
     sys.path.insert(0, str(HERE))
-    from agentcheck import AgentCheckFailed, run_rung  # noqa: E402
+    from agentcheck import AgentCheckFailed, MalformedResult, run_rung  # noqa: E402
     from appproc import AppDidNotStart, make_driver  # noqa: E402
+
+    def rung_with_one_retry(kind: str, app):
+        """Run a rung; if the agent's REPORT was malformed, once more on a fresh app.
+
+        A missing `observed`, an unreadable file, a contentless answer: none of it
+        says anything about the product, and failing the gate on it sends a healthy
+        pull request to a repair run that can only diagnose the harness. One retry,
+        on a fresh app so the scenarios start from nothing again. The second
+        malformed report is the harness failure it looks like.
+        """
+        try:
+            return run_rung(kind, CONFIG, app), app
+        except MalformedResult as e:
+            print(f"{kind.upper()}_RETRY the agent's report was malformed; once more on a "
+                  f"fresh app: {e}", flush=True)
+            app.__exit__(None, None, None)
+            app = make_driver(CONFIG)
+            app.__enter__()
+            return run_rung(kind, CONFIG, app), app
 
     app = make_driver(CONFIG)
     try:
@@ -271,7 +290,7 @@ def main() -> int:
     try:
         wd = watchdog(int(CONFIG.get("e2e_timeout_s", 300)), "e2e", app)
         try:
-            journeys, steps, failures = run_rung("e2e", CONFIG, app)
+            (journeys, steps, failures), app = rung_with_one_retry("e2e", app)
         except AgentCheckFailed as e:
             # The rung could not be RUN. Named separately from a failing journey
             # because the remedy is different and the log has to say which one it
@@ -314,7 +333,7 @@ def main() -> int:
             except Exception as e:  # noqa: BLE001
                 return fail("holdout-harness", f"{type(e).__name__}: {e}")
             try:
-                scen, asserts, failures = run_rung("holdout", CONFIG, app)
+                (scen, asserts, failures), app = rung_with_one_retry("holdout", app)
             except AgentCheckFailed as e:
                 return fail("holdout-harness", str(e))
             if failures:
