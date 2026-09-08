@@ -163,7 +163,7 @@ def _include_deny_supported() -> tuple[str, str, str, int]:
             return (FAIL, "include deny",
                     "this Archon DROPS denied_tools on an include -- the review pack would "
                     "run with no holdout deny and every check would still pass. NO RELEASED "
-                    "ARCHON HAS THIS YET: it is Archon branch `feat/include-tool-policy`, "
+                    "ARCHON HAS THIS YET: it is Archon branch `pin/include-tool-policy-2026-09-07` (the head of feat/include-tool-policy later dropped it), "
                     "which adds the field to the include directive and unions it onto every "
                     "expanded node. Build Archon from that branch, or drop the four "
                     "`include:` nodes in .archon/workflows/factory/ and write local prompts "

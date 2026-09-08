@@ -96,7 +96,7 @@ def repo_root() -> Path:
 # is the only Archon this factory is safe on, and `factory doctor` asks the engine
 # rather than trusting the name.
 ARCHON_SOURCE = "https://github.com/coleam00/Archon"
-ARCHON_REF = "feat/include-tool-policy"
+ARCHON_REF = "pin/include-tool-policy-2026-09-07"
 
 
 def _bun_global_bin() -> Path:
