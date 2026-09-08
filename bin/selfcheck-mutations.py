@@ -212,8 +212,8 @@ DEFECTS = [
      '            code = guard.main(["--base", profile["base_sha"], "--head", "HEAD"])',
      "            code = 0", True),
     ("a gate that could not run reports a candidate failure", "factory/fixed_gate.py",
-     "        return 75" + NEWLINE + "    log = structural_log + result.stdout + result.stderr",
-     "        return 1" + NEWLINE + "    log = structural_log + result.stdout + result.stderr", True),
+     "        return 75" + NEWLINE + '    print(out, end="")',
+     "        return 1" + NEWLINE + '    print(out, end="")', True),
 ]
 
 

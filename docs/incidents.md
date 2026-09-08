@@ -744,13 +744,13 @@ CLI owner is reachable"* for these, which reads like "it is already gone" and is
 "I cannot reach it". Taking that at face value once killed a HEALTHY lap at its third
 node. Check the worktree for writes before abandoning anything.
 
-### The gate that stopped itself nine minutes into a thirty-minute check
+### The fixed deadline that interrupted a complete gate
 
 **What happened.** A full acceptance of a tiny feature came back as an environment exit
 *and* a cleanup failure. The fixed gate runs the project's whole validation command --
 journeys, holdout, nine semantic mutations -- and it ran it under a hardcoded 540-second
-budget. The mutation rung alone budgets 1800. Nothing about the candidate was ever
-measured, and no candidate could ever have passed.
+budget. The mutation rung alone allows 1800 seconds. The complete gate did not finish,
+so this run could not establish acceptance.
 
 **The second half was the expensive one.** `subprocess.run(..., timeout=...)` kills the
 command it started and nothing that command started. The harness's servers and workers

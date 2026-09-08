@@ -3314,6 +3314,17 @@ def trusted_snapshot_checks(tmp: Path) -> None:
           reported.get("gate_timeout_seconds") == config.GATE_TIMEOUT_SECONDS,
           "a budget that does not survive the trip into gate.json is a deadline nobody "
           "chose, running a gate nobody configured")
+    previous_budget = os.environ.get("FACTORY_GATE_TIMEOUT_SECONDS")
+    try:
+        for invalid in ("not-a-number", "1.5"):
+            os.environ["FACTORY_GATE_TIMEOUT_SECONDS"] = invalid
+            refuses("invalid environment budget refuses instead of using a default",
+                    lambda: gate.budget(sdlc.live()["gate_timeout_seconds"]))
+    finally:
+        if previous_budget is None:
+            os.environ.pop("FACTORY_GATE_TIMEOUT_SECONDS", None)
+        else:
+            os.environ["FACTORY_GATE_TIMEOUT_SECONDS"] = previous_budget
 
     files = {
         "factory/config.py": "AUTONOMY = 3",

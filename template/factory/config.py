@@ -162,7 +162,10 @@ VALIDATE_QUICK = _env("FACTORY_VALIDATE_QUICK", "python harness/ci.py --quick")
 # killed from outside with nothing to read. A positive integer, at most
 # `gate.BUDGET_MAX_SECONDS`; anything else refuses the dispatch rather than silently
 # running under a deadline nobody chose.
-GATE_TIMEOUT_SECONDS = _env_int("FACTORY_GATE_TIMEOUT_SECONDS", 3600)
+GATE_TIMEOUT_SECONDS = (
+    _env_int("FACTORY_GATE_TIMEOUT_SECONDS", -1)
+    if os.environ.get("FACTORY_GATE_TIMEOUT_SECONDS") else 3600
+)
 
 # THE SCOPE THE SCHEDULED REGRESSION MAY RE-RUN IN PUBLIC. Empty ships the probe off.
 #
