@@ -157,7 +157,7 @@ guard keeps printing `PROTECTED_OK` the whole time.
 archon workflow test factory
 ```
 
-Eleven dry-run fixtures across the five workflows, about two seconds, no model call and
+The pack's own dry-run fixtures for each of the six workflows, no model call and
 no GitHub call. They execute the real graph with the AI nodes stubbed, so a broken
 binding or a `when:` that never fires shows up here instead of eight nodes into a paid
 lap. The doctor runs them and blocks level 1 if any fails.

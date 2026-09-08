@@ -23,27 +23,33 @@ process with the approvals removed, and writing it down here is what makes that
 legible to the next person.>
 
 ```
-plan -> implement -> commit -> guard -> self-check -> review -> open PR
-   ^        ^                                            ^          |
-   |        |                                            |          |
-   +--------+--- Archon's sdlc pack, composed by include:+          |
-                                                                    |
-                                (independent, separate process)     |
-                                                                    v
-                      prepare -> guard+gate -> judge -> merge / hold / fix
+   issue --> archon-admit --> label + priority + assumptions
+                                          |
+                                     (accepted)
+                                          v
+                              archon-ship  ->  pull request
+                       (triage, investigate or plan, implement,
+                        review, publish -- one governed run)
+                                          |
+                        (independent, separate process, fresh clone)
+                                          v
+                              archon-accept  ->  receipt
+                                          |
+                    +---------------------+---------------------+
+                    v                     v                     v
+             archon-merge          archon-revise-pr        held / needs-human
+            (policy reread          (cold repair of the
+             before mutation)        SAME pull request)
 
-           weekly:  sync main -> full gate -> investigate -> file issues
-                                                  ^
-                                       also the pack's (archon-investigate)
+   weekly:  archon-regress -> the fixed gate on the base branch -> diagnose
 ```
 
-The plan, implement and review steps are `archon-plan`, `archon-implement` and
-`archon-review`; the weekly regression's root-cause step is `archon-investigate`. They
-ship inside the Archon binary, so there is nothing to install and nothing to keep in
-sync, and a same-named workflow in `.archon/workflows/` overrides any of them. The
-`prime` step this diagram used to open with is gone: `archon-plan` does its own
-grounding, so the prompt that existed to feed a planner had exactly one reader and went
-with it.
+Every box is Archon's `sdlc` pack, shipped inside the engine binary, so there is
+nothing to install and nothing to keep in sync -- and a same-named workflow in
+`.archon/workflows/` overrides any of them. What this factory owns is everything
+between the boxes: which one runs next, what it is allowed to be handed, and what its
+answer is permitted to change. `factory/sdlc.py` is that, and `factory/fixed_gate.py`
+is the one command all three checking boxes run.
 
 ---
 
@@ -51,7 +57,7 @@ with it.
 
 | # | Component | This repo's version |
 |---|-----------|---------------------|
-| 1 | Workflow-driven repo | Archon, five workflows in `.archon/workflows/factory/` |
+| 1 | Workflow-driven repo | Archon's SDLC pack: admit, ship, accept, revise-pr, regress, merge. `factory/sdlc.py` dispatches them and applies what they return |
 | 2 | The trigger | `factory/dispatch.py` every <N> minutes, `factory/regress-trigger.py` weekly |
 | 3 | Deployment | <strategy -- or "not yet closed; merging is where this stops"> |
 | 4 | Guidance layer | `MISSION.md` · `FACTORY_RULES.md` · `CLAUDE.md` |
@@ -143,7 +149,6 @@ deliberate: printing slack as a note and carrying on is how the hole widens fore
 | 2 | + the validator runs and writes a verdict | <date> |
 | 3 | + auto-merge on green structural gates | <date> |
 | 4 | + self-triage, and the regression files its own bugs | <date> |
-| 5 | + it writes its own issues from the mission | <date> |
 
 **Before the next notch, these must be true:**
 

@@ -120,6 +120,21 @@ def fresh_install_checks(tmp: Path) -> None:
           f"exited {result.returncode}: " + (result.stdout + result.stderr)[-1200:])
 
 
+def last_revision_with_pack() -> str:
+    """The revision just before the pack was retired.
+
+    NOT `HEAD~1`, which is where this started and which was wrong the moment a second
+    commit landed on top of the retirement: the fixture silently found nine files
+    instead of forty and the test went on asserting about an install that had almost
+    nothing to retire. Asked of git instead, so it stays correct however many commits
+    accumulate above it.
+    """
+    removed = run(["git", "log", "--diff-filter=D", "--format=%H", "-1", "--",
+                   "template/.archon/workflows/factory"], cwd=HOME)
+    sha = removed.stdout.strip().splitlines()
+    return (sha[0] + "^") if sha else "HEAD~1"
+
+
 def old_pack_files(rev: str) -> dict[str, str]:
     """Everything the template shipped under the retired paths at `rev`."""
     listing = run(["git", "ls-tree", "-r", "--name-only", rev, "--",
@@ -150,7 +165,7 @@ def migration_checks(tmp: Path) -> None:
         check("the upgrade fixture installs", False, result.stdout[-600:])
         return
 
-    previous = old_pack_files("HEAD~1")
+    previous = old_pack_files(last_revision_with_pack())
     check("the previous revision still has a pack to retire", len(previous) > 20,
           f"found {len(previous)} files; this test cannot prove anything without them")
     for rel, text in previous.items():

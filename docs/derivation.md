@@ -1,91 +1,109 @@
-# What comes from Archon's `sdlc` pack, and what does not
+# What comes from Archon's `sdlc` pack, and what is still this factory's
 
-The pack ships ten workflows inside the engine binary. Four of them cover every AI step
-in this factory, composed by `include:` at five sites, and it writes no prompt for any
-of those steps. The rest are listed
-here with the reason, because "we did not use it" and "it does not fit" are different
-answers and only one of them is worth trusting.
+This repository used to carry five workflows and four judgment prompts of its own. It
+carries none. Every AI step -- and every generic decision around one -- is the pack's,
+dispatched by `factory/sdlc.py`, which supplies the trusted inputs and applies what
+comes back.
 
-Nothing here is a criticism of the pack. Four of the five refusals below are refusals
-of the *same* good design: the pack keeps a human at the pull request, and this
-factory's entire premise is that nobody is there.
+That is a reversal of what this file said a version ago, and the reason is worth
+recording, because the earlier refusals were correct about the pack as it then was. The
+pack now answers each of them in its own terms, upstream, where one implementation
+serves every consumer instead of each consumer keeping its own.
 
-## Composed in
+## Dispatched
 
-| Factory step | Pack workflow | What arrived with it |
-|---|---|---|
-| `factory-implement` → plan | `archon-plan` | Grounds itself against the repo, writes `plan.md`, returns `ready`, refuses to mutate the checkout. Deleted our plan prompt **and** the `prime` node that existed only to feed it. |
-| `factory-implement` → implement | `archon-implement` | Loops until done (max 5), returns `{done, green, red_cause, summary}`, ends in a deterministic guard that fails a node which declined its task. |
-| `factory-fix` → fix | `archon-implement` | Addressing findings is implementing. A second prompt meant the correction path had no loop and no green verdict while the build path had both. |
-| `factory-implement` → review | `archon-review` | Six parallel lenses, each finding carrying the lens that raised it. |
-| `factory-regress` → root cause | `archon-investigate` | A *proven* causal chain rather than the first plausible explanation, engine-enforced as advisory. |
+| Factory action | Pack workflow | What the factory supplies | What it consumes |
+|---|---|---|---|
+| `triage` | `archon-admit` | `MISSION.md` and `FACTORY_RULES.md` read out of the base tree as trusted policy; the issue body as evidence | `disposition`, `priority`, `assumptions`, `rules_cited` |
+| `implement` | `archon-ship` | the issue plus its recorded work order, and a publication policy naming `fixed_gate.py --publication` | `outcome`, and a `pr` identity it re-resolves before acting |
+| `validate` | `archon-accept` | the original work order from outside every checkout, and a strict profile pinning `fixed_gate.py` | an `acceptance.json` receipt, identity-checked and re-hashed |
+| `fix` | `archon-revise-pr` | the same work order and the findings out of that receipt | the same pull request, repaired, never a replacement |
+| `regress` | `archon-regress` | a trusted check profile running `fixed_gate.py --regression` | `clean` / `defects` / `inconclusive` against a named revision |
+| `merge` | `archon-merge` | an authorization rewritten immediately before every read of it | `merged` / `held` / `revalidation_required` / `failed` |
 
-Four prompts deleted. What remains ours is the part the pack has no opinion about:
-the state machine, the guard, the gate, the merge, the holdout, the ratchet, the
-dispatcher, and the scripts between the AI steps.
+`archon-ship` composes `archon-triage`, `archon-investigate`, `archon-plan`,
+`archon-implement`, `archon-review` and `archon-pr` internally, so the four workflows
+this factory used to compose by hand arrive inside one governed run with one artifact
+store.
 
-Also adopted, and not workflows: `include:`-carried `denied_tools` (contributed
-upstream for this), `fixtures/*.stubs.yaml`, node-level `mutates_checkout: false`,
-`requires: [github]`, and the pack's habit of a deterministic assertion after every
-advisory node.
+## What is still ours, and why the pack cannot own it
 
-## Not composed in
+The state machine, the dial, the caps, the trusted project profile, the escalation
+channel. Not because the pack does them badly -- because they are not general.
 
-**`archon-deliver` — the one that looks closest, and cannot be used.**
-Implement, gate, PR, review, a bounded correction loop, validate, wait for CI, flip
-ready. That is the same *sequence* this factory runs, and adopting it would collapse
-the property the factory exists to have. The correction loop runs in the same run as
-the review it answers, so a fix inherits the reviewer's reasoning; the next review
-then judges a tree built with its own previous opinion in context. This factory
-dispatches `factory-fix` as a **separate run, separate worktree, separate context**,
-and the findings reach it as a file on disk rather than as ambient memory. Deliver's
-human gate is PR review on GitHub — correct for a team, and it is precisely the step
-that does not exist here.
+**The labels are a state machine and only this side knows the table.** `archon-admit`
+returns `deferred`; what `deferred` means, which states it may be reached from, and
+that no node may ever move an item out of `needs-human` are facts about this factory.
+Every transition goes through `factory/state.py`, which refuses at the write.
 
-**`archon-ship`** is `archon-triage` plus routing plus `archon-deliver`. Same refusal,
-one level up.
+**The gate is one fixed command and the pack must not choose it.** `archon-accept`'s
+generic mode discovers a project's checks, which is the right primitive for a delivery
+with a human at the pull request and the wrong one for a gate: it puts the choice of
+what counts as validation inside the thing being validated. So the factory passes a
+strict profile pinning one argv -- `factory/fixed_gate.py` -- and the pack runs it and
+records its streams without interpreting them. `REQUIRED_MARKERS`, the ratchet, the
+mutation score and the guard are all inside that command.
 
-**`archon-validate` — a model decides which checks to run.**
-"Discover and run the project's own checks" is the right primitive for a human-in-the-
-loop delivery. It is the wrong one for a gate. `config.VALIDATE_CMD` is one fixed
-command printing a fixed set of markers, and `REQUIRED_MARKERS` refuses a merge when
-any of them is absent — because a check that never ran produces no failures, and
-"did anything fail?" reads that as success. A discovery step puts the choice of what
-counts as validation inside the thing being validated.
+**That command is rebuilt from the base tree, every run.** `sdlc.snapshot` reads
+`config.py`, `guard.py`, `gate.py`, `tripwire.py`, `fixed_gate.py` and the ratchet floor
+out of the base revision the pull request targets -- never out of the candidate, never
+out of a possibly-dirty operator checkout -- and refuses when any of them is missing.
+A pull request cannot supply the judge that judges it, structurally.
 
-**`archon-pr` — an AI node opens the pull request.**
-Same rule as the merge: a node holding `gh pr create` can open a PR against any branch
-it likes, including one nothing validated. `open-pr.py` pushes and opens from the
-record node's file, applies the label the validator's state machine reads, and reads
-the PR back to confirm the body landed — the pack's own read-back discipline, already
-present, done by a script.
+**Nobody is at the pull request, so the correction loop has to be cold.**
+`archon-deliver`'s bounded correction runs in the same run as the review it answers, so
+a repair inherits the reviewer's reasoning and the next review judges a tree built with
+its own previous opinion in context. `archon-revise-pr` is a separate dispatch: a fresh
+clone, an engine-created worktree, no artifacts from the run that built it, and the
+findings arriving as a file rather than as ambient memory. That is the property the
+factory used to keep by writing its own fix workflow, and it is now upstream's.
 
-**`archon-triage` — the same word, a different job.**
-It routes to investigate / plan / deliver / no_action after grounding itself against
-the repository. `factory-triage` emits accepted / deferred / rejected / needs-human
-plus a priority, an area and the rules it cited, which is what drives a GitHub label
-state machine, and it runs with `allowed_tools: []` so the disposition is traceable to
-`MISSION.md` and `FACTORY_RULES.md` rather than to something it found on the way past.
-The pack's version is better at its question. It is not this question.
+**The merge's authority is a receipt, not a caller.** `archon-merge` reads an
+operator-owned policy file and rereads it, and the stop path, in the instant before it
+mutates. The factory revokes that file's authorization before rewriting it, so a crash
+between the two writes leaves a denial. What it grants depends on the dial, the pull
+request's own live state, and whether any assumption is still unagreed.
 
-**`archon-upkeep` — not a refusal. A gap.**
-Ground a dependency update against the repo, then either stop with the reason or take
-the bump through the full reviewed tail. This factory has **no dependency-update path
-at all**, which is a real hole in something meant to run unattended for months: the
-regression will eventually go red on an advisory nobody is watching. The obvious shape
-is a sixth workflow, `factory-upkeep`, scheduled like `factory-regress`, composing
-`archon-upkeep`'s assessment stage and landing the result through this factory's own
-implement/validate path rather than the pack's delivery tail. Not built yet.
+## What this migration cost, stated plainly
 
-## The one thing that made any of this possible
+**The holdout's read barrier is no longer enforced by this factory.**
+`.factory/holdout/**` is on the guard's protected list, so nothing can edit it. Reading
+used to be blocked by a `denied_tools` list the factory attached to its own `include:`
+of the review pack. There is no `include:` here now, and nothing in an input, a policy
+file or a workflow argument lets a caller set a tool policy inside a workflow it did
+not write. Every node `archon-ship` expands into grants `Read`, and none of them knows
+this factory has a holdout.
 
-Every node the pack expands into grants `Read`, and none of them knows this factory has
-a holdout. Before `include:` could carry `denied_tools`, composing any pack workflow
-meant a reviewer that could quote a holdout assertion into a report the fix node then
-reads — with every check still green. That primitive was added to Archon for this, and
-`factory doctor` asks the **engine** whether it kept the field rather than trusting a
-version string, because a dropped field is silent and a version string tests what the
-binary claims.
+So a builder can read the scenarios it will be judged on, and a builder that can see
+the answer key writes to it -- with every check still green, which is the exact shape
+of failure the holdout exists to make impossible. `factory doctor` reports this and
+blocks level 3 until `FACTORY_HOLDOUT_DENY` records how the operator arranged the
+barrier elsewhere: an agent-level deny list, a provider policy, a checkout the builder
+does not get. That setting records a claim and names who made it. It verifies nothing,
+and on a provider that cannot enforce a tool restriction at all -- Codex, today -- there
+is nothing for it to verify.
 
-Last verified across the expanded graphs of all five workflows: **16 AI nodes, all
-walled by the holdout deny or sealed with `allowed_tools: []`, zero gaps.**
+**The scheduled regression diagnoses but does not file.** `archon-regress` will publish
+an issue only for a case its trusted check profile handed it, already approved for
+export, with a cause proven by `archon-investigate`. That is the right rule: it stops
+private evaluator output from being copied into a public issue by a model that thought
+it looked like a bug report. The shipped `fixed_gate.py --regression` reports whether
+the base branch is green and authors no public cases, because it cannot state a root
+cause without inventing one. So at level 4 a red regression escalates to a person
+rather than filing. Publication turns on when a project's own check emits
+`public_cases`.
+
+**Neither worktrees nor fresh contexts are a sandbox.** They never were, and nothing in
+this migration changed it; what changed is that the claim is now written down in three
+places rather than assumed. `FACTORY_REQUIRE_ISOLATION` refuses to deliver rather than
+pretending, and `archon-accept` returns inconclusive before running anything when a
+profile asks for an isolation it cannot attest.
+
+## Still a gap
+
+**`archon-upkeep`.** Ground a dependency update against the repository, then either stop
+with the reason or take the bump through the full reviewed tail. This factory has no
+dependency-update path at all, which is a real hole in something meant to run
+unattended for months: the regression will eventually go red on an advisory nobody is
+watching. The shape is a seventh action scheduled like `regress`, consuming
+`archon-upkeep` the way `implement` consumes `archon-ship`. Not built.

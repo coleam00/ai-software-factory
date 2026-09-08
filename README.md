@@ -141,9 +141,12 @@ written, and the staleness is invisible because it still passes.
 1  an accepted issue becomes a branch and a PR
 2  + the validator runs and writes a verdict
 3  + it MERGES when every structural gate is green <- the target
-4  + it triages its own issues, and the scheduled regression files its own bugs
-5  + it writes its own issues from the mission
+4  + it triages its own issues, and the scheduled regression may file its own bugs
 ```
+
+There is no level 5. It used to read "it writes its own issues from the mission",
+which nothing here has ever implemented, and a dial that names a level the code cannot
+reach is a promise the product does not keep.
 
 **Level 3 is the destination.** It is the first level where code merges without a
 human reading it. A factory that stops at 2 is a code generator with a queue, and
@@ -185,57 +188,69 @@ These are not.
 
 ## Where the AI steps come from
 
-The factory writes almost none of them. Planning, building, reviewing and
-root-causing are Archon's `sdlc` pack -- the same workflows Archon itself develops
-with -- composed in by `include:` and shipped inside the engine binary, so there is
-nothing to install and nothing to keep in sync.
+The factory writes none of them. Judging an issue, taking it to a pull request,
+accepting that pull request, repairing it, re-testing what merged and performing the
+merge are all Archon's `sdlc` pack -- the same workflows Archon itself develops with,
+shipped inside the engine binary, so there is nothing to install and nothing to keep in
+sync.
 
-| Step | What runs | Why not ours |
+| Factory action | What runs | What the factory hands it |
 |---|---|---|
-| plan | `archon-plan` | Grounds itself against the repo, writes `plan.md`, returns `ready`, and refuses to mutate the checkout while planning. It replaced a prompt *and* the `prime` node that fed it. |
-| implement | `archon-implement` | Loops until done (max 5), returns `{done, green, red_cause}`, and ends in a deterministic guard that fails a node which declined its task. Our one-shot had none of the three. |
-| fix | `archon-implement` | Addressing findings *is* implementing. A second, weaker prompt meant the correction path had no loop and no green verdict while the build path had both. |
-| review | `archon-review` | Six parallel lenses -- code, seams, simplify, tests, errors, docs -- each finding carrying the lens that raised it. On one real PR the tests lens copied the app to a scratch directory, reordered the change, and proved a new test could not fail. |
-| root cause | `archon-investigate` | Establishes a *proven* causal chain rather than the first plausible explanation, and the engine fails it if it edits the repository while investigating. |
+| triage | `archon-admit` | `MISSION.md` and `FACTORY_RULES.md`, read out of the base tree as trusted policy. Never the issue body: an issue that can supply the rules it is judged against is an issue that admits itself. |
+| implement | `archon-ship` | the issue, its recorded work order, and a publication policy naming one fixed command. `archon-ship` decides for itself whether the item needs investigating, planning or neither, and ends in a reviewed pull request. |
+| validate | `archon-accept` | the ORIGINAL request text kept outside every checkout, and a strict profile pinning `factory/fixed_gate.py`. It fetches the exact head and base into a repository of its own and returns a receipt. |
+| fix | `archon-revise-pr` | the same work order, and the findings out of that receipt. A fresh clone, a new worktree, and no artifacts from the run that built it. |
+| regress | `archon-regress` | a trusted check profile, and permission to publish only at level 4. |
+| merge | `archon-merge` | an authorization file rewritten immediately before every read of it, naming the base, the required checks, the hold labels and the stop file. |
 
-Four prompts were deleted outright when these landed. What the factory still owns is
-the part the pack has no opinion about: the state machine, the guard, the gate, the
-merge, the holdout, the ratchet, and the scripts between the AI steps.
+Five workflows and four judgment prompts were deleted outright when these landed.
+What the factory still owns is the part the pack has no opinion about: the state
+machine, the dial, the caps, the guard, the ratchet, the holdout, the escalation
+channel -- and the one fixed command all of the above run.
 
-The pack ships ten workflows; these four cover every AI step here.
-`docs/derivation.md` accounts for the other six. Four are refused because the pack
-keeps a human at the pull request, which is the one step this factory does not have.
-One, `archon-upkeep`, is not a refusal but a gap: nothing here updates a dependency.
+**The gate is one command, and the pack does not get to choose it.**
+`factory/fixed_gate.py` runs the guard, the secret preflight, the tripwire and your
+`VALIDATE_CMD`, then reads the log for the markers, the ratchet floors and the mutation
+score. Acceptance runs it, publication runs it, and the weekly regression runs it. Three
+copies of a gate are three gates that drift, and the one nobody runs is always the one
+that is wrong.
+
+**And it is rebuilt from the base branch every run.** `config.py`, `guard.py`,
+`gate.py`, `tripwire.py` and the ratchet floor are read out of the base revision the
+pull request targets -- not the candidate, not your working copy -- and a base tree
+missing any of them refuses to validate. A pull request cannot supply the judge that
+judges it, and that is now structural rather than a rule somebody has to follow.
 
 > [!IMPORTANT]
-> **This needs an Archon that carries one unreleased primitive.** `include:` must be able
-> to carry `denied_tools`, or the holdout wall does not survive composition -- and it
-> fails silently, with every check still green. No released Archon has it yet; it is
-> branch `feat/include-tool-policy`. `factory init` builds Archon from that branch when
-> no `archon` is on PATH (clone, `bun install`, and a symlink into `~/.bun/bin`), and
-> `factory doctor` asks the engine directly rather than trusting a version string, so
-> you cannot run into this by accident. If you already have a released Archon installed,
-> the doctor will tell you it drops the deny and will refuse to leave level 0.
+> **This needs an Archon carrying the SDLC pack.** `factory init` asks the engine for
+> the six workflows by name rather than trusting a version string, and refuses rather
+> than installing a factory whose every dispatch would fail at the first tick. When no
+> engine is on PATH it builds one from the pinned revision in `bin/factory.py`; when the
+> engine there cannot run these workflows it tells you to update it or to point
+> `FACTORY_ARCHON_BIN` somewhere else, rather than linking a second one behind it.
 
-**The composition is only safe because of the deny list.** Every node the pack expands
-into grants `Read`, and none of them knows this factory has a holdout. `include:`
-unions `denied_tools` onto every expanded node, so the wall survives a block somebody
-else wrote -- 16 AI nodes across the five workflows, all walled or tool-sealed. That
-primitive did not exist; it was contributed upstream for this. `factory doctor`
-therefore asks the *engine* whether it kept the field rather than trusting a version
-string, and blocks the dial when it did not.
+> [!WARNING]
+> **The holdout can be read by the thing that writes the code.** `.factory/holdout/**`
+> is on the protected list, so nothing can edit it. Reading is a tool policy, and
+> nothing lets a caller set one inside a workflow it did not write -- so a builder can
+> open the scenarios it will be judged on, with every check still green. `factory
+> doctor` blocks level 3 until `FACTORY_HOLDOUT_DENY` records how you arranged that
+> barrier elsewhere: an agent deny list, a provider policy, a checkout the builder does
+> not get. It records your claim. It cannot verify one, and on a provider that cannot
+> enforce a tool restriction at all there is nothing to verify.
 
 **Two commands, no model calls:**
 
 ```bash
-archon workflow test factory     # 11 dry-run fixtures, the real DAG, ~2 seconds
-python factory/doctor.py         # runs them, and 30 other checks
+python factory/_selftest.py      # the machinery's own invariants, offline, ~2 seconds
+python factory/doctor.py         # runs them, asks the engine what it has, and 30 more
 ```
 
-A fixture executes the actual graph with the AI nodes stubbed -- `when:` conditions,
+The doctor also runs the pack's own dry-run fixtures for each of the six workflows. A
+fixture executes the actual graph with the AI nodes stubbed -- `when:` conditions,
 trigger rules, `if_skipped` defaults, cancel nodes, and the namespaced nodes an
-`include:` expands into. That is the layer where composing somebody else's workflow
-goes wrong, and none of it is visible by reading the YAML.
+`include:` expands into. That is the layer where an upstream change breaks a consumer,
+and none of it is visible by reading the YAML.
 
 ---
 
@@ -320,8 +335,12 @@ factory with nothing to do. A poll that breaks is a poll you can see not running
 **It does not judge taste.** A green gate never means the product is good. It means
 the layer a machine can check is intact.
 
-**It does not own your process.** The node prompts in `.archon/workflows/factory/`
-are yours to rewrite. That is where your planning step and your review step go.
+**It does not own your process.** The workflows are Archon's and a project-scope
+workflow of the same name overrides the bundled one, so a file in your own
+`.archon/workflows/` replaces a step wholesale with nothing here to edit. That changes
+what your factory builds with. It deliberately cannot change what judges the result:
+acceptance launches the trusted installed pack and runs the fixed command the factory
+supplies.
 
 ---
 
@@ -343,13 +362,15 @@ Projections for this are wrong by 10-20x in the same direction every time.
 bin/factory.py       the CLI
 bin/sync-to.py       push template fixes into a repo that already installed
 bin/audit.py         cross-file invariants no single file can check alone
+bin/_test_install.py a fresh install, and an existing one brought forward
 template/            what init copies in
   factory/           the runtime: dispatcher, state machine, guard, gate, merge
+  factory/sdlc.py    dispatches the SDLC pack and applies what it returns
+  factory/fixed_gate.py  the one command acceptance, publication and regress all run
   factory/_selftest.py  the harness for that runtime, run by doctor
   harness/           the gate ladder, the mutation runner, END-TO-END.md
-  .archon/workflows/ the five workflows, their prompts, and their dry-run fixtures
   .claude/skills/    the same loop, by hand
-docs/derivation.md   which AI steps come from Archon's sdlc pack, and why the rest do not
+docs/derivation.md   what the sdlc pack owns, what this factory still owns, and what the move cost
 docs/first-hour.md   what to do after init, in order
 docs/incidents.md    every way this has been wrong, and the mechanism each time
 ```

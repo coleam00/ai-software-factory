@@ -25,10 +25,12 @@ template committed at some point; anything else is MOVED to `.factory/retired/` 
 reported. No recursive delete, no glob: one named list, one file at a time, and
 `rmdir` for the directories, which refuses any that still holds something.
 
-AND IT NEVER OVERWRITES A PROMPT YOU REWROTE. The node prompts and the skills are
-the personalisation layer; they are add-only here, installed when missing and left
-alone when present. "Missing" and "edited" are different questions, so a new prompt
-still reaches an existing install.
+AND IT NEVER OVERWRITES A SKILL YOU REWROTE. The skills are the personalisation
+layer; they are add-only here, installed when missing and left alone when present.
+"Missing" and "edited" are different questions, so a new skill still reaches an
+existing install -- and a kept one that names a path retirement removed is REPORTED,
+because add-only's cost is that a file which was never edited never gets the update
+either, and here the update was "this path no longer exists".
 """
 
 from __future__ import annotations
@@ -60,11 +62,14 @@ SYNC = [
 
 # ADD-ONLY. Installed when missing, NEVER overwritten.
 #
-# These are the personalisation layer. The README's promise is that the node prompts
-# are yours to rewrite, and a sync that quietly replaces a prompt you rewrote breaks
-# exactly that promise -- silently, and first visible as an unattended run doing the
-# thing you thought you had changed. A new prompt still reaches an existing install,
-# because "missing" and "edited" are different questions.
+# These are the personalisation layer: the by-hand half of the same loop. A sync that
+# quietly replaces one you rewrote is first visible as somebody following instructions
+# you thought you had changed. A new skill still reaches an existing install, because
+# "missing" and "edited" are different questions.
+#
+# `/commands/` is still here because an install may carry the retired pack's prompts
+# until the retirement below has run, and overwriting one on the way out would defeat
+# the point of preserving it.
 ADD_ONLY_PREFIXES = (".claude/skills/",)
 ADD_ONLY_CONTAINS = ("/commands/",)
 

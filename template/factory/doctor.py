@@ -101,78 +101,115 @@ def git(*args: str) -> tuple[int, str]:
     return p.returncode, p.stdout.strip()
 
 
-def _include_deny_supported() -> tuple[str, str, str, int]:
-    """Does THIS engine honour `denied_tools` on an `include:`?
+def _holdout_read_barrier() -> tuple[str, str, str, int]:
+    """Can the thing that writes the code read the assertions it is measured against?
 
-    THE FAILURE THIS EXISTS TO CATCH IS SILENT AND IT COSTS THE WHOLE ARGUMENT.
-    `factory-implement` includes Archon's `sdlc` review pack, whose nodes all grant
-    Read and none of which know this factory has a holdout. The include carries the
-    holdout deny and the engine unions it onto every expanded node -- on an engine
-    that supports it. On an older one the field is dropped, the workflow still loads,
-    every check still passes, and the reviewer can read the assertions the builder is
-    blocked from reading. Nothing goes red. A version string would be the easy check
-    and the wrong one, because it tests what the binary CLAIMS.
+    THE HOLDOUT IS TWO PROPERTIES AND THIS FACTORY ONLY ENFORCES ONE OF THEM. `.factory/
+    holdout/**` is on the guard's protected list, so a delivery that edits it is
+    auto-rejected -- that half is code and it is not going anywhere. The other half is
+    READING, and it used to be enforced by a `denied_tools` list this factory attached
+    to its own `include:` of the review pack. That pack is upstream's now. Its nodes
+    grant `Read`, none of them knows this factory has a holdout, and nothing in an
+    input, a policy file or a workflow argument lets a caller deny a tool inside a
+    workflow it did not write.
 
-    So this asks the engine what it did. Loading a workflow whose include carries an
-    inert field makes Archon log `include_node_ai_fields_ignored` naming that field.
-    If the warning names `denied_tools`, the deny was dropped and the wall is gone.
-    Absence of the warning is the pass.
+    SO THIS IS REPORTED RATHER THAN CLAIMED. A builder that can read the scenarios it
+    will be judged on writes code aimed at exactly those scenarios, every check stays
+    green, and the holdout quietly stops being evidence -- which is the whole argument
+    for merging code nobody read. At level 3 that is not a footnote.
 
-    Unknown is NOT a pass. If the probe cannot run, say so and keep blocking, because
-    "we could not check, so we merged" is the same mistake as counting a skipped check
-    as a passed one.
+    `FACTORY_HOLDOUT_DENY` is how an operator says they have arranged the barrier
+    somewhere this cannot see: an agent-level deny list, a provider policy, a checkout
+    the builder does not get. It records a claim and names who made it. It does not
+    verify one, and it must never read as though it did -- Codex, for one, cannot
+    enforce a tool restriction at all, so on that provider there is nothing to verify.
     """
-    pack = config.ROOT / ".archon" / "workflows" / "factory"
-    if not pack.is_dir():
-        return (WARN, "include deny", "no factory pack installed yet -- nothing to probe", 99)
+    if not config.HOLDOUT_DIR.exists():
+        return (WARN, "holdout read barrier", "no holdout to protect yet", 99)
+    if config.HOLDOUT_DENY:
+        return (OK, "holdout read barrier",
+                f"declared by the operator: {config.HOLDOUT_DENY}")
+    return (FAIL, "holdout read barrier",
+            "nothing stops a delivery node READING .factory/holdout/. The guard blocks "
+            "edits; reading is enforced by the agent or the provider, and this factory "
+            "cannot set a tool policy inside a workflow it does not own. Arrange the "
+            "deny where your agent reads it, then record how in FACTORY_HOLDOUT_DENY. "
+            "Until then the scenarios are visible to whatever writes the code, and a "
+            "builder that can see the answer key writes to it", 3)
 
-    # Only meaningful when this factory actually composes somebody else's block. A pack
-    # whose nodes are all local has no include for the engine to strip, and reporting
-    # OK there would be a check that cannot fail -- which is the shape this whole file
-    # exists to refuse.
-    composed = [
-        y for y in pack.rglob("*.yaml")
-        if y.parent.name != "fixtures"
-        if "include:" in y.read_text(encoding="utf-8", errors="replace")
-    ]
-    if not composed:
-        return (WARN, "include deny",
-                "this pack includes no other workflow, so there is nothing to sandbox", 99)
-    unguarded = [
-        y.name for y in composed
-        if "denied_tools" not in y.read_text(encoding="utf-8", errors="replace")
-    ]
-    if unguarded:
-        return (FAIL, "include deny",
-                f"{', '.join(unguarded)} includes another workflow with NO denied_tools -- "
-                "every node it expands can read the holdout", 1)
+
+def _pack_fixtures_pass() -> tuple[str, str, str, int]:
+    """Run the dry-run fixtures of the workflows this factory dispatches.
+
+    WHAT A FIXTURE EXECUTES IS THE REAL DAG with the AI nodes stubbed: `when:`
+    conditions, `trigger_rule`s, `if_skipped` defaults, cancel nodes, and the namespaced
+    nodes an `include:` expands into. That is precisely the layer where composing
+    somebody else's workflow goes wrong, and none of it is visible by reading the YAML.
+
+    IT IS SOMEBODY ELSE'S PACK AND THAT IS WHY IT IS RUN HERE. The factory no longer
+    ships workflows, so this is not "do our fixtures pass" -- it is "does the pack this
+    engine actually has still behave the way this consumer was written against". An
+    upgrade that changes a route or a return field is exactly the failure that otherwise
+    surfaces as a dispatch that fails at 3am.
+
+    Blocks level 1, the level at which workflows start dispatching unattended.
+    """
+    names = [config.WORKFLOW_TRIAGE, config.WORKFLOW_IMPLEMENT, config.WORKFLOW_VALIDATE,
+             config.WORKFLOW_FIX, config.WORKFLOW_REGRESS, config.WORKFLOW_MERGE]
+    failed, unrun = [], []
+    for name in names:
+        try:
+            p = subprocess.run(
+                [config.ARCHON_BIN, "workflow", "test", name],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=900, cwd=str(config.ROOT),
+            )
+        except (OSError, subprocess.SubprocessError):
+            unrun.append(name)
+            continue
+        blob = (p.stdout or "") + (p.stderr or "")
+        tally = re.search(r"(\d+) passed, (\d+) failed", blob)
+        if p.returncode != 0 or (tally and int(tally.group(2))):
+            failed.append(name)
+        elif not tally:
+            unrun.append(name)
+    if failed:
+        return (FAIL, "workflow fixtures",
+                "failing fixtures in " + " ".join(failed) + " -- run `archon workflow "
+                "test " + failed[0] + "` and read them before dispatching anything", 1)
+    if unrun:
+        # UNKNOWN IS NOT A PASS. A workflow whose fixtures could not be run is a
+        # workflow nothing has checked, and reporting that as fine is the same mistake
+        # as counting a skipped check as a passed one.
+        return (FAIL, "workflow fixtures",
+                "could not run the fixtures for " + " ".join(unrun) + " -- the engine "
+                "may not carry them, and UNKNOWN is not a pass", 1)
+    return (OK, "workflow fixtures", f"{len(names)} workflows, fixtures green")
+
+
+def _pack_installed() -> tuple[str, str, str, int]:
+    """The engine must have the six workflows this factory dispatches, by name.
+
+    ASKED, NOT ASSUMED FROM A VERSION. Which release first carried them is exactly the
+    sort of fact that goes stale in a comment, and an engine missing one produces a
+    factory that installs cleanly, audits green, and fails at its first tick.
+    """
+    names = [config.WORKFLOW_TRIAGE, config.WORKFLOW_IMPLEMENT, config.WORKFLOW_VALIDATE,
+             config.WORKFLOW_FIX, config.WORKFLOW_REGRESS, config.WORKFLOW_MERGE]
     try:
         p = subprocess.run(
-            [config.ARCHON_BIN, "validate", "workflows"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=180, cwd=str(config.ROOT),
+            [config.ARCHON_BIN, "workflow", "list"], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=300, cwd=str(config.ROOT),
         )
     except (OSError, subprocess.SubprocessError):
-        return (FAIL, "include deny",
-                "could not run `archon validate workflows` -- UNKNOWN is not a pass, and "
-                "this is the check that proves the holdout survives composition", 1)
-
-    blob = (p.stdout or "") + (p.stderr or "")
-    for line in blob.splitlines():
-        if "include_node_ai_fields_ignored" in line and "denied_tools" in line:
-            return (FAIL, "include deny",
-                    "this Archon DROPS denied_tools on an include -- the review pack would "
-                    "run with no holdout deny and every check would still pass. NO RELEASED "
-                    "ARCHON HAS THIS YET: it is Archon branch `feat/include-tool-policy`, "
-                    "which adds the field to the include directive and unions it onto every "
-                    "expanded node. Build Archon from that branch, or drop the four "
-                    "`include:` nodes in .archon/workflows/factory/ and write local prompts "
-                    "that carry their own denied_tools", 1)
-    if "factory-implement" not in blob:
-        return (FAIL, "include deny",
-                "`archon validate workflows` never mentioned factory-implement, so the probe "
-                "proved nothing -- UNKNOWN is not a pass", 1)
-    return (OK, "include deny", "the engine keeps denied_tools on an include (holdout survives)")
+        return (FAIL, "workflow pack", "could not ask the engine what it has", 1)
+    if p.returncode != 0:
+        return (FAIL, "workflow pack", f"`archon workflow list` exited {p.returncode}", 1)
+    missing = [n for n in names if n not in (p.stdout or "")]
+    if missing:
+        return (FAIL, "workflow pack", "the engine does not have: " + " ".join(missing)
+                + " -- every dispatch of those fails at the first tick", 1)
+    return (OK, "workflow pack", f"{len(names)} workflows: " + " ".join(names))
 
 
 # A backticked token in the rules that names a FILE rather than a symbol. `is_on` and
@@ -250,54 +287,6 @@ def _rules_match_guard() -> tuple[str, str, str, int]:
     return (OK, "rules vs guard", "every path section 5 protects is on the guard's list")
 
 
-def _fixtures_pass() -> tuple[str, str, str, int]:
-    """Run the pack's dry-run fixtures. No provider call, no GitHub call, ~2 seconds.
-
-    THIS IS ARCHON'S OWN TEST HARNESS AND THE FACTORY SHIPPED WITHOUT USING IT. The
-    sdlc pack carries 48 `fixtures/*.stubs.yaml` files; this pack carried none, so
-    every wiring failure in it was found the expensive way -- by dispatching a lap,
-    paying for a premium plan node, and reading a log.
-
-    What a fixture executes is the REAL DAG with the AI nodes stubbed: `when:`
-    conditions, `trigger_rule`s, `if_skipped` defaults, cancel nodes, and the
-    namespaced nodes an `include:` expands into. That is precisely the layer where
-    composing somebody else's workflow goes wrong, and none of it is visible by
-    reading the YAML.
-
-    A fixture also asserts what must NOT happen. A node absent from the stubs must be
-    skipped, because an unstubbed node that RAN fails the fixture -- so "the refusal
-    stopped the lap" and "the docs lens stayed off" are expressible as omissions.
-
-    Blocks level 1, the level at which workflows start dispatching unattended.
-    """
-    pack = config.ROOT / ".archon" / "workflows" / "factory"
-    if not pack.is_dir():
-        return (WARN, "workflow fixtures", "no factory pack installed yet", 99)
-    workflows = sorted(y.parent for y in pack.rglob("*.yaml") if y.parent.name != "fixtures")
-    bare = [w.name for w in workflows if not any((w / "fixtures").glob("*.stubs.yaml"))]
-    if bare:
-        return (FAIL, "workflow fixtures",
-                f"{', '.join(sorted(bare))} has no fixtures/*.stubs.yaml -- its wiring is "
-                "only ever exercised by a real dispatch, which is the expensive way to "
-                "find a binding that was never going to resolve", 1)
-    try:
-        p = subprocess.run(
-            [config.ARCHON_BIN, "workflow", "test", "factory"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=600, cwd=str(config.ROOT),
-        )
-    except (OSError, subprocess.SubprocessError):
-        return (FAIL, "workflow fixtures",
-                "could not run `archon workflow test factory` -- UNKNOWN is not a pass", 1)
-    blob = (p.stdout or "") + (p.stderr or "")
-    tally = re.search(r"(\d+) passed, (\d+) failed", blob)
-    if p.returncode != 0 or not tally or tally.group(2) != "0":
-        detail = tally.group(0) if tally else "the runner reported no tally"
-        return (FAIL, "workflow fixtures",
-                f"{detail} -- run `{config.ARCHON_BIN} workflow test factory` to see which", 1)
-    return (OK, "workflow fixtures", f"{tally.group(1)} pass, no provider or GitHub calls")
-
-
 def main(argv: list[str]) -> int:
     want = None
     if "--level" in argv:
@@ -318,14 +307,14 @@ def main(argv: list[str]) -> int:
         except (OSError, subprocess.SubprocessError, IndexError):
             out = ""
         r.add(OK, "archon", out or "installed")
-        r.add(*_include_deny_supported())
-        r.add(*_fixtures_pass())
+        r.add(*_pack_installed())
+        r.add(*_pack_fixtures_pass())
     else:
         r.add(FAIL, "archon", f"{config.ARCHON_BIN} not on PATH -- run `factory init`", 1)
 
-    # Every script node in the five workflows declares `runtime: uv`, so a box without
-    # it dies on the first lap with `Executable not found: "uv"` -- forty minutes after
-    # the doctor said everything was fine. Seen on a fresh VPS; free to catch here.
+    # The pack's script nodes declare `runtime: uv`, so a box without it dies on the
+    # first lap with `Executable not found: "uv"` -- forty minutes after the doctor said
+    # everything was fine. Seen on a fresh VPS; free to catch here.
     if shutil.which("uv"):
         r.add(OK, "uv", "the script nodes' runtime")
     else:
@@ -524,19 +513,8 @@ def main(argv: list[str]) -> int:
     r.add(OK if rc == 0 else WARN, ".factory/runs ignored",
           "" if rc == 0 else "builder artifacts would be committed")
 
-    # --- the workflow pack ---------------------------------------------------
-    pack = root / ".archon" / "workflows" / "factory"
-    # NOT the fixtures/ beside them: a dry-run fixture is YAML about a workflow, not
-    # a workflow, and counting them reported nine in a five-workflow pack.
-    found = sorted(p.stem for p in pack.rglob("*.yaml")
-                   if p.parent.name != "fixtures") if pack.exists() else []
-    expected = {
-        "factory-triage", "factory-implement", "factory-validate",
-        "factory-fix", "factory-regress",
-    }
-    missing_wf = sorted(expected - set(found))
-    r.add(OK if not missing_wf else FAIL, "workflow pack",
-          f"{len(found)} workflows" if not missing_wf else "missing: " + " ".join(missing_wf), 1)
+    # --- the holdout's other half --------------------------------------------
+    r.add(*_holdout_read_barrier())
 
     # --- the factory's own machinery -----------------------------------------
     # Everything else in this audit checks what the factory was given. This checks

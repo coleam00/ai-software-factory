@@ -171,7 +171,9 @@ these touched means the scope was misunderstood, which is a triage decision rath
 than a code fix.
 
 **Governance:** `MISSION.md`, `FACTORY_RULES.md`, `FACTORY.md`, the conventions file
-**The machinery:** `factory/**`, `.archon/workflows/factory/**`
+**The machinery:** `factory/**`, `.archon/**` -- every workflow, not one
+  subdirectory: a project-scope workflow overrides the bundled one of the same name,
+  so a pull request that adds one has replaced the reviewer about to read it
 **The judge:** `harness/**` -- it *is* the definition of "working", and a builder that
   can edit its own judge can make any claim true
 **The locks:** `.factory/locks/**` (the ratchet floor), `.factory/holdout/**` (the

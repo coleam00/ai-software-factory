@@ -798,8 +798,7 @@ LADDER = [
     "an accepted issue becomes a branch and an open PR",
     "+ the validator runs and writes a verdict",
     "+ the validator AUTO-MERGES when every structural gate is green   <- the target",
-    "+ it triages its own issues, and the scheduled regression files its own bugs",
-    "+ it writes its own issues from the mission",
+    "+ it triages its own issues, and the scheduled regression may file its own bugs",
 ]
 
 

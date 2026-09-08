@@ -338,6 +338,23 @@ STOP_LABEL = _env("FACTORY_STOP_LABEL", "factory:stop")
 # disposable and you want the refusal if that ever stops being true.
 REQUIRE_ISOLATION = _env("FACTORY_REQUIRE_ISOLATION", "false").lower() == "true"
 
+# HOW THE HOLDOUT'S READ BARRIER IS ARRANGED, in your own words, or empty.
+#
+# `.factory/holdout/**` is on the guard's protected list, so nothing can EDIT it. What
+# this records is the other half: a builder that can READ the scenarios it will be
+# judged on writes code aimed at exactly those scenarios, with every check still green.
+#
+# The factory used to enforce it with a tool deny on its own workflow include. The
+# workflows are upstream's now and nothing in an input or a policy file lets a caller
+# set a tool policy inside a workflow it did not write -- so this is where the operator
+# says they arranged the barrier somewhere the factory cannot see: an agent deny list, a
+# provider policy, a checkout the builder does not get. `factory doctor` blocks level 3
+# while it is empty.
+#
+# IT RECORDS A CLAIM AND NAMES WHO MADE IT. Nothing here verifies one, and on a provider
+# that cannot enforce a tool restriction at all there is nothing to verify.
+HOLDOUT_DENY = _env("FACTORY_HOLDOUT_DENY", "")
+
 # GitHub pins the HEAD on merge and nothing else. A base update, a check rerun, a hold
 # or a policy revocation between the last read and the mutation is a race the merge
 # workflow cannot close, and enforced up-to-date branch protection with required checks
