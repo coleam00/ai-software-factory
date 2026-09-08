@@ -131,7 +131,7 @@ def engine(argv: list[str]) -> dict:
     picking whichever fragment happens to parse.
     """
     name = "archon " + " ".join(argv[:2])
-    out = command([config.ARCHON_BIN, *argv])
+    out = command([shutil.which(config.ARCHON_BIN) or config.ARCHON_BIN, *argv])
     if not out:
         raise RuntimeError(f"{name} returned nothing")
     try:

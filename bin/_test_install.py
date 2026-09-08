@@ -71,11 +71,39 @@ def scratch_repo(where: Path) -> Path:
 NO_ENGINE = {"FACTORY_ARCHON_BIN": "archon-that-cannot-exist"}
 
 
+def missing_engine_env(tmp: Path) -> dict:
+    # A valid source pin makes "not installed" eligible for installation. Force its
+    # source to a nonexistent LOCAL path and keep every possible write in this fixture.
+    return {**NO_ENGINE, "FACTORY_ARCHON_SOURCE": str(tmp / "missing-engine-source"),
+            "FACTORY_ARCHON_DIR": str(tmp / "engine"), "BUN_INSTALL": str(tmp / "bun"),
+            "ARCHON_HOME": str(tmp / "archon-runtime"), "DATABASE_URL": ""}
+
+
+def launcher_resolution_checks(tmp: Path) -> None:
+    """An earlier PATH launcher wins even when a later Windows executable exists."""
+    shims = tmp / "command-shims"
+    shims.mkdir()
+    shim = shims / ("git.cmd" if os.name == "nt" else "git")
+    shim.write_text("@echo off\n@echo FACTORY_SHIM_FOUND\n" if os.name == "nt"
+                    else "#!/bin/sh\nprintf 'FACTORY_SHIM_FOUND\\n'\n", encoding="utf-8")
+    if os.name != "nt":
+        shim.chmod(0o755)
+    code = ("import importlib.util,json; "
+            f"s=importlib.util.spec_from_file_location('installer',{str(HOME / 'bin/factory.py')!r}); "
+            "m=importlib.util.module_from_spec(s);s.loader.exec_module(m); "
+            "print(json.dumps(m.run(['git','--version'])))")
+    result = run([sys.executable, "-c", code], cwd=tmp,
+                 env={"PATH": str(shims) + os.pathsep + os.environ.get("PATH", "")})
+    check("installer executes the resolved PATH launcher",
+          result.returncode == 0 and json.loads(result.stdout) == [0, "FACTORY_SHIM_FOUND\n"],
+          result.stdout[-300:] + result.stderr[-300:])
+
+
 def fresh_install_checks(tmp: Path) -> None:
     """A repository that has never seen this ends up able to run its own self-test."""
     root = scratch_repo(tmp / "fresh")
     result = run([sys.executable, str(HOME / "bin" / "factory.py"), "init", "--yes"],
-                 cwd=root, env=NO_ENGINE)
+                 cwd=root, env=missing_engine_env(tmp))
     check("init exits cleanly on a repository with no factory", result.returncode == 0,
           result.stdout[-800:] + result.stderr[-800:])
     check("and says the engine is missing rather than implying one",
@@ -160,7 +188,7 @@ def migration_checks(tmp: Path) -> None:
     """
     root = scratch_repo(tmp / "upgrade")
     result = run([sys.executable, str(HOME / "bin" / "factory.py"), "init", "--yes"],
-                 cwd=root, env=NO_ENGINE)
+                 cwd=root, env=missing_engine_env(tmp))
     if result.returncode != 0:
         check("the upgrade fixture installs", False, result.stdout[-600:])
         return
@@ -286,7 +314,7 @@ def main() -> int:
         # upgrade fixture's ground out from under it, and an exception there would
         # report nothing about the checks it never reached -- which from the outside
         # looks exactly like a test that was never run.
-        for group in (fresh_install_checks, migration_checks):
+        for group in (launcher_resolution_checks, fresh_install_checks, migration_checks):
             try:
                 group(tmp)
             except Exception as error:  # noqa: BLE001

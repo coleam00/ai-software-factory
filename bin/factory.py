@@ -67,6 +67,9 @@ def die(msg: str, code: int = 1) -> "None":
 
 def run(cmd: list[str], cwd: Path | None = None, timeout: int = 300) -> tuple[int, str]:
     try:
+        # On Windows CreateProcess can skip an earlier .cmd launcher and find a
+        # later .exe. Resolve PATH/PATHEXT once, then execute that exact file.
+        cmd = [shutil.which(cmd[0]) or cmd[0], *cmd[1:]]
         p = subprocess.run(
             cmd, cwd=str(cwd) if cwd else None, capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=timeout,

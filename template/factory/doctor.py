@@ -204,7 +204,7 @@ def _pack_fixtures_pass() -> tuple[str, str, str, int]:
     for name in names:
         try:
             p = subprocess.run(
-                [config.ARCHON_BIN, "workflow", "test", name],
+                [shutil.which(config.ARCHON_BIN) or config.ARCHON_BIN, "workflow", "test", name],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=900, cwd=str(config.ROOT),
             )
@@ -242,7 +242,7 @@ def _pack_installed() -> tuple[str, str, str, int]:
              config.WORKFLOW_FIX, config.WORKFLOW_REGRESS, config.WORKFLOW_MERGE]
     try:
         p = subprocess.run(
-            [config.ARCHON_BIN, "workflow", "list"], capture_output=True, text=True,
+            [shutil.which(config.ARCHON_BIN) or config.ARCHON_BIN, "workflow", "list"], capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=300, cwd=str(config.ROOT),
         )
     except (OSError, subprocess.SubprocessError):
@@ -344,7 +344,7 @@ def main(argv: list[str]) -> int:
         rc, out = 0, ""
         try:
             p = subprocess.run(
-                [config.ARCHON_BIN, "version"], capture_output=True, text=True,
+                [shutil.which(config.ARCHON_BIN) or config.ARCHON_BIN, "version"], capture_output=True, text=True,
                 encoding="utf-8", errors="replace", timeout=60,
             )
             out = (p.stdout or "").splitlines()[0] if p.stdout else ""
