@@ -207,6 +207,13 @@ def harness_refusal_checks() -> None:
     check("a red e2e rung with no E2E_FAIL line is not a catch",
           "MUTATIONS_CAUGHT=0" in out and "MUTATIONS_INCONCLUSIVE=1" in out, out)
 
+    for diagnostic in ("ModuleNotFoundError: No module named 'pytest'",
+                       "ImportError: cannot import test support",
+                       "Error: Cannot find module 'vitest'"):
+        rc, out = scenario(gate(diagnostic + "\nGATE_FAILED: unit", 1))
+        check("a unit runner import failure is not a product catch: " + diagnostic,
+              rc == 1 and "MUTATIONS_CAUGHT=0" in out and "MUTATIONS_OK" not in out, out)
+
 
 def timeout_checks() -> None:
     rc, out = scenario("import time\ntime.sleep(60)\n", timeout=1)
@@ -241,13 +248,18 @@ def unknown_exit_checks() -> None:
           "MUTATIONS_CAUGHT=0" in out and "MUTATIONS_INCONCLUSIVE=1" in out, out)
     check("an unnamed failure says what the exit code was",
           "unknown-exit" in outcome_line(out) and "exited 3" in outcome_line(out), out)
-    check("the diagnosis quotes the end of the log",
-          "ModuleNotFoundError" in outcome_line(out), out)
+    check("the diagnosis omits raw output even on unknown termination",
+          "ModuleNotFoundError" not in outcome_line(out), out)
     check("the diagnosis is one printable line",
           "\x07" not in out and len(outcome_line(out)) < 300, repr(outcome_line(out)))
     # The build inherits this machine's environment, so the whole capture never
     # lands in a log that gets pasted into an issue.
     check("the capture is not dumped", secret not in out and noise not in out, out)
+
+    rc, out = scenario(gate("DATABASE_URL=" + secret, 3))
+    check("even the last output line is not exported", secret not in out and rc == 1, out)
+    rc, out = scenario(gate("GATE_FAILED: " + secret, 1))
+    check("an unknown rung cannot export arbitrary output", secret not in out and rc == 1, out)
 
     rc, out = scenario(gate("GATE_FAILED:", 1))
     check("a marker naming no rung is not a catch",

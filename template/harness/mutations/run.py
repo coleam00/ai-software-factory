@@ -100,6 +100,8 @@ ASSERTION_EVIDENCE = {"e2e": "E2E_FAIL", "holdout": "HOLDOUT_FAIL"}
 # contain one of these reads as inconclusive, which is the safe direction: it fails
 # the gate loudly instead of scoring a catch nobody made.
 NOT_A_VERDICT = ("TIMEOUT after ", "could not run ", "UNIT_ERROR:")
+IMPORT_FAILURES = ("ModuleNotFoundError:", "ImportError:", "Error: Cannot find module")
+INFRASTRUCTURE_RUNGS = {"app-start", "e2e-harness", "holdout-harness", "mutations"}
 
 Outcome = Literal["CAUGHT", "ESCAPED", "INCONCLUSIVE"]
 
@@ -163,17 +165,21 @@ def classify(rc: int, out: str) -> Verdict:
 
     rung = named_rung(out)
     if rung is None:
-        last = next((ln for ln in reversed(out.splitlines()) if ln.strip()), "")
         return Verdict(
             "INCONCLUSIVE", "unknown-exit",
-            f"the gate exited {rc} without naming a rung. Last line: {sanitize(last, 120)}",
+            f"the gate exited {rc} without naming a rung; no product verdict was recorded",
         )
     if not rung:
         return Verdict("INCONCLUSIVE", "malformed-marker", "GATE_FAILED named no rung")
     if rung not in PRODUCT_RUNGS:
         return Verdict(
-            "INCONCLUSIVE", rung,
+            "INCONCLUSIVE", rung if rung in INFRASTRUCTURE_RUNGS else "unknown-rung",
             "the harness or the environment failed, not the product",
+        )
+    if any(signature in out for signature in IMPORT_FAILURES):
+        return Verdict(
+            "INCONCLUSIVE", rung,
+            "a module import failed; a product validation result is not established",
         )
     for signature in NOT_A_VERDICT:
         if has_line(out, signature):
