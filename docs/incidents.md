@@ -1681,3 +1681,26 @@ should have caught it was instead the thing defending it.
 `bin/sync-to.py`'s SYNC list -- the one harness module the sync could not reach. Every
 factory already installed would have kept the broken checker forever, and the fix would
 have looked like it shipped.
+
+## SDLC merge integration: live vetoes and complete policy snapshots
+
+The first complete consumer exercise passed acceptance and then refused its merge.
+The factory's STOP entry was in its operator checkout, while the merge script
+applied the external-policy path restriction to that veto too. The SDLC script now
+allows the trusted external policy to name a checkout STOP entry. Policy and receipt
+files still must be external. STOP is inspected again immediately before mutation;
+its entry and parent still need protection from candidate writes.
+
+A second retry exposed a liveness bug in policy refresh: every status poll wrote a
+denial before spending several seconds on GitHub lookups. The merge read that
+temporary denial despite the operator's unchanged authorization. Refresh now writes
+one complete decision atomically. Lookup errors explicitly revoke the prior decision
+and raise. This is a periodically refreshed operator decision, not an instantaneous
+lock on the dial; STOP is also checked directly by the merge script.
+
+Post-merge bookkeeping also needs an explicit fetch destination. In a single-branch
+clone, fetching another branch by name can update only FETCH_HEAD, leaving the remote
+tracking branch stale. A real Git fixture reproduces that failure and verifies the
+explicit refspec, dirty-checkout refusal, and repeated bookkeeping. The completed
+consumer exercise verified the accepted merge parents, closed its linked issue, and
+raised the unit-test floor from the measured gate result.

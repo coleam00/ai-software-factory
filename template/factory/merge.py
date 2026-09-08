@@ -147,7 +147,8 @@ def bookkeeping(result: dict, measurements: dict) -> None:
     it done: the merge would be on the remote, the floor would silently not have moved,
     and the gap the ratchet exists to close would be open with nothing red anywhere.
     """
-    rc, out = git("fetch", "--quiet", "origin", config.BASE_BRANCH)
+    rc, out = git("fetch", "--quiet", "origin",
+                  f"refs/heads/{config.BASE_BRANCH}:refs/remotes/origin/{config.BASE_BRANCH}")
     if rc:
         raise RuntimeError(f"could not fetch origin/{config.BASE_BRANCH}: {out[:300]}")
     holder = worktree_holding(config.BASE_BRANCH)

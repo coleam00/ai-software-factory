@@ -149,7 +149,7 @@ DEFECTS = [
      '        if profile["require_isolation"]:', "        if False:", True),
     ("a merge reported for another candidate is accepted", "factory/sdlc.py",
      "        if not same:", "        if False:", True),
-    ("the merge policy stops being revoked before it is rewritten", "factory/sdlc.py",
+    ("a failed merge policy refresh leaves authorization active", "factory/sdlc.py",
      '        runtime.write(path, {**runtime.read(path), "authorized": False})',
      "        pass", True),
     ("the merge policy stops reading the pull request's own state", "factory/sdlc.py",

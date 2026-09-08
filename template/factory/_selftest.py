@@ -2741,11 +2741,12 @@ def merge_policy_checks(tmp: Path) -> None:
           "accepting them is an explicit statement about branch protection, and turning "
           "the dial up is not that statement")
 
-    # REVOKED FIRST. A crash between the two writes must leave a denial.
+    # A complete refresh never briefly publishes a false denial. Failures revoke.
     rec = Recorder({"gh:pr:12": "passed"})
 
     def revocation() -> None:
         state.linked_issue = lambda t: None
+        shutil_rm(config.ASSUMPTIONS_DIR)
         directory = tmp / "revoke"
         directory.mkdir(parents=True, exist_ok=True)
         runtime.write(directory / "policy.json", {"authorized": True})
@@ -2765,9 +2766,21 @@ def merge_policy_checks(tmp: Path) -> None:
         finally:
             runtime.write = original
             sdlc.live = saved
-        check("the old authorization is revoked before the new one is written",
-              len(seen) == 2 and seen[0]["authorized"] is False,
-              "a crash between the two must leave a denial, not the last yes")
+        check("a successful refresh publishes one complete authorization",
+              len(seen) == 1 and seen[0]["authorized"] is True,
+              "temporary denials during GitHub lookups make every short merge hold")
+        def unavailable():
+            raise RuntimeError("operator lookup unavailable")
+        sdlc.live = unavailable
+        try:
+            sdlc.merge_policy({"target": "gh:pr:12", "repository": "acme/widget"}, directory)
+            check("a failed policy refresh raises", False)
+        except RuntimeError:
+            check("a failed policy refresh raises", True)
+        finally:
+            sdlc.live = saved
+        check("a failed policy refresh revokes the previous authorization",
+              runtime.read(directory / "policy.json")["authorized"] is False)
     with_consumer(tmp, rec, revocation)
 
 

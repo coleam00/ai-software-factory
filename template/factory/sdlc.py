@@ -390,18 +390,22 @@ def merge_policy(record: dict, directory: Path) -> dict:
 
     `archon-merge` rereads this file and the stop path in the instant before it
     mutates, which is only worth anything if this side keeps it current. So the
-    authorization is REVOKED first and re-granted only if the dial, the STOP button,
-    the pull request's own state and its recorded assumptions all still say yes. A
-    crash between the two writes leaves a denial, which is the safe direction.
+    next complete decision replaces the last one atomically. A temporary denial
+    during every GitHub lookup made the short merge workflow read a false denial
+    on every poll. Lookup failures revoke the prior decision and raise. STOP is
+    also checked directly by the merge, independently of this polling interval.
     """
     path = directory / "policy.json"
-    if path.exists():
-        runtime.write(path, {**runtime.read(path), "authorized": False})
-    operator = live()
-    target = record["target"]
-    allowed = (authorized("merge", False, operator["autonomy"])
-               and state.fetch(target)["_state"] == "passed"
-               and not assumption_text(target).strip())
+    try:
+        operator = live()
+        target = record["target"]
+        allowed = (authorized("merge", False, operator["autonomy"])
+                   and state.fetch(target)["_state"] == "passed"
+                   and not assumption_text(target).strip())
+    except Exception:
+        if path.exists():
+            runtime.write(path, {**runtime.read(path), "authorized": False})
+        raise
     policy = {"authorized": bool(allowed), "repository": record["repository"],
               "base_branch": config.BASE_BRANCH,
               "required_checks": operator["required_checks"],
