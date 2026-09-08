@@ -2405,7 +2405,8 @@ def dispatch_refusal_checks(tmp: Path) -> None:
         try:
             # --- the repair path, and the two counters that bound it ---------
             (tmp / "work-orders").mkdir(parents=True, exist_ok=True)
-            (tmp / "work-orders" / "gh-issue-5.txt").write_text("Build it.", encoding="utf-8")
+            original_order = 'Build "quoted" behavior.\nKeep A & B and 100% of the requirement.'
+            (tmp / "work-orders" / "gh-issue-5.txt").write_text(original_order, encoding="utf-8")
             runtime.write(tmp / "acceptance" / "gh-pr-12.json",
                           {"receipt": str(tmp / "r.json"), "run_id": "v1",
                            "measurements": {}})
@@ -2415,8 +2416,13 @@ def dispatch_refusal_checks(tmp: Path) -> None:
 
             shutil_rm(directory)
             directory.mkdir(parents=True)
-            sdlc.prepare("fix", "gh:pr:12", directory, False)
+            repair = sdlc.prepare("fix", "gh:pr:12", directory, False)
             check("a failed pull request under the cap may be repaired", True)
+            check("repair transports the original multiline request as a document",
+                  Path(repair["inputs"]["work_order"]).read_text(encoding="utf-8") == original_order)
+            check("repair transports structured findings as a document",
+                  json.loads(Path(repair["inputs"]["findings"]).read_text(encoding="utf-8"))
+                  == [{"code": "c", "summary": "s", "evidence": []}])
 
             rec.labels["gh:pr:12"] = config.MAX_FIX_ATTEMPTS
             shutil_rm(directory)

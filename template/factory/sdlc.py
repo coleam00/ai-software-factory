@@ -437,9 +437,10 @@ def prepare(action: str, target: str, directory: Path, manual: bool) -> dict:
         (directory / "policy.txt").write_text(
             "\n\n".join(git("show", f"{base}:{name}")
                         for name in ("MISSION.md", "FACTORY_RULES.md")), encoding="utf-8")
+        (directory / "context.txt").write_bytes(state.body_text(target).encode("utf-8"))
         record["inputs"] = {"target": state.fetch(target)["url"],
                             "policy": str(directory / "policy.txt"),
-                            "context": state.body_text(target)}
+                            "context": str(directory / "context.txt")}
     elif action in {"implement", "fix"}:
         # STRICT ISOLATION FAILS CLOSED. Neither the engine's worktree nor a fresh
         # context is a sandbox, and no provider this factory dispatches to attests one.
@@ -458,7 +459,10 @@ def prepare(action: str, target: str, directory: Path, manual: bool) -> dict:
             current = state.fetch(target)
             if current["_state"] != "accepted":
                 raise ValueError(f"{target} is '{current['_state']}', not accepted")
-            record["inputs"]["target"] = current["url"] + "\n\n" + order
+            # Native workflow inputs accept documents. Keep multiline requests and
+            # quoted JSON out of Windows batch-launcher argument parsing.
+            (directory / "target.txt").write_bytes((current["url"] + "\n\n" + order).encode("utf-8"))
+            record["inputs"]["target"] = str(directory / "target.txt")
         else:
             current = state.fetch(target)
             if current["_state"] != "failed":
@@ -474,8 +478,10 @@ def prepare(action: str, target: str, directory: Path, manual: bool) -> dict:
                 raise ValueError(
                     f"The recorded acceptance for {target} is '{receipt['verdict']}'; a cold "
                     f"repair needs current public repair findings")
-            record["inputs"].update(target_pr=record["identity"]["pr"], work_order=order,
-                                    findings=json.dumps(receipt["findings"]))
+            runtime.write(directory / "findings.json", receipt["findings"])
+            record["inputs"].update(target_pr=record["identity"]["pr"],
+                                    work_order=str(directory / "work-order.txt"),
+                                    findings=str(directory / "findings.json"))
     elif action == "validate":
         current = state.fetch(target)
         if current["_state"] != "open":
