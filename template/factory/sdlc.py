@@ -754,6 +754,11 @@ def apply_acceptance(journal: Path, record: dict, result: dict, transition) -> s
     value = {"approve": "passed", "request_changes": "failed", "reject": "rejected",
              "inconclusive": "needs-human"}[verdict]
     summary = result["summary"]
+    if result["findings"]:
+        # These are the workflow's public repair findings, never private check logs.
+        # Preserve the reason for a refusal when the receipt summary is generic.
+        summary += "\n\n" + "\n".join(
+            f"- {item['code']}: {item['summary']}" for item in result["findings"])
     if value == "passed":
         # HELD IS A STATE, NOT A SENTENCE IN A COMMENT. The hold used to be prose on a
         # pull request that was still labelled `passed`, and the dispatcher merged it
