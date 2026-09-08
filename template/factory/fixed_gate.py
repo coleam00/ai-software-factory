@@ -33,8 +33,9 @@ Exit codes, chosen to mean something to the caller reading them:
     1   a check ran and failed -- the candidate's problem, and repairable
     2   the guard, the secret preflight or the tripwire refused -- also the
         candidate's problem, and not repairable by rerunning
-    75  the gate could not run at all. Declared to acceptance as an ENVIRONMENT exit,
-        because "we could not check" must never be recorded as "we checked".
+    75  the gate could not run, or could not finish inside its own budget. Declared
+        to acceptance as an ENVIRONMENT exit, because "we could not check" must never
+        be recorded as "we checked".
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ import io
 import json
 import os
 import shlex
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -54,10 +56,9 @@ import guard
 import runtime
 import tripwire
 
-# The gate command's own budget. Under acceptance's ten-minute ceiling on purpose: a
-# gate killed by the caller is an inconclusive result with no output to read, where one
-# that stops itself prints everything it got to.
-COMMAND_TIMEOUT_SECONDS = 540
+# What this file may spend stopping the tree it started and reaping its output, inside
+# the margin `gate.deadline` adds on top of the budget it runs the command under.
+CLEANUP_TIMEOUT_SECONDS = 30
 
 REGRESS_BINDINGS = ("revision", "base", "base_revision", "scope")
 
@@ -216,11 +217,23 @@ def acceptance_report(evaluation: str, identity: dict, status: str,
     failure message, a holdout scenario, an evaluator path or the command that ran. The
     judge is a builder-facing context, and a private gate that leaks its own assertions
     into one has stopped being a holdout.
+
+    A TIMEOUT IS NOT "NEVER REACHED IT". Both measure nothing, and this file used to
+    describe both as a gate that never got to the validation command -- which is false
+    about a run that started it and was stopped an hour in, and false in the direction
+    that hides where the time went.
     """
     markers = (measured or {}).get("markers") or {}
     reported = sorted(name for name, seen in markers.items() if seen)
     absent = sorted(name for name, seen in markers.items() if not seen)
-    if measured is None:
+    if status == "timeout":
+        evidence = (
+            "The factory's fixed gate passed its structural stage, started the project's "
+            "whole validation command and stopped it at the gate's configured budget. "
+            "Nothing was measured, so this is a statement about the RUN and not a finding "
+            "about this candidate. The gate's command, its streams and the holdout it "
+            "exercises are the operator's and are not reproduced here.")
+    elif measured is None:
         evidence = (
             f"The factory's fixed structural gate did not reach the project's validation "
             f"command ({status}). Its structural stage is the secret preflight, the "
@@ -244,6 +257,61 @@ def acceptance_report(evaluation: str, identity: dict, status: str,
         "measured_counts": (measured or {}).get("counts"),
         "blocking_errors": None if measured is None else len(measured["errors"]),
         "merge_holds": None if measured is None else len(measured["holds"])})
+
+
+def stop_owned_tree(process: subprocess.Popen) -> None:
+    """Stop what THIS invocation started, and nothing else.
+
+    A validation harness starts servers, browsers and workers. Killing only the command
+    leaves them alive holding the temporary candidate checkout, so the caller that
+    cannot then delete it reports a cleanup failure on top of the timeout -- which is
+    exactly what a nine-minute gate did on an ordinary feature.
+
+    ADDRESSED THROUGH THE HANDLE WE OWN: `taskkill /T` on the pid this process started,
+    and on POSIX the process group `run_validation` created for it. NEVER BY NAME. A
+    sweep for `python` on a build machine stops the factory that started the gate, the
+    other laps it is running, and whatever else the operator had open.
+    """
+    if os.name == "nt":
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                           capture_output=True, timeout=CLEANUP_TIMEOUT_SECONDS)
+    else:
+        with contextlib.suppress(OSError):
+            os.killpg(process.pid, signal.SIGKILL)
+    with contextlib.suppress(OSError):
+        process.kill()
+
+
+def run_validation(argv: list[str], seconds: int) -> tuple[int | None, str, str]:
+    """The project's whole validation command, under the gate's OWN deadline.
+
+    Returns its exit code -- or None when the deadline expired -- with whatever it had
+    printed by then. A DEADLINE IS NOT A VERDICT: a command stopped mid-run has said
+    nothing about the candidate, so the caller reports it as an environment result and
+    never as a defect this gate found.
+    """
+    # POSIX: a session of its own, so the group stopped above holds exactly the
+    # processes this invocation started and no ancestor of it.
+    session = {} if os.name == "nt" else {"start_new_session": True}
+    process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               text=True, encoding="utf-8", errors="replace", **session)
+    try:
+        out, err = process.communicate(timeout=seconds)
+        return process.returncode, out, err
+    except subprocess.TimeoutExpired:
+        stop_owned_tree(process)
+        try:
+            out, err = process.communicate(timeout=CLEANUP_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            # SOMETHING WE COULD NOT REACH STILL HOLDS THE PIPES, and they are left
+            # exactly as they are. `communicate` closes them itself once it drains
+            # them; closing them from here instead deadlocks the gate against its own
+            # reader, which is a hang with no report at all -- strictly worse than the
+            # timeout it was cleaning up after. Whatever the run printed is lost, and
+            # saying so is the whole remaining job.
+            out, err = "", ""
+        return None, out, err
 
 
 def main(argv: list[str]) -> int:
@@ -279,20 +347,29 @@ def main(argv: list[str]) -> int:
         return code
 
     try:
-        result = subprocess.run(shlex.split(profile["command"], posix=os.name != "nt"),
-                                capture_output=True, text=True, encoding="utf-8",
-                                errors="replace", timeout=COMMAND_TIMEOUT_SECONDS)
-    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        exit_code, out, err = run_validation(
+            shlex.split(profile["command"], posix=os.name != "nt"),
+            gate.budget(profile["gate_timeout_seconds"]))
+    except (KeyError, OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"GATE_UNRUNNABLE: {profile['command']!r} could not run: {error}", file=sys.stderr)
         if acceptance:
             acceptance_report(evaluation, identity, "environment", None)
         return 75
-    log = structural_log + result.stdout + result.stderr
-    print(result.stdout, end="")
-    print(result.stderr, end="", file=sys.stderr)
+    print(out, end="")
+    print(err, end="", file=sys.stderr)
+    if exit_code is None:
+        # STOPPED, NOT FAILED. Everything the run got to is on the streams above, which
+        # a fixed profile keeps private; the judge is told the gate did not finish and
+        # is told nothing that could be read as a finding about the candidate.
+        print("GATE_TIMEOUT: the gate's own budget expired before the validation command "
+              "finished, and the process tree it started has been stopped.", file=sys.stderr)
+        if acceptance:
+            acceptance_report(evaluation, identity, "timeout", None)
+        return 75
+    log = structural_log + out + err
 
     try:
-        measured = measure(log, result.returncode, profile["floor"])
+        measured = measure(log, exit_code, profile["floor"])
     except (TypeError, ValueError) as error:
         print(f"GATE_UNRUNNABLE: the ratchet floor is unusable: {error}", file=sys.stderr)
         if acceptance:

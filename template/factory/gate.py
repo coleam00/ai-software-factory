@@ -1,10 +1,43 @@
-"""Marker, ratchet and assumption measurements shared by the fixed SDLC gate."""
+"""Marker, ratchet, budget and assumption measurements shared by the fixed SDLC gate."""
 
 from __future__ import annotations
 
 import json
 import re
 import config
+
+# THE COMPLETE GATE'S BUDGET HAS THREE READERS, so what the number MEANS lands here or
+# nowhere: `config` sets it, `sdlc` snapshots it into the trusted profile and tells the
+# caller the outer deadline, `fixed_gate` runs the command under the inner one.
+#
+# THE GATE HAS TO STOP ITSELF. A run killed by its caller is inconclusive with no output
+# to read and a process tree nobody owns still holding the temporary candidate checkout.
+# So the caller is always given more time than the gate spends, and the difference is
+# what `fixed_gate` needs to stop that tree and write the report acceptance demands back.
+CLEANUP_MARGIN_SECONDS = 120
+
+# The per-command timeout the upstream workflows refuse to exceed, which is a ceiling on
+# the outer deadline -- so the inner budget has to leave the margin room underneath it.
+COMMAND_CAP_SECONDS = 7200
+BUDGET_MAX_SECONDS = COMMAND_CAP_SECONDS - CLEANUP_MARGIN_SECONDS
+
+
+def budget(value: object) -> int:
+    """The configured seconds the whole gate command may take, or a refusal naming why."""
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ValueError("the gate's budget must be a positive whole number of seconds, "
+                         f"not {value!r}")
+    if value > BUDGET_MAX_SECONDS:
+        raise ValueError(
+            f"the gate's budget is {value}s, and with the {CLEANUP_MARGIN_SECONDS}s cleanup "
+            f"margin on top the caller would be asked for more than the "
+            f"{COMMAND_CAP_SECONDS}s it accepts. The maximum is {BUDGET_MAX_SECONDS}.")
+    return value
+
+
+def deadline(seconds: int) -> int:
+    """What the caller is told, which must outlast what runs inside it."""
+    return seconds + CLEANUP_MARGIN_SECONDS
 
 
 def read_floor() -> dict:

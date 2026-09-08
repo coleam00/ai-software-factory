@@ -744,6 +744,43 @@ CLI owner is reachable"* for these, which reads like "it is already gone" and is
 "I cannot reach it". Taking that at face value once killed a HEALTHY lap at its third
 node. Check the worktree for writes before abandoning anything.
 
+### The gate that stopped itself nine minutes into a thirty-minute check
+
+**What happened.** A full acceptance of a tiny feature came back as an environment exit
+*and* a cleanup failure. The fixed gate runs the project's whole validation command --
+journeys, holdout, nine semantic mutations -- and it ran it under a hardcoded 540-second
+budget. The mutation rung alone budgets 1800. Nothing about the candidate was ever
+measured, and no candidate could ever have passed.
+
+**The second half was the expensive one.** `subprocess.run(..., timeout=...)` kills the
+command it started and nothing that command started. The harness's servers and workers
+outlived the kill still holding the temporary candidate checkout, so the caller that
+went to delete it reported `cleanup_failed` on top of the timeout.
+
+**And the report named the wrong failure.** The acceptance report had one sentence for
+"measured nothing", and it said the gate *did not reach* the validation command -- about
+a run that reached it and spent nine minutes inside it. Both are unmeasured. Only one of
+them tells you where the time went.
+
+**The rules.** The budget is an operator dial (`GATE_TIMEOUT_SECONDS`, default 3600),
+snapshotted out of the trusted base config into `gate.json` and validated in
+`sdlc.snapshot`, so a bad one costs a dispatch that never started rather than an hour.
+The caller is told that budget **plus a cleanup margin**, because the gate has to be the
+thing that stops the gate: killed from outside it writes no report and prints nothing.
+On its own deadline it terminates the tree it owns -- `taskkill /PID <the pid we
+started> /T /F`, or the POSIX process group this invocation created -- and never a
+name-based sweep, which on a build machine kills the factory that started the gate. And
+the exit is an ENVIRONMENT 75 whose report says, in its own words, that the command was
+reached and stopped. A deadline has never found a bug in anybody's code.
+
+**And the cleanup had a hang of its own, caught by the test written for it.** The first
+version closed the pipes itself after stopping the tree. A process the kill cannot reach
+still holds the write end, `communicate`'s reader thread is blocked inside it, and
+closing that same handle from the main thread deadlocks on the buffer lock -- a gate
+that waits forever and writes nothing, which is strictly worse than the timeout it was
+cleaning up after. `communicate` closes them when it drains them; when it cannot, they
+are left exactly as they are.
+
 ## Inherited from the factory this one was built from
 
 These were paid for by an earlier experiment. They are not hypothetical either.

@@ -281,6 +281,28 @@ def gate_checks() -> None:
         check("floor key " + key + " has a source marker",
               key in gate.observed_counts("E2E_PASSED steps=1"))
 
+    # THE BUDGET THE WHOLE GATE RUNS UNDER. An operator dial, so every way of getting it
+    # wrong has to refuse rather than fall back on a number nobody chose -- a gate that
+    # quietly runs for a second or forever is not the gate anybody configured.
+    check("the shipped budget outlasts the harness's own mutation rung",
+          gate.budget(config.GATE_TIMEOUT_SECONDS) >= 1800,
+          "the mutation rung alone budgets 1800s; a gate that stops before its longest "
+          "check can finish reports an environment exit on every complete run")
+    check("and the caller is always given more time than the gate spends",
+          gate.deadline(config.GATE_TIMEOUT_SECONDS) > config.GATE_TIMEOUT_SECONDS
+          and gate.deadline(config.GATE_TIMEOUT_SECONDS) <= gate.COMMAND_CAP_SECONDS,
+          "a gate killed from outside writes no report and leaves its process tree "
+          "holding the candidate checkout")
+    for bad in (0, -1, 1.5, "3600", None, True, gate.BUDGET_MAX_SECONDS + 1):
+        refuses("a gate budget of " + repr(bad) + " is refused",
+                lambda value=bad: gate.budget(value),
+                "it either is not a positive whole number of seconds, or its outer "
+                "deadline would exceed the " + str(gate.COMMAND_CAP_SECONDS)
+                + "s the caller accepts")
+    check("the largest accepted budget still fits under that cap",
+          gate.deadline(gate.budget(gate.BUDGET_MAX_SECONDS)) == gate.COMMAND_CAP_SECONDS,
+          "the maximum has to be the largest value that fits, not a round number near it")
+
 
 # --- the state machine, and the escalation guarantee --------------------------
 
@@ -2489,7 +2511,7 @@ def evaluation_profile_checks(tmp: Path) -> None:
                 "command": "python harness/ci.py", "markers": [], "floor_path": "f.json",
                 "slack_caps_autonomy": False, "accept_races": False, "required_checks": [],
                 "accept_report": ".factory/acceptance-report.json",
-                "public_probe_scope": probe}
+                "gate_timeout_seconds": 3600, "public_probe_scope": probe}
 
     def profiles() -> None:
         saved = {"git": sdlc.git, "snapshot": sdlc.snapshot, "live": sdlc.live,
@@ -2528,6 +2550,11 @@ def evaluation_profile_checks(tmp: Path) -> None:
             check("and the gate owes back a report bound to the evaluation",
                   policy["required_evidence"] == [".factory/acceptance-report.json"],
                   "it is the only thing the judge sees of a private gate's result")
+            check("acceptance is given the snapshotted budget plus the cleanup margin",
+                  [c["timeout_seconds"] for c in policy["commands"]]
+                  == [3600 + gate.CLEANUP_MARGIN_SECONDS],
+                  "the gate has to be the thing that stops the gate: killed from "
+                  "outside it writes no report and leaves its tree holding the checkout")
             check("the profile carries no field the upstream parser has not declared",
                   set(policy) == {"schema_version", "commands", "gate", "context",
                                   "required_evidence", "protected_paths",
@@ -2567,6 +2594,11 @@ def evaluation_profile_checks(tmp: Path) -> None:
                   == "Run the static checks and the unit tests."
                   and "public_probe_scope" not in runtime.read(directory / "policy.json"),
                   "on the profile it is an unknown field, and the run never probes")
+            check("the scheduled regression runs on that same outer budget",
+                  runtime.read(directory / "policy.json")["timeout_seconds"]
+                  == 3600 + gate.CLEANUP_MARGIN_SECONDS,
+                  "it runs the identical complete gate, so a shorter deadline here is a "
+                  "weekly run that can only ever time out")
             check("the private gate is still the profile the regression runs first",
                   runtime.read(directory / "policy.json")["argv"][-1] == "--regression",
                   "a public probe can never waive a failed full gate; it only runs after "
@@ -3045,6 +3077,7 @@ def fixed_gate_checks(tmp: Path) -> None:
         config.ACCEPT_REPORT = ".factory/acceptance-report.json"
         profile = {"base_sha": SHA_B, "markers": [], "slack_caps_autonomy": False,
                    "floor": {}, "result": str(tmp / "measurements.json"),
+                   "gate_timeout_seconds": 3600,
                    "command": "this-command-does-not-exist --please"}
         runtime.write(tmp / "gate.json", profile)
 
@@ -3074,21 +3107,29 @@ def fixed_gate_checks(tmp: Path) -> None:
         # The gate command itself is the project's, so it is stood in for here: what is
         # under test is that a run which REACHED it reports what it measured.
         profile.update(markers=["PROTECTED_OK", "GATE_OK"], floor={"unit_tests": 64},
-                       command="the-project-gate")
+                       gate_timeout_seconds=2400, command="the-project-gate")
         runtime.write(tmp / "gate.json", profile)
-        ran = subprocess.CompletedProcess(
-            args=[], returncode=0,
-            stdout=NL.join(["PROTECTED_OK", "GATE_OK", "UNIT_PASSED tests=64"]) + NL,
-            stderr="")
-        saved_run = fixed_gate.subprocess.run
-        fixed_gate.subprocess.run = lambda *a, **kw: ran
+        green_log = NL.join(["PROTECTED_OK", "GATE_OK", "UNIT_PASSED tests=64"]) + NL
+        given: list = []
+        saved_run = fixed_gate.run_validation
+
+        def stand_in(returns):
+            def call(argv, seconds):
+                given.append((argv, seconds))
+                return returns
+            return call
+
+        fixed_gate.run_validation = stand_in((0, green_log, ""))
         os.chdir(candidate)
         try:
             code = fixed_gate.main([str(tmp / "gate.json")])
         finally:
             os.chdir(cwd)
-            fixed_gate.subprocess.run = saved_run
         written = runtime.read(report_path)
+        check("the command runs under the budget the trusted profile carries",
+              given and given[0][1] == 2400,
+              "the deadline has to be the operator's dial, read from the base tree, and "
+              "not a number compiled into the evaluator: " + str(given))
         check("a green gate reports passed with the markers that reported",
               code == 0 and written["gate_status"] == "passed"
               and written["required_markers"] == {"PROTECTED_OK": True, "GATE_OK": True},
@@ -3102,6 +3143,50 @@ def fixed_gate_checks(tmp: Path) -> None:
               "the-project-gate" not in json.dumps(written)
               and "UNIT_PASSED" not in written["evidence"],
               "the argv and the log are exactly what a fixed profile keeps private")
+
+        # A COMMAND THAT RAN AND FAILED IS THE CANDIDATE'S PROBLEM, and it is the only
+        # one of the three that may be reported that way. The other two exits below are
+        # both 75, because "we could not check" is not a verdict about this branch.
+        report_path.unlink()
+        fixed_gate.run_validation = stand_in((1, green_log, ""))
+        os.chdir(candidate)
+        try:
+            code = fixed_gate.main([str(tmp / "gate.json")])
+        finally:
+            os.chdir(cwd)
+        written = runtime.read(report_path)
+        check("a gate command that RAN and exited non-zero is a candidate failure",
+              code == 1 and written["gate_status"] == "failed"
+              and written["blocking_errors"] == 1,
+              str(written))
+
+        report_path.unlink()
+        fixed_gate.run_validation = stand_in((None, green_log + "TIMED OUT HALFWAY" + NL, ""))
+        os.chdir(candidate)
+        try:
+            code = fixed_gate.main([str(tmp / "gate.json")])
+        finally:
+            os.chdir(cwd)
+            fixed_gate.run_validation = saved_run
+        written = runtime.read(report_path)
+        check("a gate stopped at its own budget is an ENVIRONMENT exit, never a failure",
+              code == 75 and written["gate_status"] == "timeout",
+              "a deadline found nothing wrong with the candidate, and a repair loop sent "
+              "after one is chasing a machine: " + str(written))
+        check("and the report says the command was reached and stopped, not never reached",
+              "stopped it at the gate's configured budget" in written["evidence"]
+              and "did not reach" not in written["evidence"],
+              "both measure nothing; describing an hour-long run as one that never "
+              "started hides where the time went")
+        check("and it still binds to the evaluation that asked for it",
+              written["evaluation_id"] == "eval-9" and written["identity"] == identity
+              and written["blocking_errors"] is None,
+              "a fresh report on every exit, or the judge reads a stale one -- and a "
+              "timeout has no errors to count, which is not the same as zero")
+        check("and nothing the run printed before it stopped reaches the judge",
+              "TIMED OUT HALFWAY" not in json.dumps(written)
+              and "UNIT_PASSED" not in json.dumps(written),
+              "partial output is exactly the private stream a fixed profile withholds")
 
         report_path.unlink()
         os.chdir(candidate)
@@ -3129,6 +3214,80 @@ def fixed_gate_checks(tmp: Path) -> None:
                 os.environ[key] = value
 
 
+def owned_process_tree_checks(tmp: Path) -> None:
+    """A REAL command outrunning a REAL deadline, and nothing it started left behind.
+
+    THE INCIDENT. Acceptance of a small feature was killed at the gate's own 540s while
+    the mutation rung alone budgets 1800, and the processes the harness had started
+    outlived the kill holding the temporary candidate checkout -- so the run came back
+    as a timeout AND a cleanup failure, and neither said anything about the code.
+
+    Both halves are asserted, because a deadline that fires and leaves orphans behind
+    fixes the first report and not the second. The grandchild here writes to a file on
+    a loop: a tree that was genuinely stopped stops writing, on any platform, with no
+    process-liveness API to disagree about.
+    """
+    import time
+
+    import fixed_gate
+
+    tmp.mkdir(parents=True, exist_ok=True)
+    beacon = tmp / "grandchild.log"
+    child = tmp / "child.py"
+    parent = tmp / "parent.py"
+    child.write_text(NL.join([
+        "import sys, time",
+        "while True:",
+        "    with open(sys.argv[1], 'a', encoding='utf-8') as fh:",
+        "        fh.write('.')",
+        "    time.sleep(0.05)",
+    ]) + NL, encoding="utf-8")
+    parent.write_text(NL.join([
+        "import subprocess, sys, time",
+        "subprocess.Popen([sys.executable, sys.argv[1], sys.argv[2]])",
+        "print('APP_STARTED', flush=True)",
+        "time.sleep(600)",
+    ]) + NL, encoding="utf-8")
+
+    started = time.monotonic()
+    code, out, _ = fixed_gate.run_validation(
+        [sys.executable, str(parent), str(child), str(beacon)], 3)
+    elapsed = time.monotonic() - started
+
+    check("a command that outruns the gate's budget reports no exit code",
+          code is None, "got " + repr(code) + "; an exit code would be measured as a "
+                        "verdict about the candidate")
+    check("and the gate stops it rather than waiting for it",
+          elapsed < 120, "took " + str(round(elapsed, 1)) + "s against a 3s budget")
+    check("and what it printed before the deadline is still collected",
+          "APP_STARTED" in out,
+          "a grandchild holding the write end of the pipe blocks the read forever "
+          "unless the whole tree went down: " + repr(out[:200]))
+    check("the command really did start a process of its own",
+          beacon.exists(), "without one this proves nothing about cleanup")
+
+    def written() -> int:
+        return beacon.stat().st_size if beacon.exists() else 0
+
+    before = written()
+    time.sleep(0.75)
+    check("and nothing it started is still running afterwards", written() == before,
+          "a grandchild wrote " + str(written() - before) + " more bytes after the gate "
+          "stopped its tree; that process is what still holds the temporary candidate "
+          "checkout the caller then fails to delete")
+
+    source = (Path(__file__).resolve().parent / "fixed_gate.py").read_text(encoding="utf-8")
+    check("the tree is stopped by the pid this run owns, never by name",
+          "/IM" not in source and "pkill" not in source and "killall" not in source,
+          "`taskkill /IM python.exe` on a build machine stops the factory that started "
+          "the gate, every other lap it is running, and whatever the operator had open")
+    check("and the POSIX half has a group of its own to stop",
+          "start_new_session" in source and "killpg" in source,
+          "one of the two branches above is unreachable on any given machine, so it is "
+          "asserted here rather than run: without a new session the group signalled is "
+          "the one the gate is IN, and the gate kills itself and whoever called it")
+
+
 def trusted_snapshot_checks(tmp: Path) -> None:
     """The judge is rebuilt from the BASE tree, and refuses when it cannot be.
 
@@ -3137,7 +3296,24 @@ def trusted_snapshot_checks(tmp: Path) -> None:
     changed `if violations:` to `if False:` printed both violations, printed
     PROTECTED_OK, and exited 0.
     """
+    import runtime
     import sdlc
+
+    # THE PROFILE IS ONLY AS GOOD AS WHAT `settings` READS OUT OF CONFIG, and every
+    # check below stands that call in. So the one failure no faked test can see is a
+    # setting that never leaves config.py -- which reaches the operator as a KeyError
+    # an hour into a dispatch, or as a dial that silently does nothing.
+    reported = sdlc.live()
+    for key in ("autonomy", "command", "markers", "slack_caps_autonomy", "floor_path",
+                "gate_timeout_seconds", "require_isolation", "accept_report",
+                "public_probe_scope", "accept_races", "required_checks"):
+        check("the trusted profile carries config." + key, key in reported,
+              "snapshot()'s callers read this key by name; got "
+              + str(sorted(reported)))
+    check("and the gate's budget arrives as the number config sets",
+          reported.get("gate_timeout_seconds") == config.GATE_TIMEOUT_SECONDS,
+          "a budget that does not survive the trip into gate.json is a deadline nobody "
+          "chose, running a gate nobody configured")
 
     files = {
         "factory/config.py": "AUTONOMY = 3",
@@ -3159,9 +3335,11 @@ def trusted_snapshot_checks(tmp: Path) -> None:
     saved = (sdlc.git, sdlc.settings)
     try:
         sdlc.git = fake_git
+        budget = {"value": 2400}
         sdlc.settings = lambda directory: {
             "autonomy": 3, "command": "python harness/ci.py", "markers": ["GATE_OK"],
             "slack_caps_autonomy": False, "floor_path": ".factory/locks/floor.json",
+            "gate_timeout_seconds": budget["value"],
             "require_isolation": False, "accept_races": False, "required_checks": []}
 
         directory = tmp / "ok"
@@ -3177,6 +3355,24 @@ def trusted_snapshot_checks(tmp: Path) -> None:
         check("and the ratchet floor from that same revision",
               profile["floor"] == {"unit_tests": 3},
               "a floor read from the candidate is a floor the candidate chose")
+        check("and the budget the gate will run the whole command under",
+              profile["gate_timeout_seconds"] == 2400
+              and runtime.read(directory / "gate.json")["gate_timeout_seconds"] == 2400,
+              "the trusted profile is the only thing the fixed gate reads; a budget that "
+              "does not reach gate.json is a deadline the operator did not set")
+
+        # A DIAL NOBODY CAN SET WRONGLY. The refusal has to land in preparation, where
+        # it costs a dispatch that never started -- not an hour into a gate whose result
+        # the caller was always going to throw away.
+        for bad in (0, -60, gate.BUDGET_MAX_SECONDS + 1):
+            budget["value"] = bad
+            directory = tmp / ("budget" + str(bad))
+            directory.mkdir(parents=True)
+            refuses("a base config whose gate budget is " + str(bad) + " refuses the snapshot",
+                    lambda: sdlc.snapshot(directory, SHA_B),
+                    "a gate prepared with a deadline the caller will not accept spends "
+                    "the whole run and cannot be judged")
+        budget["value"] = 2400
 
         removed = files.pop("factory/guard.py")
         directory = tmp / "no-guard"
@@ -3216,6 +3412,7 @@ def sdlc_checks(tmp: Path) -> None:
         flood_cap_checks(tmp / "flood")
         evaluation_profile_checks(tmp / "profiles")
         fixed_gate_checks(tmp / "gate")
+        owned_process_tree_checks(tmp / "owned")
         trusted_snapshot_checks(tmp / "snapshot")
 
 

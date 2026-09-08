@@ -150,6 +150,20 @@ VALIDATE_CMD = _env("FACTORY_VALIDATE_CMD", "python harness/ci.py")
 # Nothing downstream trusts what this said; the full gate re-runs everything.
 VALIDATE_QUICK = _env("FACTORY_VALIDATE_QUICK", "python harness/ci.py --quick")
 
+# HOW LONG THE COMPLETE GATE MAY TAKE, in seconds.
+#
+# The whole command above, not a rung of it: the journeys, the holdout and the
+# deliberate-defect set, whose mutation rung alone budgets 1800s. The fixed gate used
+# to allow itself 540 and was killed mid-validation on an ordinary small feature.
+#
+# The gate stops ITSELF at this deadline, reports an environment result and terminates
+# the processes it started; whoever invoked it is handed this plus
+# `gate.CLEANUP_MARGIN_SECONDS`, so a slow run reports what it got to instead of being
+# killed from outside with nothing to read. A positive integer, at most
+# `gate.BUDGET_MAX_SECONDS`; anything else refuses the dispatch rather than silently
+# running under a deadline nobody chose.
+GATE_TIMEOUT_SECONDS = _env_int("FACTORY_GATE_TIMEOUT_SECONDS", 3600)
+
 # THE SCOPE THE SCHEDULED REGRESSION MAY RE-RUN IN PUBLIC. Empty ships the probe off.
 #
 # `archon-regress` runs the fixed gate above as a PRIVATE check: its argv, its streams

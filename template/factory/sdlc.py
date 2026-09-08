@@ -168,6 +168,7 @@ def settings(directory: Path) -> dict:
             "'autonomy':config.AUTONOMY,'command':config.VALIDATE_CMD,"
             "'markers':config.REQUIRED_MARKERS,'slack_caps_autonomy':config.SLACK_CAPS_AUTONOMY,"
             "'floor_path':config.FLOOR_FILE.relative_to(config.ROOT).as_posix(),"
+            "'gate_timeout_seconds':config.GATE_TIMEOUT_SECONDS,"
             "'require_isolation':config.REQUIRE_ISOLATION,"
             "'accept_report':config.ACCEPT_REPORT,"
             "'public_probe_scope':config.PUBLIC_PROBE_SCOPE,"
@@ -279,6 +280,10 @@ def snapshot(directory: Path, base: str) -> dict:
                 f"{base} has no factory/{name}, so there is no trusted gate to evaluate "
                 f"against. Land the factory runtime on {config.BASE_BRANCH} first.")
     profile = settings(trusted)
+    # THE BUDGET IS REFUSED HERE, not at minute fifty-nine. A dispatch prepared with a
+    # deadline the caller will not accept is a run that spends an hour and cannot be
+    # judged, and one prepared with a nonsense deadline never had a gate at all.
+    profile["gate_timeout_seconds"] = gate.budget(profile["gate_timeout_seconds"])
     floor = git("show", f"{base}:{profile['floor_path']}") if profile["floor_path"] in listing else ""
     profile["floor"] = json.loads(floor or "{}")
     profile.update(base_sha=base, result=str(directory / "measurements.json"))
@@ -431,7 +436,7 @@ def prepare(action: str, target: str, directory: Path, manual: bool) -> dict:
         base = record["identity"]["base_sha"]
     record["base_sha"] = base
     profile = snapshot(directory, base)
-    gate = evaluator(directory)
+    gate_argv = evaluator(directory)
 
     if action == "triage":
         (directory / "policy.txt").write_text(
@@ -451,7 +456,7 @@ def prepare(action: str, target: str, directory: Path, manual: bool) -> dict:
                 "FACTORY_REQUIRE_ISOLATION is set and no dispatched provider attests an "
                 "enforced execution boundary; delivery refused.")
         runtime.write(directory / "policy.json",
-                      {"command": gate + ["--publication"],
+                      {"command": gate_argv + ["--publication"],
                        "protected_paths": PROTECTED_PREFIXES})
         order = work_order(target, directory)
         record["inputs"] = {"publication_policy": str(directory / "policy.json")}
@@ -491,8 +496,15 @@ def prepare(action: str, target: str, directory: Path, manual: bool) -> dict:
             (directory / "work-order.txt").read_bytes()).hexdigest()
         runtime.write(directory / "policy.json", {
             "schema_version": 1,
-            "commands": [{"id": "factory-gate", "argv": gate,
+            "commands": [{"id": "factory-gate", "argv": gate_argv,
                           "environment_exit_codes": [75],
+                          # THE OUTER DEADLINE OUTLASTS THE INNER ONE. The gate stops
+                          # itself at its own budget and still writes the report below;
+                          # a caller-side kill produces neither that report nor any
+                          # output, and leaves the gate's process tree holding this
+                          # checkout. So acceptance is told the budget plus the margin
+                          # the gate needs to clean up after itself.
+                          "timeout_seconds": gate.deadline(profile["gate_timeout_seconds"]),
                           "public_description": GATE_DESCRIPTION}],
             "gate": {"complete": True, "description": GATE_COMPLETENESS},
             "context": ACCEPT_CONTEXT,
@@ -526,7 +538,8 @@ def prepare(action: str, target: str, directory: Path, manual: bool) -> dict:
                             "policy": str(directory / "policy.json")}
     elif action == "regress":
         runtime.write(directory / "policy.json",
-                      {"version": 1, "argv": gate + ["--regression"], "timeout_seconds": 600})
+                      {"version": 1, "argv": gate_argv + ["--regression"],
+                       "timeout_seconds": gate.deadline(profile["gate_timeout_seconds"])})
         # THE PROBE IS A WORKFLOW INPUT, NOT A FIELD ON THE PROFILE. `archon-regress`
         # declares `public_probe_scope` alongside `policy` and `publish`; setting it on
         # the JSON profile instead is an unknown field, which the profile parser refuses
