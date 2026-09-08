@@ -20,6 +20,8 @@ whose score means nothing.
 from __future__ import annotations
 
 import shutil
+import ast
+import re
 import subprocess
 import sys
 import tempfile
@@ -197,19 +199,21 @@ DEFECTS = [
     ("a missing trusted file stops refusing", "factory/sdlc.py",
      "        if not (trusted / name).is_file():", "        if False:", True),
     ("a required marker stops being required", "factory/fixed_gate.py",
-     "    errors += [f\"required marker absent from the run log: {marker}\"",
-     "    errors += [] or [", True),
+     "               for marker, seen in markers.items() if not seen]",
+     "               for marker, seen in markers.items() if False]", True),
     ("a floor with no observed count stops being an error", "factory/fixed_gate.py",
-     "        if observed is None:", "        if False:", True),
+     "            errors.append(" + NEWLINE +
+     '                f"the ratchet has a floor for \'{key}\' ({minimum}) and the run log reports "' + NEWLINE +
+     '                f"no count for it. A floor nothing measures is a floor nobody is held to.")',
+     "            pass", True),
     ("an escaped deliberate defect stops blocking", "factory/fixed_gate.py",
      "        if caught != total:", "        if False:", True),
     ("the gate stops running the guard", "factory/fixed_gate.py",
      '            code = guard.main(["--base", profile["base_sha"], "--head", "HEAD"])',
      "            code = 0", True),
     ("a gate that could not run reports a candidate failure", "factory/fixed_gate.py",
-     'print(f"GATE_UNRUNNABLE: {profile[' + chr(39) + "command" + chr(39) +
-     ']!r} could not run: {error}", file=sys.stderr)' + NEWLINE + "        return 75",
-     'print("unrunnable", file=sys.stderr)' + NEWLINE + "        return 1", True),
+     "        return 75" + NEWLINE + "    log = structural_log + result.stdout + result.stderr",
+     "        return 1" + NEWLINE + "    log = structural_log + result.stdout + result.stderr", True),
 ]
 
 
@@ -236,22 +240,32 @@ def main(argv: list[str]) -> int:
                       + str(hits) + "x in " + rel + ")")
                 problems.append(name)
                 continue
-            target.write_text(source.replace(anchor, replacement, 1), encoding="utf-8")
+            mutated = source.replace(anchor, replacement, 1)
+            try:
+                ast.parse(mutated)
+            except SyntaxError:
+                print("  NOT_INJECTED   " + name + "  (mutation creates invalid Python)", flush=True)
+                problems.append(name)
+                continue
+            target.write_text(mutated, encoding="utf-8")
             proc = subprocess.run(
                 [sys.executable, str(tmp / "factory" / "_selftest.py"), "--quiet"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=300,
             )
-            went_red = proc.returncode != 0
+            # A crashed interpreter or missing dependency did not exercise an invariant.
+            went_red = proc.returncode == 1 and bool(re.search(
+                r"(?m)^SELFTEST_FAILED checks=[1-9][0-9]* failed=[1-9][0-9]*$", proc.stdout))
             if not live:
                 print("  NOT_APPLICABLE " + name + "  (changes no behaviour; see the note)")
                 continue
             applicable += 1
             if went_red:
                 caught += 1
-                print("  CAUGHT         " + name)
+                print("  CAUGHT         " + name, flush=True)
             else:
-                print("  ESCAPED        " + name)
+                label = "ESCAPED" if proc.returncode == 0 else "INCONCLUSIVE"
+                print("  " + label.ljust(15) + name, flush=True)
                 problems.append(name)
         finally:
             shutil.rmtree(tmp.parent, ignore_errors=True)

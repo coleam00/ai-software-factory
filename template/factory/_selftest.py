@@ -544,8 +544,12 @@ def enforcement_checks() -> None:
 
         at("open")
         before = len(writes)
-        state.set_state("gh:pr:1", "open")
-        check("re-applying the current state is allowed", len(writes) > before,
+        refused = False
+        try:
+            state.set_state("gh:pr:1", "open")
+        except state.IllegalTransition:
+            refused = True
+        check("re-applying the current state is allowed", not refused and len(writes) > before,
               "the labels ARE the state, so a correct state with no label is unreadable")
     finally:
         state.fetch = original_fetch
@@ -1178,7 +1182,10 @@ def gh_retry_checks() -> None:
     try:
         calls["n"] = 0
         state.subprocess.run = script([(1, "HTTP 503: Service Unavailable"), (0, "")])
-        out = state.gh("issue", "list")
+        try:
+            out = state.gh("issue", "list")
+        except state.GhError:
+            out = None
         check("a transient 503 is retried and recovers", out == "OK" and calls["n"] == 2,
               "returned " + repr(out) + " after " + str(calls["n"]) + " attempts")
 
@@ -2614,14 +2621,35 @@ def stop_and_dial_checks(tmp: Path) -> None:
     finally:
         state.stop_requested, sdlc.live = saved_stop, saved_live
 
-    src = (Path(__file__).resolve().parent / "sdlc.py").read_text(encoding="utf-8")
-    body = src[src.index("def launch("):src.index("def artifact_root(")]
-    check("the dispatch re-asks after preparation",
-          body.count("authorized(action, manual)") >= 2,
-          "a STOP raised while the factory was reading GitHub would otherwise be "
-          "checked only against the state before it")
-    check("and the re-ask is the last thing before the engine is called",
-          body.index("changed during preparation") < body.index("response = engine(argv)"))
+    import dispatch
+
+    def stop_during_preparation() -> None:
+        saved = (sdlc.prepare, sdlc.engine, dispatch.lock_path)
+        calls = []
+
+        def prepare(*args):
+            state.stop_requested = lambda: (True, "STOP raised during preparation")
+            return {"inputs": {}, "base_sha": SHA_B}
+
+        def engine(argv):
+            calls.append(argv)
+            return {"ok": True, "runId": "a" * 32}
+
+        try:
+            tmp.mkdir(parents=True, exist_ok=True)
+            dispatch.lock_path = lambda *args: tmp / "launch.lock"
+            sdlc.prepare, sdlc.engine = prepare, engine
+            refused = False
+            try:
+                sdlc.launch("regress", "", manual=True)
+            except ValueError as error:
+                refused = "changed during preparation" in str(error)
+            check("STOP raised during preparation refuses dispatch", refused)
+            check("STOP raised during preparation never calls the engine", calls == [])
+        finally:
+            sdlc.prepare, sdlc.engine, dispatch.lock_path = saved
+
+    with_consumer(tmp, Recorder({}), stop_during_preparation)
 
 
 def merge_policy_checks(tmp: Path) -> None:
@@ -2874,7 +2902,7 @@ def fixed_gate_checks(tmp: Path) -> None:
         check("a complete green run has no errors and no holds",
               clean["errors"] == [] and clean["holds"] == [], str(clean))
         check("and its counts are what the ratchet will be raised to",
-              clean["counts"]["unit_tests"] == 64 and clean["counts"]["e2e_journeys"] == 3)
+              clean["counts"].get("unit_tests") == 64 and clean["counts"].get("e2e_journeys") == 3)
 
         missing = fixed_gate.measure(green.replace("APP_STARTED" + NL, ""), 0, floor)
         check("a required marker that never appeared is an error",
