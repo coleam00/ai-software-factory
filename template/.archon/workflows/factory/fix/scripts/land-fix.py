@@ -37,12 +37,36 @@ target = (os.environ.get("INPUTS_TARGET") or "").strip()
 number = (os.environ.get("INPUTS_NUMBER") or "").strip()
 branch = (os.environ.get("INPUTS_BRANCH") or "").strip()
 attempt = (os.environ.get("INPUTS_ATTEMPT") or "1").strip()
+# What the fix node itself concluded. `archon-implement` returns {done, green,
+# red_cause, summary}; `red_cause: inherited` means "the failure is on main too and
+# this diff did not cause it", `green: true` with no diff means "the findings did not
+# hold up". Both are answers, not failures, and both used to be thrown away.
+red_cause = (os.environ.get("INPUTS_RED_CAUSE") or "").strip().lower()
+green = (os.environ.get("INPUTS_GREEN") or "").strip().lower() in ("true", "1", "yes")
+summary = (os.environ.get("INPUTS_SUMMARY") or "").strip()
 artifacts = Path(os.environ.get("ARTIFACTS_DIR") or ".")
 
 
 def die(msg: str) -> None:
     print(f"LAND_FIX_FAILED: {msg}", file=sys.stderr)
     sys.exit(1)
+
+
+# --- 0. AN ATTEMPT THAT RAN IS AN ATTEMPT SPENT ----------------------------------
+# This used to be step 3, after the commit and the push. When the fix node changed
+# nothing this script died at step 1, the counter never moved, the PR stayed at
+# needs-fix, and the dispatcher ran the same fix again -- three times in an hour,
+# each one announcing "attempt 1/2", until the watchdog halted the factory. The cap is
+# only a cap if it counts the attempts that fail.
+try:
+    spent = state.bump_attempt(target)
+    print(f"ATTEMPTS={spent}")
+except Exception as e:  # noqa: BLE001
+    die(
+        f"the attempt counter did not move ({e}). Another fix would not be counted and "
+        f"the cap would never be reached, so this PR could loop until the budget is "
+        f"gone. Fix the label by hand."
+    )
 
 
 def git(*args: str) -> tuple[int, str]:
@@ -71,6 +95,37 @@ if not dirty.strip():
     if not carried:
         report = artifacts / "fix-report.md"
         hint = f" It wrote {report}, so read that first." if report.exists() else ""
+        # AN EMPTY DIFF WITH A REASON IS AN ANSWER. Three fix runs in one night each
+        # proved the red gate was a defect in the protected harness, refused to touch
+        # protected files (correctly), said so in `red_cause`, and were then failed
+        # here as "changed nothing" and dispatched again. The right move is the one a
+        # person would make: hand it to a human with the diagnosis attached.
+        if red_cause == "inherited":
+            why = (
+                f"the fix node found the red gate is INHERITED (fails on main too) and "
+                f"not caused by this PR, so it changed nothing. "
+                + (summary[:900] if summary else "See the run's implementation.md.")
+            )
+            state.set_state(target, "needs-human", force=True)
+            try:
+                config.NEEDS_HUMAN.parent.mkdir(parents=True, exist_ok=True)
+                with config.NEEDS_HUMAN.open("a", encoding="utf-8") as fh:
+                    fh.write(f"- {target}  (fix)  {why}\n")
+            except OSError:
+                pass
+            try:
+                state.comment(target, "**Factory fix: parked for a human**\n\n" + why)
+            except Exception:  # noqa: BLE001
+                pass
+            print(f"FIX_INHERITED {target} -> needs-human (nothing to fix in this PR)")
+            sys.exit(0)
+        if green:
+            # The node re-ran the checks and they passed: the findings did not hold. Hand
+            # it back so the INDEPENDENT validator decides, which is the only verdict
+            # that counts. The attempt is already spent above, so this cannot loop.
+            state.set_state(target, "open")
+            print(f"FIX_NOTHING_TO_FIX {target} -> open (the node found the checks green)")
+            sys.exit(0)
         die(
             "the fix node changed nothing. A finding is not addressed by an empty diff, "
             "and the usual cause is a denied tool or a finding the node decided it could "
@@ -102,15 +157,8 @@ if rc != 0:
 print(f"FIX_PUSHED {branch}")
 
 # --- 3. count it ---------------------------------------------------------------
-try:
-    n = state.bump_attempt(target)
-    print(f"ATTEMPTS={n}")
-except Exception as e:  # noqa: BLE001
-    die(
-        f"the fix is committed and pushed but the attempt counter did not move ({e}). "
-        f"Another fix would not be counted and the cap would never be reached, so this "
-        f"PR could loop until the budget is gone. Fix the label by hand."
-    )
+# Already done at step 0, before anything could fail. Counting here, after the push,
+# is how a fix that never landed was never counted.
 
 # --- 4. hand it back -----------------------------------------------------------
 report = artifacts / "fix-report.md"

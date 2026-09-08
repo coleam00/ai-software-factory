@@ -121,3 +121,9 @@ nodes:
       number: "$prepare.output.number"
       branch: "$prepare.output.branch"
       attempt: "$prepare.output.attempt"
+      # The fix node's own verdict. An empty diff with `red_cause: inherited` is a
+      # diagnosis for a human, not a failure to retry; with `green: true` it is a
+      # request for an independent re-judgement. Without these, land could only fail.
+      red_cause: "$fix.output.red_cause"
+      green: "$fix.output.green"
+      summary: "$fix.output.summary"

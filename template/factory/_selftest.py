@@ -1588,6 +1588,62 @@ def irreversible_scripts_refuse_arguments_checks() -> None:
         )
 
 
+def fix_verdict_checks() -> None:
+    """One night, three fix runs, the same three defects.
+
+    A holdout scenario restarted the app with the command the harness printed, which
+    carried `http.start` but not `http.env`, so the restart opened the app's default
+    database and every persistence scenario failed against a product that lost nothing.
+    Three fix runs diagnosed it, correctly refused to touch protected files, reported
+    `red_cause: inherited`, and were each failed by land-fix as "changed nothing" and
+    dispatched again -- with the attempt counter never moving, because it was bumped
+    after the step that died. The watchdog had to halt the factory.
+    """
+    here = Path(__file__).resolve().parent
+    harness = here.parent / "harness"
+    sys.path.insert(0, str(harness))
+    try:
+        import agentcheck  # noqa: PLC0415
+
+        class _App:
+            base = "http://127.0.0.1:43501"
+            port = 43501
+
+        text = agentcheck.reach(
+            {"driver": "http",
+             "http": {"start": "python -m app.server --port {port}",
+                      "env": {"APP_DB": ".factory/runs/gate-{port}.db"}}},
+            _App(),
+        )
+        check("the restart line the agent is handed carries http.env",
+              "APP_DB=.factory/runs/gate-43501.db" in text,
+              "a restart without the harness env opens the default database, empty, "
+              "and every persistence-across-restart scenario fails on a healthy app")
+        check("and {port} is substituted inside the env values",
+              "{port}" not in text)
+    finally:
+        sys.path.remove(str(harness))
+
+    land = here.parent / ".archon" / "workflows" / "factory" / "fix" / "scripts" / "land-fix.py"
+    src = land.read_text(encoding="utf-8")
+    bump = src.find("state.bump_attempt(")
+    empty = src.find('"the fix node changed nothing. A finding')
+    check("land-fix counts the attempt BEFORE it can fail on an empty diff",
+          0 <= bump < empty,
+          "an attempt that ran but did not land was never counted; the cap never "
+          "engaged and the same fix ran three times in an hour")
+    check("land-fix parks an inherited red gate for a human instead of failing",
+          'red_cause == "inherited"' in src and '"needs-human"' in src)
+    check("land-fix hands a 'nothing to fix' verdict back to the validator",
+          "FIX_NOTHING_TO_FIX" in src)
+
+    wf = (here.parent / ".archon" / "workflows" / "factory" / "fix" / "factory-fix.yaml"
+          ).read_text(encoding="utf-8")
+    check("the fix workflow passes the fix node's verdict to land",
+          "$fix.output.red_cause" in wf and "$fix.output.green" in wf,
+          "without it land can only fail on an empty diff")
+
+
 def main() -> int:
     quiet = "--quiet" in sys.argv
     # POINT THE LEDGER SOMEWHERE HARMLESS FOR THE WHOLE RUN, before any check fires.
@@ -1621,6 +1677,7 @@ def main() -> int:
     gh_retry_checks()
     undefined_module_checks()
     clean_tree_is_not_empty_work_checks()
+    fix_verdict_checks()
     operator_settings_live_in_config_checks()
     unreachable_code_checks()
     irreversible_scripts_refuse_arguments_checks()

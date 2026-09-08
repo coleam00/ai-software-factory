@@ -84,14 +84,32 @@ def reach(config: dict, app, rung_noun: str = "journey") -> str:
     driver = config.get("driver", "http")
     if driver == "http":
         http = config.get("http", {})
-        start = (http.get("start") or "").replace("{port}", str(getattr(app, "port", "")))
+        port = str(getattr(app, "port", ""))
+        start = (http.get("start") or "").replace("{port}", port)
+        # THE ENVIRONMENT IS PART OF THE START COMMAND. The harness launches the app
+        # with `http.env` (that is where the gate's own database path lives), but the
+        # restart line handed to the agent used to carry only `http.start`. An agent
+        # that restarted the app exactly as told then opened the app's DEFAULT database,
+        # empty, and every persistence-across-restart scenario failed against a product
+        # that had lost nothing. Three fix runs diagnosed it independently before it was
+        # believed. The variables are spelled out so a restart is the same launch.
+        env = {k: str(v).replace("{port}", port) for k, v in (http.get("env") or {}).items()}
+        env_line = ""
+        if env:
+            shown = " ".join(f"{k}={v}" for k, v in env.items())
+            env_line = (
+                f"It was started WITH THESE ENVIRONMENT VARIABLES, and a restart must set the "
+                f"same ones or it opens a different database: {shown}\n"
+            )
+            start = shown + " " + start
         return (
             f"The app is ALREADY RUNNING at {app.base}\n"
             f"Reach it with curl, or any HTTP client. Do not start another one.\n"
             f"Health endpoint: {http.get('health_path', '/health')}\n"
+            f"{env_line}"
             f"If a step needs a restart, the start command is: {start}\n"
             f"Restart means: stop that process, run it again on the SAME port "
-            f"({getattr(app, 'port', '')}), wait for the health endpoint, continue."
+            f"({port}), with the SAME environment, wait for the health endpoint, continue."
             "\nTHE PORT IS NOT NEGOTIABLE. Anything started on a different port is "
             "invisible to the gate, which then cannot re-check your evidence and "
             "cannot stop the process afterwards."
