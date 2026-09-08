@@ -203,12 +203,22 @@ def ensure_archon(auto: bool) -> bool:
     ref = ARCHON_REF
     dest = Path(os.environ.get("FACTORY_ARCHON_DIR", "") or (Path.home() / "archon-src"))
 
-    if not auto:
+    # NO TERMINAL MEANS YES. The common way this runs now is an agent on a laptop
+    # driving the box over `ssh host 'python ... init'`, with no tty attached; there
+    # `input()` raises EOFError and the install died on the one question it asked.
+    # A caller with no terminal cannot answer, so asking is not an option; installing
+    # the engine the README already told them about is the answer they came for.
+    if not auto and sys.stdin.isatty():
         say(f"  Clone {source} at `{ref}` into {dest} and link it? [Y/n] ")
-        answer = input().strip().lower()
+        try:
+            answer = input().strip().lower()
+        except EOFError:
+            answer = ""
         if answer and not answer.startswith("y"):
             warn("Skipped. The factory will not dispatch anything until it is installed.")
             return False
+    elif not auto:
+        step("no terminal   installing the engine without asking (non-interactive run)")
 
     if (dest / ".git").exists():
         step(f"engine        {dest} exists; fetching {ref}")
