@@ -810,6 +810,7 @@ LADDER = [
     "+ the validator runs and writes a verdict",
     "+ the validator AUTO-MERGES when every structural gate is green   <- the target",
     "+ it triages its own issues, and the scheduled regression may file its own bugs",
+    "+ it writes its own issues from the mission",
 ]
 
 
