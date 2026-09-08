@@ -127,16 +127,12 @@ WORKFLOW_MERGE = _env("FACTORY_WORKFLOW_MERGE", "archon-merge")
 # list` prints a warning about it that nobody connects to a cap that does not apply.
 ISSUE_CAP_PER_DAY = _env_int("FACTORY_ISSUE_CAP_PER_DAY", 3)
 
-# Model tiers, not literal model ids -- Archon resolves a tier against whatever
-# provider is configured, so a factory written with tiers survives a provider swap.
-#
-# TWO SLOTS DECIDE QUALITY: the one that PLANS and the one that IMPLEMENTS. A
-# premium model in ONE of them buys most of the quality of both. Zero premium slots
-# is what actually costs you.
-MODEL_PLAN = _env("FACTORY_MODEL_PLAN", "large")
-MODEL_BUILD = _env("FACTORY_MODEL_BUILD", "medium")
-MODEL_JUDGE = _env("FACTORY_MODEL_JUDGE", "medium")
-MODEL_SORT = _env("FACTORY_MODEL_SORT", "small")
+# THERE ARE NO MODEL SETTINGS HERE, and that is the migration rather than an omission.
+# Four tier settings used to live at this spot and were read by the workflows this
+# factory shipped. The workflows are the pack's now; each declares its own tier, and
+# the engine resolves that against whatever provider your project configures. Nothing
+# on this side passes a model to anything, so a setting here would be a dial connected
+# to nothing -- which is worse than no dial. Bind models where the engine reads them.
 
 # --- the validation harness ---------------------------------------------------
 # THE MOST IMPORTANT SETTING IN THIS FILE.
@@ -593,7 +589,6 @@ def summary() -> str:
             f"holdout         {HOLDOUT_DIR}",
             f"stop file       {STOP_FILE}",
             f"notify          {NOTIFY_CMD or '(unset -- escalations wait in .factory/needs-human.md)'}",
-            f"models          plan={MODEL_PLAN} build={MODEL_BUILD} judge={MODEL_JUDGE} sort={MODEL_SORT}",
         ]
     )
 
