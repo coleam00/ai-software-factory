@@ -16,9 +16,9 @@ serves every consumer instead of each consumer keeping its own.
 |---|---|---|---|
 | `triage` | `archon-admit` | `MISSION.md` and `FACTORY_RULES.md` read out of the base tree as trusted policy; the issue body as evidence | `disposition`, `priority`, `assumptions`, `rules_cited` |
 | `implement` | `archon-ship` | the issue plus its recorded work order, and a publication policy naming `fixed_gate.py --publication` | `outcome`, and a `pr` identity it re-resolves before acting |
-| `validate` | `archon-accept` | the original work order from outside every checkout, and a strict profile pinning `fixed_gate.py` | an `acceptance.json` receipt, identity-checked and re-hashed |
+| `validate` | `archon-accept` | the original work order from outside every checkout as LF bytes, and a strict profile pinning `fixed_gate.py`, declaring what it covers, carrying `MISSION.md` and `FACTORY_RULES.md` from the base commit, and requiring a report back from the gate | an `acceptance.json` receipt, identity-checked and re-hashed |
 | `fix` | `archon-revise-pr` | the same work order and the findings out of that receipt | the same pull request, repaired, never a replacement |
-| `regress` | `archon-regress` | a trusted check profile running `fixed_gate.py --regression` | `clean` / `defects` / `inconclusive` against a named revision |
+| `regress` | `archon-regress` | a trusted check profile running `fixed_gate.py --regression`, and a `public_probe_scope` input that is empty unless the operator set one | `clean` / `defects` / `inconclusive` against a named revision |
 | `merge` | `archon-merge` | an authorization rewritten immediately before every read of it | `merged` / `held` / `revalidation_required` / `failed` |
 
 `archon-ship` composes `archon-triage`, `archon-investigate`, `archon-plan`,
@@ -44,6 +44,21 @@ strict profile pinning one argv -- `factory/fixed_gate.py` -- and the pack runs 
 records its streams without interpreting them. `REQUIRED_MARKERS`, the ratchet, the
 mutation score and the guard are all inside that command.
 
+**A private gate still owes the judge something public.** A fixed profile withholds
+argv and streams, which is what lets that command exercise a holdout no builder may
+read -- and leaves an approval resting on "a command the operator vouched for exited
+zero". A judge told only that is right to answer `inconclusive`. So the profile also
+declares that this one command is the whole applicable gate, describes in public terms
+what it covers, and registers one piece of required evidence:
+`.factory/acceptance-report.json`, which the gate writes into the candidate checkout
+bound to the evaluation's own id and identity. It carries the gate's status, which
+required markers reported and the counts measured. It carries no failure text, no
+holdout content, no evaluator path and not the command itself, and acceptance refuses
+it outright if the path was tracked at the candidate SHA or already present in the
+tree -- so it can only be output that evaluation produced. Publication mode writes no
+report at all: nothing is judging a receipt then, and a file dropped into a delivery
+worktree is a file that can be committed.
+
 **That command is rebuilt from the base tree, every run.** `sdlc.snapshot` reads
 `config.py`, `guard.py`, `gate.py`, `tripwire.py`, `fixed_gate.py` and the ratchet floor
 out of the base revision the pull request targets -- never out of the candidate, never
@@ -57,6 +72,18 @@ its own previous opinion in context. `archon-revise-pr` is a separate dispatch: 
 clone, an engine-created worktree, no artifacts from the run that built it, and the
 findings arriving as a file rather than as ambient memory. That is the property the
 factory used to keep by writing its own fix workflow, and it is now upstream's.
+
+**A candidate that cannot merge has to stop, not orbit.** `archon-merge` returns
+`revalidation_required` both when the pull request has moved since the receipt was
+issued and when it has not moved and its head still does not contain the base. Those
+need opposite answers. Requeueing the first is right; requeueing the second asks
+acceptance to judge the same head again, and acceptance judges a head -- it never
+updates one -- so the approval and the ancestry refusal alternate for as many laps as
+the operator is paying for. The consumer tells them apart by re-resolving the candidate
+rather than by reading the refusal's prose, and holds the second for a person with the
+one command that clears it: `gh pr update-branch`, an ordinary fast-forward of the head
+branch, never a force-push. Bringing a candidate onto its base is not something this
+factory dispatches.
 
 **The merge's authority is a receipt, not a caller.** `archon-merge` reads an
 operator-owned policy file and rereads it, and the stop path, in the instant before it
@@ -89,9 +116,18 @@ export, with a cause proven by `archon-investigate`. That is the right rule: it 
 private evaluator output from being copied into a public issue by a model that thought
 it looked like a bug report. The shipped `fixed_gate.py --regression` reports whether
 the base branch is green and authors no public cases, because it cannot state a root
-cause without inventing one. So at level 4 a red regression escalates to a person
-rather than filing. Publication turns on when a project's own check emits
-`public_cases`.
+cause without inventing one. So on its own, at level 4, a red regression escalates to a
+person rather than filing.
+
+`FACTORY_PUBLIC_PROBE_SCOPE` is the second route, and it ships empty. Setting it is the
+operator's statement that the checks it names, and everything they print, are public
+developer material with no private evaluator source in reach -- which the factory
+cannot verify, because it does not know what those commands emit. The private gate
+still runs first and still decides; only after it comes back non-clean does the
+workflow re-run that public scope through its own recorder, and only what the probe
+itself proves can become an issue. Nothing the private check produced crosses over, and
+a green probe never makes a failed gate green. Publication also turns on when a
+project's own check emits `public_cases`.
 
 **Neither worktrees nor fresh contexts are a sandbox.** They never were, and nothing in
 this migration changed it; what changed is that the claim is now written down in three

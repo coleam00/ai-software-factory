@@ -144,6 +144,15 @@ written, and the staleness is invisible because it still passes.
 4  + it triages its own issues, and the scheduled regression may file its own bugs
 ```
 
+Level 4's publication is deliberately narrow. The fixed gate reports whether the base
+branch is green and cannot say *why* it is not without inventing prose, which is how
+private evaluator output reaches a public issue -- so on its own a red weekly run
+escalates to a person and files nothing. Setting `FACTORY_PUBLIC_PROBE_SCOPE` is your
+statement that the checks it names, and everything they print, are public developer
+material; the workflow then re-runs that scope after the private gate has already come
+back red and may write up what the probe itself proves. A public probe can never make a
+failed private gate green.
+
 There is no level 5. It used to read "it writes its own issues from the mission",
 which nothing here has ever implemented, and a dial that names a level the code cannot
 reach is a promise the product does not keep.
@@ -198,9 +207,9 @@ sync.
 |---|---|---|
 | triage | `archon-admit` | `MISSION.md` and `FACTORY_RULES.md`, read out of the base tree as trusted policy. Never the issue body: an issue that can supply the rules it is judged against is an issue that admits itself. |
 | implement | `archon-ship` | the issue, its recorded work order, and a publication policy naming one fixed command. `archon-ship` decides for itself whether the item needs investigating, planning or neither, and ends in a reviewed pull request. |
-| validate | `archon-accept` | the ORIGINAL request text kept outside every checkout, and a strict profile pinning `factory/fixed_gate.py`. It fetches the exact head and base into a repository of its own and returns a receipt. |
+| validate | `archon-accept` | the ORIGINAL request text kept outside every checkout, and a strict profile pinning `factory/fixed_gate.py`, declaring what that gate covers, carrying `MISSION.md` and `FACTORY_RULES.md` from the base commit, and requiring a sanitized report back from the gate itself. It fetches the exact head and base into a repository of its own and returns a receipt. |
 | fix | `archon-revise-pr` | the same work order, and the findings out of that receipt. A fresh clone, a new worktree, and no artifacts from the run that built it. |
-| regress | `archon-regress` | a trusted check profile, and permission to publish only at level 4. |
+| regress | `archon-regress` | the same fixed command as a private check profile, permission to publish only at level 4, and `FACTORY_PUBLIC_PROBE_SCOPE` -- empty by default -- naming what may be re-run in public when that private gate comes back red. |
 | merge | `archon-merge` | an authorization file rewritten immediately before every read of it, naming the base, the required checks, the hold labels and the stop file. |
 
 Five workflows and four judgment prompts were deleted outright when these landed.
@@ -251,6 +260,28 @@ fixture executes the actual graph with the AI nodes stubbed -- `when:` condition
 trigger rules, `if_skipped` defaults, cancel nodes, and the namespaced nodes an
 `include:` expands into. That is the layer where an upstream change breaks a consumer,
 and none of it is visible by reading the YAML.
+
+### What acceptance is handed
+
+`archon-accept` runs one fixed command -- `factory/fixed_gate.py`, rebuilt from the base
+branch -- and keeps its argv and its output streams private, which is the only reason
+that command may exercise a holdout the builder must not read. The judge would otherwise
+have an exit code and nothing else, so the profile the factory writes also carries:
+
+- a **gate declaration**, stating that this one command is the whole applicable gate and
+  describing in public terms what it covers;
+- **`MISSION.md` and `FACTORY_RULES.md` read from the base commit**, because the judge
+  runs with no tools and cannot follow a pointer from one document into another;
+- **one required piece of evidence**: `.factory/acceptance-report.json`, which the gate
+  writes into the candidate checkout bound to that evaluation's id and identity. It
+  carries the gate's status, which required markers reported and the counts measured --
+  never a raw failure, a holdout scenario, an evaluator path or the command itself.
+  Acceptance refuses the file if the path was tracked or already present, so it can only
+  ever be output that evaluation produced.
+
+A declaration never establishes a requirement and never overrides a deterministic
+failure. It lets a judge tell an authorized whole gate from an arbitrary command that
+exited zero, which without it is a fair reason to answer `inconclusive` forever.
 
 ---
 
@@ -337,10 +368,16 @@ the layer a machine can check is intact.
 
 **It does not own your process.** The workflows are Archon's and a project-scope
 workflow of the same name overrides the bundled one, so a file in your own
-`.archon/workflows/` replaces a step wholesale with nothing here to edit. That changes
-what your factory builds with. It deliberately cannot change what judges the result:
-acceptance launches the trusted installed pack and runs the fixed command the factory
-supplies.
+`.archon/workflows/` replaces a step wholesale with nothing here to edit.
+
+That includes the one that judges. The factory dispatches `archon-accept` by name and
+does not pin where the definition comes from, so a workflow of that name in your repo
+is what evaluates your candidates. Your workflow definitions and your engine install
+are trusted here, deliberately -- this is your factory and customizing it is the point
+-- and `factory doctor` names any of the six it finds defined locally rather than
+letting the substitution be invisible. What a *candidate* cannot do is supply its own
+judge: the gate acceptance runs is rebuilt from the base branch, and the guard refuses
+any pull request that touches `factory/` or `.factory/locks/`.
 
 ---
 

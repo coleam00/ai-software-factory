@@ -26,9 +26,12 @@ want to read a plan before spending a delivery on it.
 Put a workflow named `archon-plan` in your own `.archon/workflows/`. Project scope beats
 bundled, so yours wins with nothing here to change. That is the seam, not a fork.
 
-Note that acceptance deliberately does NOT trust a candidate-supplied workflow: the
-factory launches the trusted installed pack. An override changes what your factory
-builds with; it cannot change what judges the result.
+The same seam reaches the workflow that JUDGES. The factory dispatches `archon-accept`
+by name and does not pin where the definition comes from, so an `archon-accept` in your
+own `.archon/workflows/` is what evaluates your candidates. That is your call to make --
+`factory doctor` names any of the six it finds defined here so it is never invisible.
+What a *candidate* cannot do is supply its own judge: the gate acceptance runs is
+rebuilt from the base branch, and the guard rejects any pull request that touches it.
 
 ## The one rule that outlives any planner
 

@@ -34,6 +34,17 @@ knowing what they are before you hand-roll them:
   BASE tree along with `config.py`, `guard.py`, `gate.py` and `tripwire.py`. The gate a
   pull request is held to is the gate a human last agreed to, and the candidate cannot
   supply it.
+- **what the judge is allowed to know about that gate.** Its argv and its streams stay
+  private, so the policy also declares that this one command is the whole applicable
+  gate, describes in public terms what it covers, and hands over `MISSION.md` and
+  `FACTORY_RULES.md` read from the base commit -- the judge has no tools and cannot
+  follow a pointer from one document into another.
+- **one piece of required evidence.** A report at the repository-relative path
+  `FACTORY_ACCEPT_REPORT` names, which the gate writes into the candidate checkout
+  bound to that evaluation's id and identity: the
+  gate's status, which required markers reported, and the counts. Never a raw failure,
+  a holdout scenario, an evaluator path or the command itself. Acceptance refuses the
+  file if the path was tracked or already there, so it is only ever this run's output.
 
 To reproduce one by hand, read the `gate.json` and `policy.json` of a real run under the
 operator runtime root (`factory doctor` prints where that is).

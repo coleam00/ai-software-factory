@@ -46,7 +46,8 @@ legible to the next person.>
 
 Every box is Archon's `sdlc` pack, shipped inside the engine binary, so there is
 nothing to install and nothing to keep in sync -- and a same-named workflow in
-`.archon/workflows/` overrides any of them. What this factory owns is everything
+`.archon/workflows/` overrides any of them, including the one that judges. `factory
+doctor` names any it finds, because that substitution must never be invisible. What this factory owns is everything
 between the boxes: which one runs next, what it is allowed to be handed, and what its
 answer is permitted to change. `factory/sdlc.py` is that, and `factory/fixed_gate.py`
 is the one command all three checking boxes run.
@@ -148,7 +149,7 @@ deliberate: printing slack as a note and carrying on is how the hole widens fore
 | 1 | labelled issue → branch + PR | <date> |
 | 2 | + the validator runs and writes a verdict | <date> |
 | 3 | + auto-merge on green structural gates | <date> |
-| 4 | + self-triage, and the regression files its own bugs | <date> |
+| 4 | + self-triage, and the regression may file its own bugs | <date> |
 
 **Before the next notch, these must be true:**
 
