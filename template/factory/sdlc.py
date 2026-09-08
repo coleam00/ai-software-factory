@@ -299,16 +299,13 @@ def work_order(target: str, directory: Path) -> str:
     issue at that point reads whatever it says NOW -- edited, closed, retitled -- so the
     text is captured on the first dispatch that needs it and lives outside every checkout.
 
-    THE NEWLINES ARE PART OF THE EVIDENCE. Acceptance reads this file's literal bytes
-    and puts their digest in the receipt, which `consume` re-checks against the digest
-    recorded here. `Path.write_text` translates "
-" to "
-
-" on Windows, so a
-    multi-line request written by this side and hashed from the in-memory string
-    produced two digests for one work order and refused every receipt about it. Read
-    through universal newlines and written back as LF bytes, the file the judge reads
-    is byte-for-byte the file this side hashed, on every platform.
+    THE LINE ENDINGS ARE PART OF THE EVIDENCE. Acceptance reads this file's literal
+    bytes and puts their digest in the receipt, which `consume` re-checks against the
+    digest recorded here. `Path.write_text` translates a newline to a carriage return
+    and a newline on Windows, so a multi-line request written by this side and hashed
+    from the in-memory string produced two digests for one work order and refused
+    every receipt about it. Read through universal newlines and written back as LF
+    bytes, the file the judge reads is byte-for-byte the file this side hashed.
     """
     issue = state.linked_issue(target) if target.startswith("gh:pr:") else target
     if not issue:
@@ -773,8 +770,24 @@ def apply_acceptance(journal: Path, record: dict, result: dict, transition) -> s
     return summary
 
 
-def apply_merge(journal: Path, record: dict, result: dict, transition) -> None:
-    """What the remote actually did, kept separate from what this side still owes."""
+def apply_merge(journal: Path, record: dict, result: dict, transition) -> str:
+    """What the remote actually did, kept separate from what this side still owes.
+
+    Returns what to post, so the one refusal a person has to act on carries the
+    command that clears it rather than only the merge's own description of it.
+
+    `revalidation_required` IS TWO DIFFERENT ANSWERS and they need opposite moves. The
+    merge refuses either when the pull request has moved since the receipt was issued,
+    or when it has NOT moved and its head still does not contain the base. Requeueing
+    was right for the first and a treadmill for the second: acceptance judges a head, it
+    never updates one, so the same head is approved and refused again every lap, for as
+    many laps as the operator is willing to pay for.
+
+    THE TWO ARE TOLD APART BY ASKING GITHUB, not by reading the refusal's prose. If the
+    candidate's identity is no longer the one that was accepted, the evidence changed
+    and revalidation is the designed remedy. If it is exactly the one that was accepted,
+    nothing this factory can dispatch will change the answer, and it stops.
+    """
     target = record["target"]
     status = result["status"]
     if status not in {"merged", "held", "revalidation_required", "failed"}:
@@ -782,6 +795,7 @@ def apply_merge(journal: Path, record: dict, result: dict, transition) -> None:
     wanted = record["identity"]
     same = (str(result.get("repository", "")).lower() == wanted["repository"].lower()
             and all(result.get(key) == wanted[key] for key in ("pr", "head_sha", "base_sha")))
+    summary = result["summary"]
     if status == "merged":
         if not same:
             raise ValueError(f"A merge was reported for another candidate than {wanted}")
@@ -796,17 +810,35 @@ def apply_merge(journal: Path, record: dict, result: dict, transition) -> None:
         import merge
         effect(journal, record, "ratchet",
                lambda: merge.bookkeeping(result, record["measurements"]))
-        return
+        return summary
     if status == "revalidation_required" and not result.get("merge_commit"):
-        # The branch went behind its base, which on any repository with velocity is
-        # Tuesday. Requeueing for revalidation is the designed remedy, not an incident.
-        transition(target, "open")
-        return
+        if identity(target, record["repository"]) != wanted:
+            # Somebody pushed to the branch or to its base, which on any repository
+            # with velocity is Tuesday. The receipt is about commits that are no longer
+            # there; revalidating the ones that are is the designed remedy.
+            transition(target, "open")
+            return summary
+        transition(target, "needs-human")
+        summary = (
+            f"{target} is approved at exactly the head that was judged, and the merge "
+            f"still refuses it: that head does not contain {wanted['base_sha'][:12]}, "
+            f"the tip of {config.BASE_BRANCH}. Nothing the factory dispatches moves a "
+            f"pull request onto its base -- acceptance judges a head, it never updates "
+            f"one -- so revalidating would approve this same head and be refused again, "
+            f"every lap.\n\n"
+            f"Bring it forward. This is an ordinary fast-forward of the head branch and "
+            f"never a force-push:\n\n"
+            f"    gh pr update-branch {wanted['pr']} --repo {wanted['repository']}\n\n"
+            f"then remove factory:needs-human. The head that results is a commit nobody "
+            f"has judged, so it is validated from scratch.")
+        escalate(journal, record, summary)
+        return summary
     if status == "held" and same:
         # An operator denial, a hold label, a stopped factory, or a check that has not
         # reported yet. Nothing is wrong and nothing changed; the next tick asks again.
-        return
+        return summary
     transition(target, "needs-human")
+    return summary
 
 
 def apply_regress(record: dict, result: dict) -> None:
@@ -832,7 +864,7 @@ def apply(journal: Path, record: dict, result: dict) -> None:
     elif action == "validate":
         summary = apply_acceptance(journal, record, result, transition)
     elif action == "merge":
-        apply_merge(journal, record, result, transition)
+        summary = apply_merge(journal, record, result, transition)
     elif action == "regress":
         apply_regress(record, result)
 

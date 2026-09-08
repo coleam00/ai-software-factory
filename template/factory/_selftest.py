@@ -2214,20 +2214,56 @@ def state_adapter_checks(tmp: Path) -> None:
               "comment per tick is how a channel gets muted")
     with_consumer(tmp, rec, held_merge)
 
+    # `revalidation_required` IS TWO ANSWERS. The pull request moved, or it did not
+    # move and its head still does not contain the base. Revalidating is right for the
+    # first and a treadmill for the second, because acceptance judges a head and never
+    # updates one -- so the same head is approved and refused again, lap after lap.
     rec = Recorder({"gh:pr:12": "passed"})
 
-    def stale_merge() -> None:
+    def moved_since_acceptance() -> None:
         state.linked_issue = lambda t: None
-        journal, record = journal_for(tmp, action="merge", run_id="m4",
-                                      measurements={"counts": {}})
-        sdlc.apply(journal, record, merge_result(status="revalidation_required",
-                                                 merge_commit="",
-                                                 summary="The base moved."))
-        check("a stale branch is requeued for validation, not escalated",
+        saved = sdlc.identity
+        sdlc.identity = lambda target, repo: {**IDENTITY, "head_sha": "c" * 40}
+        try:
+            journal, record = journal_for(tmp, action="merge", run_id="m4",
+                                          measurements={"counts": {}})
+            sdlc.apply(journal, record, merge_result(status="revalidation_required",
+                                                     merge_commit="",
+                                                     summary="The base moved."))
+        finally:
+            sdlc.identity = saved
+        check("a candidate that MOVED is requeued for validation, not escalated",
               ("gh:pr:12", "open") in rec.transitions and not rec.notified,
-              "somebody pushed to the base branch, which on any repository with velocity "
-              "is Tuesday; waking a person for it is how the channel gets muted")
-    with_consumer(tmp, rec, stale_merge)
+              "somebody pushed to the branch or its base, which on any repository with "
+              "velocity is Tuesday; waking a person for it is how the channel gets muted")
+    with_consumer(tmp, rec, moved_since_acceptance)
+
+    rec = Recorder({"gh:pr:12": "passed"})
+
+    def head_behind_base() -> None:
+        state.linked_issue = lambda t: None
+        for lap, run_id in enumerate(("m4a", "m4b", "m4c")):
+            journal, record = journal_for(tmp, action="merge", run_id=run_id,
+                                          measurements={"counts": {}})
+            sdlc.apply(journal, record, merge_result(status="revalidation_required",
+                                                     merge_commit="",
+                                                     summary="PR head does not contain "
+                                                             "the accepted base."))
+            if lap == 0:
+                check("a head that does not contain its base is held for a person",
+                      ("gh:pr:12", "needs-human") in rec.transitions and bool(rec.notified),
+                      "revalidation would approve the same head and be refused again")
+        check("and it is never handed back to validation, however many laps run",
+              not any(value == "open" for _, value in rec.transitions),
+              "one requeue per tick, forever, is the treadmill this exists to stop")
+        check("the person is told the command that clears it",
+              any("gh pr update-branch 12" in body for _, body in rec.comments)
+              and "gh pr update-branch 12" in rec.notified[-1],
+              "a hold with no recovery is a stall with good manners")
+        check("and it is a fast-forward of the head, never a force-push",
+              all("force" not in body or "never a force-push" in body
+                  for _, body in rec.comments))
+    with_consumer(tmp, rec, head_behind_base)
 
     rec = Recorder({"gh:pr:12": "passed"})
 
