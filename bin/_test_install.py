@@ -179,6 +179,10 @@ def migration_checks(tmp: Path) -> None:
     check("the fixture has a prompt to preserve", (root / edited).exists())
     mine = (root / edited).read_text(encoding="utf-8") + NL + "MY OWN RULE: never approve on a Friday." + NL
     (root / edited).write_text(mine, encoding="utf-8")
+    custom_skill = root / ".claude/skills/factory-judge/SKILL.md"
+    custom_skill_text = custom_skill.read_text(encoding="utf-8") + NL + "MY REVIEW RULE: inspect refunds twice." + NL
+    custom_skill.write_text(custom_skill_text, encoding="utf-8")
+    custom_skill_bytes = custom_skill.read_bytes()
 
     # The things that are the operator's, marked so a mistake is visible rather than
     # inferred from a byte compare nobody reads.
@@ -258,9 +262,12 @@ def migration_checks(tmp: Path) -> None:
 
     check("a kept skill still pointing into the retired pack is reported",
           "KEPT, AND NOW POINTING AT NOTHING" in result.stdout,
-          "add-only protects a prompt somebody rewrote, and its cost is that a file "
-          "which was never edited also never gets the update -- here the update was "
-          "'this path no longer exists'")
+          "a customized skill must retain its instructions and report references needing an operator edit")
+    check("the customized skill remains intact", custom_skill.read_bytes() == custom_skill_bytes)
+    default_skill = ".claude/skills/factory-triage/SKILL.md"
+    check("an unchanged historical default skill upgrades",
+          (root / default_skill).read_text(encoding="utf-8")
+          == (HOME / "template" / default_skill).read_text(encoding="utf-8"))
 
     again = run([sys.executable, str(HOME / "bin" / "sync-to.py"), str(root)], cwd=HOME)
     check("a second sync has nothing left to retire", "RETIRED" not in again.stdout,
