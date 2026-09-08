@@ -66,11 +66,13 @@
     "The coding agent that drives the end-to-end and holdout rungs. It reads the",
     "journey markdown on stdin and must be able to run the app, hit it, and restart it.",
     "  Claude Code:  claude -p --dangerously-skip-permissions",
-    "  Codex:        codex exec -m gpt-6-astra --sandbox danger-full-access -",
+    "  Codex:        codex exec -m gpt-6-astra --sandbox danger-full-access --skip-git-repo-check -",
     "Codex's default sandbox is a private PID namespace: the agent cannot see, stop or",
     "restart the server the harness started, so every restart journey fails against a",
     "product that is fine. This runs on a throwaway checkout on your factory box; give",
-    "it the host. The doctor refuses a sandboxed Codex here."
+    "it the host. And the mutation runner copies the tree WITHOUT .git, where codex",
+    "refuses to run unless told to skip that check; without the flag every defect only",
+    "the e2e rung can catch comes back inconclusive. The doctor refuses either omission."
   ],
   "agent": {
     "cmd": "",

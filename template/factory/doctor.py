@@ -507,6 +507,12 @@ def main(argv: list[str]) -> int:
         exe = shlex.split(agent_cmd, posix=os.name != "nt")[0] if agent_cmd else ""
         if not shutil.which(exe):
             pass
+        elif os.path.basename(exe).startswith("codex") and "--skip-git-repo-check" not in agent_cmd:
+            # THE MUTATION COPIES HAVE NO .git. codex exec refuses to run there, so every
+            # defect only the e2e rung can catch came back inconclusive (2026-09-08).
+            r.add(FAIL, "journey agent",
+                  f"`{agent_cmd}` will refuse to run in the mutation runner's copies, "
+                  f"which have no .git -- add `--skip-git-repo-check`", 2)
         elif os.path.basename(exe).startswith("codex") and "danger-full-access" not in agent_cmd:
             # CODEX'S SANDBOX IS A PID NAMESPACE. Under `--sandbox workspace-write` the
             # agent sees five processes, none of them the app the harness started, so
@@ -519,7 +525,8 @@ def main(argv: list[str]) -> int:
                   f"that cannot see or restart the app the harness started -- use "
                   f"`--sandbox danger-full-access` (see harness.config.json)", 2)
         if shutil.which(exe) and not (
-                os.path.basename(exe).startswith("codex") and "danger-full-access" not in agent_cmd):
+                os.path.basename(exe).startswith("codex")
+                and ("danger-full-access" not in agent_cmd or "--skip-git-repo-check" not in agent_cmd)):
             r.add(OK, "journey agent", agent_cmd)
         elif not shutil.which(exe):
             # ON PATH IS THE CLAIM THAT MATTERS. A configured command that does not
