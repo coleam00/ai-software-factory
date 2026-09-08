@@ -19,6 +19,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 import tempfile
@@ -40,6 +41,8 @@ import state  # noqa: E402
 FAILURES: list[str] = []
 CHECKS = 0
 NL = chr(10)
+CR = chr(13)
+CR_LF = CR + NL
 
 
 def check(what: str, ok: bool, detail: str = "") -> None:
@@ -787,8 +790,41 @@ def size_cap_checks() -> None:
           "without it, moving code under tests/ removes the cap entirely")
 
 
+# The two documents the installed CLI actually prints. Both `workflow run --json` and
+# `workflow get --json` go through `writeJsonLine`, which is
+# `JSON.stringify(value, null, 2)` -- pretty-printed, many lines tall, and its last line
+# is a bare `}`. Reproduced here as data rather than described in a comment, because
+# describing it is exactly what a mock does.
+CLI_RUN_REPLY = {
+    "ok": True, "action": "run", "detached": True,
+    "runId": "0f7c4b2e-9a13-4c5d-8b21-6e7f0a1b2c3d",
+    "workflow": "archon-accept", "branch": None,
+    "conversationId": "6a1d0f3e-2b44-4c19-9f77-1c2d3e4f5a6b",
+    "transcriptPath": "/state/runs/0f7c4b2e/transcript.jsonl",
+    "logPath": "/state/runs/0f7c4b2e/child.log",
+}
+CLI_GET_REPLY = {
+    "id": "0f7c4b2e-9a13-4c5d-8b21-6e7f0a1b2c3d",
+    "workflow_name": "archon-accept",
+    "conversation_id": "6a1d0f3e-2b44-4c19-9f77-1c2d3e4f5a6b",
+    "parent_conversation_id": None, "codebase_id": "c-1", "status": "completed",
+    "outcome": "succeeded", "user_message": "factory validate 3f2a91c0d4e5",
+    "metadata": {"total_cost_usd": 1.37},
+    "started_at": "2026-02-11T09:14:02.000Z", "completed_at": "2026-02-11T09:41:55.000Z",
+    "last_activity_at": "2026-02-11T09:41:55.000Z", "working_path": None,
+    "user_id": None, "parent_run_id": None, "adopted_from_run_id": None,
+    "output_root": "/state/workspaces/widget",
+    "transcript_path": "/state/runs/0f7c4b2e/transcript.jsonl",
+}
+
+
+def as_cli_json(value: object) -> str:
+    """What `writeJsonLine` puts on stdout: one pretty-printed document, newline-ended."""
+    return json.dumps(value, indent=2) + NL
+
+
 def run_resolution_checks() -> None:
-    """The run id must be the one the ENGINE acknowledged, and nothing else.
+    """The run id must be the one the ENGINE acknowledged, read out of the WHOLE reply.
 
     `archon workflow run --detach` used to be read for a "Run id" it printed that
     appeared nowhere in the run record: across four consecutive dispatches the
@@ -798,41 +834,69 @@ def run_resolution_checks() -> None:
     bug. The cure was a search of the run list for a message the factory itself had
     sent, which is inference: it worked, and it could still match the wrong run.
 
-    `--json` ends it. The launch returns `{ok, runId, ...}` and that id IS the handle,
-    written to the journal and to the lock before anything else happens. So what has to
-    be true now is narrower and much stronger: nothing is accepted that is not an
-    acknowledgement, and one document is read out of the reply rather than a buffer.
+    `--json` ends that. The launch returns `{ok, runId, ...}` and that id IS the handle,
+    written to the journal and to the lock before anything else happens.
+
+    THEN THE REPLY HAS TO BE READ AS THE CLI WRITES IT. The version before this one took
+    `lines[-1]`, on the belief that `--json` emits a single line with warnings kept to
+    stderr. It does keep warnings to stderr, and it emits a PRETTY-PRINTED document --
+    so the last line is `}` and every real dispatch died parsing it. The fixture below
+    is the actual shape; the first check is the one that would have caught it.
     """
     import sdlc
 
     original = sdlc.command
     try:
-        sdlc.command = lambda argv, **kw: '{"ok": true, "runId": "abc-123"}'
-        check("the acknowledgement is read back",
-              sdlc.engine(["workflow", "run"])["runId"] == "abc-123")
+        check("the CLI's own reply does not fit on one line",
+              as_cli_json(CLI_RUN_REPLY).strip().splitlines()[-1] == "}",
+              "reading the last line of a --json reply reads a closing brace")
 
-        # A WARNING ON STDOUT IS NOT THE DOCUMENT. `--json` promises one machine-readable
-        # line and puts the CLI's own warnings on stderr, but a runtime warning from
-        # underneath it still lands on stdout ahead of the payload -- and a dispatch that
-        # dies on a JSON parse error names the parser rather than the warning.
-        sdlc.command = lambda argv, **kw: ('warning: something\n'
-                                           '{"ok": true, "runId": "abc-123"}')
-        check("a line printed before the payload does not break the read",
-              sdlc.engine(["workflow", "run"])["runId"] == "abc-123")
+        sdlc.command = lambda argv, **kw: as_cli_json(CLI_RUN_REPLY)
+        check("the acknowledgement is read back out of the whole document",
+              sdlc.engine(["workflow", "run"])["runId"] == CLI_RUN_REPLY["runId"])
+
+        sdlc.command = lambda argv, **kw: as_cli_json(CLI_GET_REPLY)
+        run = sdlc.engine(["workflow", "get", CLI_GET_REPLY["id"]])
+        check("and so are the fields consume() settles on",
+              (run["id"], run["workflow_name"], run["status"], run["output_root"])
+              == (CLI_GET_REPLY["id"], "archon-accept", "completed",
+                  CLI_GET_REPLY["output_root"]))
+        check("including the cost the ledger records",
+              run["metadata"]["total_cost_usd"] == 1.37)
+        check("a completed run is terminal and a running one is not",
+              run["status"] in sdlc.TERMINAL and "running" not in sdlc.TERMINAL
+              and "paused" not in sdlc.TERMINAL,
+              "a paused run is waiting for somebody, not finished, and settling it "
+              "would read artifacts that are not written yet")
+
+        # EACH OF THESE IS A REPLY THAT CONTAINS SOMETHING PARSEABLE. Cherry-picking
+        # the fragment that happens to parse is how a consumer acts on half a document,
+        # or on the wrong one of two.
+        sdlc.command = lambda argv, **kw: "warning: something" + NL + as_cli_json(CLI_RUN_REPLY)
+        refuses("a line printed before the document is a corrupt reply, not noise to skip",
+                lambda: sdlc.engine(["workflow", "run"]),
+                "--json puts its diagnostics on stderr, so anything else on stdout is "
+                "a reply nothing should be read out of")
+
+        sdlc.command = lambda argv, **kw: as_cli_json(CLI_RUN_REPLY) + as_cli_json(CLI_GET_REPLY)
+        refuses("two documents in one reply are refused",
+                lambda: sdlc.engine(["workflow", "run"]),
+                "picking one of them is picking which run this dispatch is about")
+
+        truncated = as_cli_json(CLI_RUN_REPLY)
+        sdlc.command = lambda argv, **kw: truncated[:len(truncated) // 2]
+        refuses("a truncated document is refused",
+                lambda: sdlc.engine(["workflow", "run"]),
+                "a short write on a pipe is the failure the CLI's own writer exists to "
+                "prevent; reading half of one anyway gives that back")
 
         sdlc.command = lambda argv, **kw: ""
-        try:
-            sdlc.engine(["workflow", "run"])
-            check("an empty reply is refused, not read as success", False)
-        except RuntimeError:
-            check("an empty reply is refused, not read as success", True)
+        refuses("an empty reply is refused, not read as success",
+                lambda: sdlc.engine(["workflow", "run"]))
 
-        sdlc.command = lambda argv, **kw: "[1, 2, 3]"
-        try:
-            sdlc.engine(["workflow", "run"])
-            check("a reply that is not an object is refused", False)
-        except RuntimeError:
-            check("a reply that is not an object is refused", True)
+        sdlc.command = lambda argv, **kw: as_cli_json([1, 2, 3])
+        refuses("a reply that is not an object is refused",
+                lambda: sdlc.engine(["workflow", "run"]))
     finally:
         sdlc.command = original
 
@@ -840,6 +904,9 @@ def run_resolution_checks() -> None:
     check("the launch refuses a reply with no acknowledged run id",
           'response.get("ok") is not True' in src and "re.fullmatch" in src,
           "a dispatch whose id the factory cannot name is work nothing can settle")
+    check("the acknowledged run id matches the one the CLI hands back",
+          re.fullmatch(r"[0-9a-fA-F-]{32,36}", CLI_RUN_REPLY["runId"]) is not None,
+          "the launch refuses anything else, so the pattern and the CLI have to agree")
     check("the run id is written to the journal before the lock",
           src.index('record.update(run_id=run_id') < src.index('stream.write(f"run {run_id}'),
           "the journal is the record; the lock line is a convenience for the reaper")
@@ -2349,6 +2416,131 @@ def dispatch_refusal_checks(tmp: Path) -> None:
     with_consumer(tmp, rec, refusals)
 
 
+def evaluation_profile_checks(tmp: Path) -> None:
+    """What acceptance and the regression are actually handed, against their contracts.
+
+    THESE ARE SOMEBODY ELSE'S PARSERS. `archon-accept` fails an operator profile closed
+    on an unknown field, on a command with no `public_description` under a declared
+    `gate`, or on evidence it can prove is not this evaluation's output.
+    `archon-regress` declares `public_probe_scope` as a workflow INPUT, so the same name
+    on the profile is an unknown field AND a run that silently never probes. None of
+    that is visible in a dispatch that "succeeded": it comes back as an inconclusive
+    verdict hours later.
+    """
+    import hashlib
+    import runtime
+    import sdlc
+
+    rec = Recorder({"gh:pr:12": "open"})
+    base_files = {"MISSION.md": "Ship the thing." + NL,
+                  "FACTORY_RULES.md": "1. One issue at a time." + NL}
+
+    def trusted(autonomy: int, probe: str) -> dict:
+        return {"require_isolation": False, "autonomy": autonomy, "floor": {},
+                "command": "python harness/ci.py", "markers": [], "floor_path": "f.json",
+                "slack_caps_autonomy": False, "accept_races": False, "required_checks": [],
+                "accept_report": ".factory/acceptance-report.json",
+                "public_probe_scope": probe}
+
+    def profiles() -> None:
+        saved = {"git": sdlc.git, "snapshot": sdlc.snapshot, "live": sdlc.live,
+                 "linked": state.linked_issue, "body": state.body_text}
+        sdlc.git = lambda *a: base_files.get(a[-1].split(":", 1)[-1], SHA_B)
+        sdlc.snapshot = lambda directory, base: trusted(
+            4, "Run the static checks and the unit tests.")
+        sdlc.live = lambda: {"autonomy": 4, "accept_races": False, "required_checks": []}
+        state.linked_issue = lambda t: "gh:issue:5"
+        # A MULTI-LINE REQUEST WITH WINDOWS LINE ENDINGS, which is what a GitHub issue
+        # body is on half the machines that file one.
+        state.body_text = lambda t: CR_LF.join(["Add the endpoint.", "", "It must page."])
+        directory = tmp / "validate"
+        try:
+            shutil_rm(directory)
+            directory.mkdir(parents=True)
+            record = sdlc.prepare("validate", "gh:pr:12", directory, False)
+            policy = runtime.read(directory / "policy.json")
+
+            check("the acceptance profile declares the gate it is handing over",
+                  policy["gate"] == {"complete": True,
+                                     "description": sdlc.GATE_COMPLETENESS},
+                  "without it the judge cannot tell a whole protected gate from an "
+                  "arbitrary command that exited zero, and is right to say so")
+            check("and every command carries the public description that declaration needs",
+                  all(c.get("public_description") for c in policy["commands"]),
+                  "upstream fails a gate declaration without them CLOSED")
+            check("the judge is given the governance it cannot fetch for itself",
+                  [c["source"] for c in policy["context"]]
+                  == ["base:MISSION.md", "base:FACTORY_RULES.md"],
+                  "it has no tools; a pointer from one document to another is a pointer "
+                  "it cannot follow")
+            check("that context is read from the BASE, never from the candidate",
+                  all(c["source"].startswith("base:") for c in policy["context"]),
+                  "a candidate that supplies its own mission has written its own rubric")
+            check("and the gate owes back a report bound to the evaluation",
+                  policy["required_evidence"] == [".factory/acceptance-report.json"],
+                  "it is the only thing the judge sees of a private gate's result")
+            check("the profile carries no field the upstream parser has not declared",
+                  set(policy) == {"schema_version", "commands", "gate", "context",
+                                  "required_evidence", "protected_paths",
+                                  "require_isolation"},
+                  "unknown fields and unknown versions fail closed: " + str(sorted(policy)))
+            check("its commands are the shape that parser accepts",
+                  all(re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", c["id"]) and c["argv"]
+                      and all(1 <= code <= 255 for code in c["environment_exit_codes"])
+                      for c in policy["commands"]),
+                  "lowercase kebab ids, a nonempty argv, and declared environment exits "
+                  "in 1..255")
+
+            # THE DIGESTS ARE OF BYTES SOMEBODY ELSE RE-READS. Acceptance reads both
+            # files with Node and hashes exactly what is on disk, so this side has to
+            # hash the same thing or every receipt about them is refused.
+            order = (directory / "work-order.txt").read_bytes()
+            check("the work order is hashed as the bytes acceptance will read",
+                  record["work_order_sha256"] == hashlib.sha256(order).hexdigest())
+            check("and a multi-line request is written with LF endings on every platform",
+                  CR not in order.decode("utf-8") and NL in order.decode("utf-8"),
+                  "Path.write_text translates newlines on Windows, so the file the judge "
+                  "read and the string this side hashed were two different documents")
+            check("the policy is hashed as its bytes too",
+                  record["policy_sha256"] == hashlib.sha256(
+                      (directory / "policy.json").read_bytes()).hexdigest())
+            check("and the work order reaches acceptance as an external file",
+                  record["inputs"]["work_order"]
+                  == "file:" + str(directory / "work-order.txt"),
+                  "acceptance refuses a work-order path inside the candidate checkout")
+
+            directory = tmp / "regress"
+            shutil_rm(directory)
+            directory.mkdir(parents=True)
+            record = sdlc.prepare("regress", "", directory, False)
+            check("the public probe is a workflow INPUT, not a field on the profile",
+                  record["inputs"]["public_probe_scope"]
+                  == "Run the static checks and the unit tests."
+                  and "public_probe_scope" not in runtime.read(directory / "policy.json"),
+                  "on the profile it is an unknown field, and the run never probes")
+            check("the private gate is still the profile the regression runs first",
+                  runtime.read(directory / "policy.json")["argv"][-1] == "--regression",
+                  "a public probe can never waive a failed full gate; it only runs after "
+                  "that gate has come back non-clean")
+            check("publication follows the dial and nothing else",
+                  record["inputs"]["publish"] is True)
+
+            sdlc.snapshot = lambda directory, base: trusted(sdlc.PUBLISH_LEVEL - 1, "")
+            shutil_rm(directory)
+            directory.mkdir(parents=True)
+            record = sdlc.prepare("regress", "", directory, False)
+            check("below the publishing level the regression still runs and reports",
+                  record["inputs"]["publish"] is False
+                  and record["inputs"]["public_probe_scope"] == "",
+                  "the flood control is the dial; turning it down must not stop the "
+                  "scheduled run from telling anybody what it found")
+        finally:
+            sdlc.git, sdlc.snapshot, sdlc.live = saved["git"], saved["snapshot"], saved["live"]
+            state.linked_issue, state.body_text = saved["linked"], saved["body"]
+
+    with_consumer(tmp, rec, profiles)
+
+
 def shutil_rm(path: Path) -> None:
     import shutil as _shutil
     if path.exists():
@@ -2760,24 +2952,111 @@ def fixed_gate_checks(tmp: Path) -> None:
     finally:
         guard.preflight, guard.main, tripwire.main = saved_guard
 
-    # --- the exit code a caller reads ---------------------------------------
+    # --- the report acceptance reads back -----------------------------------
+    #
+    # A fixed profile keeps this gate's argv and its streams private, so the judge is
+    # shown this file and nothing else of it. What has to be true is that it exists on
+    # every acceptance exit, that it is bound to the evaluation that asked for it, and
+    # that what it carries is aggregate rather than raw.
     saved_guard = (guard.preflight, guard.main, tripwire.main)
-    saved_root = config.ROOT
+    saved_root, saved_report = config.ROOT, config.ACCEPT_REPORT
+    saved_env = {key: os.environ.get(key) for key in fixed_gate.ACCEPT_BINDINGS}
+    candidate = tmp / "candidate"
+    candidate.mkdir(parents=True, exist_ok=True)
+    identity = {"repository": {"owner": "acme", "name": "widget"}, "pr": 12,
+                "head_sha": SHA_A, "base_sha": SHA_B}
+    report_path = candidate / ".factory" / "acceptance-report.json"
     try:
         guard.preflight = lambda: 0
         guard.main = lambda argv: 0
         tripwire.main = lambda argv: 0
+        os.environ["ACCEPT_EVALUATION_ID"] = "eval-9"
+        os.environ["ACCEPT_IDENTITY"] = json.dumps(identity)
+        config.ACCEPT_REPORT = ".factory/acceptance-report.json"
         profile = {"base_sha": SHA_B, "markers": [], "slack_caps_autonomy": False,
                    "floor": {}, "result": str(tmp / "measurements.json"),
                    "command": "this-command-does-not-exist --please"}
         runtime.write(tmp / "gate.json", profile)
-        check("a gate command that cannot start reports an ENVIRONMENT exit",
-              fixed_gate.main([str(tmp / "gate.json")]) == 75,
+
+        cwd = os.getcwd()
+        os.chdir(candidate)
+        try:
+            code = fixed_gate.main([str(tmp / "gate.json")])
+        finally:
+            os.chdir(cwd)
+        check("a gate command that cannot start reports an ENVIRONMENT exit", code == 75,
               "declared to acceptance as environment, because a gate that could not run "
               "must never be recorded as a gate that ran")
+        written = runtime.read(report_path)
+        check("and it STILL writes the report acceptance requires",
+              written["gate_status"] == "environment" and written["schema_version"] == 1,
+              "a missing required-evidence file reads as evidence that could not be "
+              "verified, which turns every gate failure into an inconclusive one")
+        check("the report is bound to the evaluation that asked for it",
+              written["evaluation_id"] == "eval-9" and written["identity"] == identity,
+              "a report bound to another evaluation or another head cannot certify this "
+              "candidate, and upstream refuses it")
+        check("and its evidence is a nonempty string", isinstance(written["evidence"], str)
+              and written["evidence"].strip() != "",
+              "upstream requires one; an empty field fails the whole evaluation closed")
+
+        report_path.unlink()
+        # The gate command itself is the project's, so it is stood in for here: what is
+        # under test is that a run which REACHED it reports what it measured.
+        profile.update(markers=["PROTECTED_OK", "GATE_OK"], floor={"unit_tests": 64},
+                       command="the-project-gate")
+        runtime.write(tmp / "gate.json", profile)
+        ran = subprocess.CompletedProcess(
+            args=[], returncode=0,
+            stdout=NL.join(["PROTECTED_OK", "GATE_OK", "UNIT_PASSED tests=64"]) + NL,
+            stderr="")
+        saved_run = fixed_gate.subprocess.run
+        fixed_gate.subprocess.run = lambda *a, **kw: ran
+        os.chdir(candidate)
+        try:
+            code = fixed_gate.main([str(tmp / "gate.json")])
+        finally:
+            os.chdir(cwd)
+            fixed_gate.subprocess.run = saved_run
+        written = runtime.read(report_path)
+        check("a green gate reports passed with the markers that reported",
+              code == 0 and written["gate_status"] == "passed"
+              and written["required_markers"] == {"PROTECTED_OK": True, "GATE_OK": True},
+              str(written))
+        check("and it carries counts and tallies rather than raw failures",
+              written["blocking_errors"] == 0 and written["merge_holds"] == 0
+              and written["measured_counts"] == {"unit_tests": 64},
+              "the judge is a builder-facing context; raw evaluator output in one is a "
+              "holdout that has stopped being a holdout")
+        check("nothing in the report quotes the gate's command or its streams",
+              "the-project-gate" not in json.dumps(written)
+              and "UNIT_PASSED" not in written["evidence"],
+              "the argv and the log are exactly what a fixed profile keeps private")
+
+        report_path.unlink()
+        os.chdir(candidate)
+        try:
+            code = fixed_gate.main([str(tmp / "gate.json"), "--publication"])
+        finally:
+            os.chdir(cwd)
+        check("publication writes NO report into the tree it is checking",
+              code == 0 and not report_path.exists(),
+              "nothing is judging a receipt at publication time, and a file dropped into "
+              "a delivery worktree is a file that can be committed")
+
+        del os.environ["ACCEPT_EVALUATION_ID"]
+        refuses("acceptance with no evaluation binding refuses before it spends anything",
+                lambda: fixed_gate.main([str(tmp / "gate.json")]),
+                "a report the judge cannot bind is one it must refuse, and discovering "
+                "that after the gate has run has burned the whole run")
     finally:
         guard.preflight, guard.main, tripwire.main = saved_guard
-        config.ROOT = saved_root
+        config.ROOT, config.ACCEPT_REPORT = saved_root, saved_report
+        for key, value in saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def trusted_snapshot_checks(tmp: Path) -> None:
@@ -2865,6 +3144,7 @@ def sdlc_checks(tmp: Path) -> None:
         merge_policy_checks(tmp / "policy")
         artifact_binding_checks(tmp / "artifacts")
         flood_cap_checks(tmp / "flood")
+        evaluation_profile_checks(tmp / "profiles")
         fixed_gate_checks(tmp / "gate")
         trusted_snapshot_checks(tmp / "snapshot")
 

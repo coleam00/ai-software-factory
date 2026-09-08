@@ -154,6 +154,35 @@ VALIDATE_CMD = _env("FACTORY_VALIDATE_CMD", "python harness/ci.py")
 # Nothing downstream trusts what this said; the full gate re-runs everything.
 VALIDATE_QUICK = _env("FACTORY_VALIDATE_QUICK", "python harness/ci.py --quick")
 
+# THE SCOPE THE SCHEDULED REGRESSION MAY RE-RUN IN PUBLIC. Empty ships the probe off.
+#
+# `archon-regress` runs the fixed gate above as a PRIVATE check: its argv, its streams
+# and its report never leave the run, which is what lets it read a holdout nobody else
+# may. The cost is that a red weekly run has nothing it is allowed to file, so every
+# regression the factory finds ends as an escalation to a person.
+#
+# Setting this names a scope the workflow re-runs, through its own recorder, only when
+# that private gate has already come back non-clean -- and it is YOUR STATEMENT that
+# the checks it names, and everything they print, are public developer material. The
+# factory cannot verify that: it does not know what your commands emit. `VALIDATE_QUICK`
+# is the intended value where the quick subset is genuinely static analysis and unit
+# tests, as the shipped harness's is; anything that touches `.factory/holdout/` or the
+# evaluator's own output must not be named here.
+#
+# A public probe can never make a failed private gate green. It is only a second,
+# publishable execution whose own proven failure the workflow may write up as an issue.
+PUBLIC_PROBE_SCOPE = _env("FACTORY_PUBLIC_PROBE_SCOPE", "")
+
+# WHERE THE FIXED GATE WRITES THE ONE THING THE ACCEPTANCE JUDGE MAY SEE OF IT.
+#
+# A fixed gate's argv and streams stay private, so an approval would otherwise rest on
+# an exit code and an operator's word. This candidate-local file carries the sanitized
+# half -- the gate's status, which required markers reported, and the counts it measured
+# -- bound to the evaluation that asked for it. Acceptance refuses it if the path is
+# tracked at the candidate SHA or already present in the tree, so it can only ever be
+# output this evaluation produced. Repository-relative, and never committed.
+ACCEPT_REPORT = _env("FACTORY_ACCEPT_REPORT", ".factory/acceptance-report.json")
+
 # EMPTY IS NOT PASS, expressed as data.
 #
 # Every marker named here must appear in the run log or the gate refuses to merge.

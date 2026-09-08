@@ -76,30 +76,73 @@ VERDICTS = {"approve", "request_changes", "reject", "inconclusive"}
 PROTECTED_PREFIXES = ["factory", "harness", ".factory/locks", ".factory/holdout",
                       ".archon", ".github"]
 
+# WHAT THE JUDGE IS ALLOWED TO KNOW ABOUT THE FIXED GATE, and why it needs telling.
+#
+# Acceptance keeps a fixed profile's argv and streams private, so without an operator
+# attestation the judge cannot tell this factory's whole gate from an arbitrary command
+# that exited zero -- and is right to answer `inconclusive`. These two strings are that
+# attestation. They describe what the gate covers; they never describe a result, and
+# upstream treats them as a declaration that a deterministic failure still overrides.
+GATE_DESCRIPTION = (
+    "The factory's own structural gate, rebuilt from the base branch rather than from "
+    "the candidate: the secret preflight, the protected-path guard, the diff size and "
+    "file-scope caps, the tripwire, and then the project's whole validation command. "
+    "Its run log is measured for every required marker, for the ratchet floors on how "
+    "many checks must have RUN, for the uncalibrated-margin ceiling, and for the "
+    "deliberate-defect set, which must be fully injected and fully caught.")
+GATE_COMPLETENESS = (
+    "These commands are the complete applicable gate for this repository. The single "
+    "command runs every structural check the factory enforces and the project's entire "
+    "validation harness, and it is reconstructed from the base branch, so the candidate "
+    "cannot supply, weaken or skip any part of it.")
+
+# The trusted project context the judge cannot fetch for itself: it has no tools, and a
+# pointer from one governance file into another is a pointer it cannot follow. Read from
+# the resolved base SHA, so it is the text a human last agreed to.
+ACCEPT_CONTEXT = [{"id": "mission", "source": "base:MISSION.md"},
+                  {"id": "factory-rules", "source": "base:FACTORY_RULES.md"}]
+
 
 def command(argv: list[str], cwd: Path | None = None, timeout: int = 300) -> str:
     result = subprocess.run(argv, cwd=str(cwd or config.ROOT), capture_output=True,
                             text=True, encoding="utf-8", errors="replace", timeout=timeout)
     if result.returncode:
-        raise RuntimeError(f"{argv[0]} exited {result.returncode}: {result.stderr[-600:]}")
+        # STDOUT WHEN STDERR IS SILENT, because the engine's `--json` mode reports its
+        # own refusals as `{"ok": false, "error": ...}` on stdout and exits non-zero.
+        # Raising on the empty channel turns a named refusal into "exited 1".
+        detail = (result.stderr.strip() or result.stdout.strip())[-600:]
+        raise RuntimeError(f"{argv[0]} exited {result.returncode}: {detail}")
     return result.stdout.strip()
 
 
 def engine(argv: list[str]) -> dict:
     """One `archon ... --json` call, read as the ONE document it promises.
 
-    The CLI keeps stdout to a single machine-readable line in `--json` mode and puts
-    its own warnings on stderr, but a runtime warning from underneath it can still
-    reach stdout ahead of that line. Taking the last line rather than the whole buffer
-    is the difference between a dispatch that works and one that fails with a JSON
-    parse error nobody can act on.
+    THE WHOLE BUFFER, PARSED ONCE. `--json` output goes through the CLI's
+    `writeJsonLine`, which is `JSON.stringify(value, null, 2)` followed by a newline --
+    a PRETTY-PRINTED document as many lines tall as it has fields, whose last line is
+    `}`. An earlier version of this read `lines[-1]`, which parses exactly one shape:
+    the single-line reply a mock produces. Against the installed CLI every dispatch
+    died on `}`.
+
+    Diagnostics go to stderr in `--json` mode, so anything on stdout that is not this
+    one document is a corrupted reply -- truncated, doubled, or prefixed by something
+    that should not be there. Each of those is refused by name rather than repaired by
+    picking whichever fragment happens to parse.
     """
-    lines = [line for line in command([config.ARCHON_BIN, *argv]).splitlines() if line.strip()]
-    if not lines:
-        raise RuntimeError(f"archon {' '.join(argv[:2])} returned nothing")
-    value = json.loads(lines[-1])
+    name = "archon " + " ".join(argv[:2])
+    out = command([config.ARCHON_BIN, *argv])
+    if not out:
+        raise RuntimeError(f"{name} returned nothing")
+    try:
+        value = json.loads(out)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(
+            f"{name} did not return one JSON document ({error.msg} at line "
+            f"{error.lineno}). Its `--json` mode writes exactly one, and its "
+            f"diagnostics go to stderr, so this reply is corrupt: {out[:200]!r}") from error
     if not isinstance(value, dict):
-        raise RuntimeError(f"archon {' '.join(argv[:2])} did not return an object")
+        raise RuntimeError(f"{name} did not return an object")
     return value
 
 
@@ -126,6 +169,8 @@ def settings(directory: Path) -> dict:
             "'markers':config.REQUIRED_MARKERS,'slack_caps_autonomy':config.SLACK_CAPS_AUTONOMY,"
             "'floor_path':config.FLOOR_FILE.relative_to(config.ROOT).as_posix(),"
             "'require_isolation':config.REQUIRE_ISOLATION,"
+            "'accept_report':config.ACCEPT_REPORT,"
+            "'public_probe_scope':config.PUBLIC_PROBE_SCOPE,"
             "'accept_races':config.MERGE_ACCEPT_RACES,"
             "'required_checks':config.MERGE_REQUIRED_CHECKS}))")
     return json.loads(command([sys.executable, "-c",
@@ -253,6 +298,17 @@ def work_order(target: str, directory: Path) -> str:
     actually asked for, possibly weeks later and from a fresh clone. Re-reading the
     issue at that point reads whatever it says NOW -- edited, closed, retitled -- so the
     text is captured on the first dispatch that needs it and lives outside every checkout.
+
+    THE NEWLINES ARE PART OF THE EVIDENCE. Acceptance reads this file's literal bytes
+    and puts their digest in the receipt, which `consume` re-checks against the digest
+    recorded here. `Path.write_text` translates "
+" to "
+
+" on Windows, so a
+    multi-line request written by this side and hashed from the in-memory string
+    produced two digests for one work order and refused every receipt about it. Read
+    through universal newlines and written back as LF bytes, the file the judge reads
+    is byte-for-byte the file this side hashed, on every platform.
     """
     issue = state.linked_issue(target) if target.startswith("gh:pr:") else target
     if not issue:
@@ -260,11 +316,11 @@ def work_order(target: str, directory: Path) -> str:
     saved = runtime.root() / "work-orders" / f"{issue.replace(':', '-')}.txt"
     if not saved.exists():
         saved.parent.mkdir(parents=True, exist_ok=True)
-        saved.write_text(state.body_text(issue), encoding="utf-8")
+        saved.write_bytes(state.body_text(issue).encode("utf-8"))
     text = saved.read_text(encoding="utf-8")
     if not text.strip():
         raise ValueError(f"The recorded work order for {issue} is empty")
-    (directory / "work-order.txt").write_text(text, encoding="utf-8")
+    (directory / "work-order.txt").write_bytes(text.encode("utf-8"))
     return text
 
 
@@ -427,12 +483,23 @@ def prepare(action: str, target: str, directory: Path, manual: bool) -> dict:
         current = state.fetch(target)
         if current["_state"] != "open":
             raise ValueError(f"{target} is '{current['_state']}', not awaiting validation")
-        order = work_order(target, directory)
-        record["work_order_sha256"] = hashlib.sha256(order.encode("utf-8")).hexdigest()
+        work_order(target, directory)
+        record["work_order_sha256"] = hashlib.sha256(
+            (directory / "work-order.txt").read_bytes()).hexdigest()
         runtime.write(directory / "policy.json", {
             "schema_version": 1,
-            "commands": [{"id": "factory-gate", "argv": gate, "environment_exit_codes": [75]}],
-            "required_evidence": [], "protected_paths": PROTECTED_PREFIXES,
+            "commands": [{"id": "factory-gate", "argv": gate,
+                          "environment_exit_codes": [75],
+                          "public_description": GATE_DESCRIPTION}],
+            "gate": {"complete": True, "description": GATE_COMPLETENESS},
+            "context": ACCEPT_CONTEXT,
+            # THE ONE THING THE JUDGE MAY SEE OF A PRIVATE GATE'S RESULT. The streams
+            # are withheld, so an approval otherwise rests on an exit code alone. The
+            # gate writes this report into the candidate checkout, bound to THIS
+            # evaluation, and acceptance refuses it if the path was tracked or already
+            # present -- so it cannot be a file the candidate committed.
+            "required_evidence": [profile["accept_report"]],
+            "protected_paths": PROTECTED_PREFIXES,
             "require_isolation": profile["require_isolation"]})
         record["policy_sha256"] = hashlib.sha256(
             (directory / "policy.json").read_bytes()).hexdigest()
@@ -457,7 +524,17 @@ def prepare(action: str, target: str, directory: Path, manual: bool) -> dict:
     elif action == "regress":
         runtime.write(directory / "policy.json",
                       {"version": 1, "argv": gate + ["--regression"], "timeout_seconds": 600})
+        # THE PROBE IS A WORKFLOW INPUT, NOT A FIELD ON THE PROFILE. `archon-regress`
+        # declares `public_probe_scope` alongside `policy` and `publish`; setting it on
+        # the JSON profile instead is an unknown field, which the profile parser refuses
+        # -- and, before that, a run that silently never probes at all.
+        #
+        # The full private gate above still runs first and still decides. This is only
+        # what may be re-run, in public, when that gate comes back non-clean: a green
+        # probe can never turn a failed gate green, and nothing the private check
+        # produced reaches the probe's evidence, its investigation or its issue.
         record["inputs"] = {"policy": str(directory / "policy.json"),
+                            "public_probe_scope": profile["public_probe_scope"],
                             "publish": profile["autonomy"] >= PUBLISH_LEVEL}
     else:
         raise ValueError(f"Unknown action {action!r}; expected one of {sorted(WORKFLOWS)}")

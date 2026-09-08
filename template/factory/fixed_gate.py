@@ -21,6 +21,13 @@ EVERY CHECK IS A POSITIVE ASSERTION. None of them test for the absence of the wo
 "error". A check that never ran produces no failures, and "did anything fail?" reads
 that as success.
 
+WHAT EACH PROFILE OWES ITS CALLER. Acceptance owes a report: it runs with this
+evaluation's id and identity bound into the environment and writes
+`config.ACCEPT_REPORT` into the candidate checkout on every exit, because the judge is
+shown that file and nothing else of a private gate. Regression owes the
+`REGRESS_EVIDENCE_PATH` report. Publication owes neither -- nothing is judging a
+receipt at publication time -- and writes nothing into the tree it is checking.
+
 Exit codes, chosen to mean something to the caller reading them:
     0   every check ran and passed
     1   a check ran and failed -- the candidate's problem, and repairable
@@ -54,6 +61,10 @@ COMMAND_TIMEOUT_SECONDS = 540
 
 REGRESS_BINDINGS = ("revision", "base", "base_revision", "scope")
 
+# What acceptance binds into a fixed gate's environment so the report it demands back
+# can only ever be about the evaluation that asked for it.
+ACCEPT_BINDINGS = ("ACCEPT_EVALUATION_ID", "ACCEPT_IDENTITY")
+
 
 def measure(log: str, code: int, floor: dict) -> dict:
     """What the run log actually proves, as errors, holds and counts.
@@ -73,6 +84,7 @@ def measure(log: str, code: int, floor: dict) -> dict:
     errors += [f"required marker absent from the run log: {marker}"
                for marker in config.REQUIRED_MARKERS if marker not in log]
 
+    markers = {marker: marker in log for marker in config.REQUIRED_MARKERS}
     counts = gate.observed_counts(log, list(minimums))
     for key, minimum in minimums.items():
         observed = counts.get(key)
@@ -112,7 +124,7 @@ def measure(log: str, code: int, floor: dict) -> dict:
         holds.append(f"{uncalibrated} uncalibrated margins against a ceiling of {ceiling}")
     if slack:
         print("RATCHET_SLACK=" + " ".join(f"{k}+{v}" for k, v in slack.items()))
-    return {"errors": errors, "holds": holds,
+    return {"errors": errors, "holds": holds, "markers": markers,
             "counts": {k: v for k, v in counts.items() if v is not None}}
 
 
@@ -142,16 +154,20 @@ def structural(profile: dict, publication: bool) -> tuple[int, str]:
 def regression_report(measured: dict) -> None:
     """The report `archon-regress` reads back from its trusted check profile.
 
-    `public_cases` IS ALWAYS EMPTY, and that is a decision rather than a gap. A case
-    published as an issue has to carry a proven root cause approved for export by the
-    check's author. This gate knows whether the base branch is green; it cannot state
-    WHY it is not without inventing prose, and inventing it is exactly how private
-    evaluator output ends up in a public issue. So a red regression escalates to a
-    person. A project whose own check can prove and approve a case fills this in.
+    `public_cases` IS ALWAYS EMPTY, and `product` is never claimed. Not because the
+    feature is finished -- this gate simply cannot supply either. A published case has
+    to carry a root cause its author proved and approved for export; this gate knows
+    whether the base branch is green and cannot say WHY without inventing prose, which
+    is exactly how private evaluator output reaches a public issue. `product` needs
+    evidence separating "a test asserted and failed" from "the suite fell over", which
+    it does not collect, and a misclassified regression sends whoever reads it at 3am
+    to the wrong file.
 
-    `product` is likewise never claimed: distinguishing "a test asserted and failed"
-    from "the suite fell over" needs evidence this gate does not collect, and a
-    misclassified regression sends whoever reads it at 3am to the wrong file.
+    SO A RED RUN FROM THIS GATE ALONE ESCALATES TO A PERSON AND FILES NOTHING. The
+    factory's route to a filed issue is `FACTORY_PUBLIC_PROBE_SCOPE`: the workflow
+    re-runs that public scope after this gate comes back non-clean and publishes only
+    what the probe itself proved. Nothing here crosses into it. A project whose own
+    check can prove and approve a case fills `public_cases` in instead.
     """
     missing = [key for key in REGRESS_BINDINGS if f"REGRESS_{key.upper()}" not in os.environ]
     if missing or "REGRESS_EVIDENCE_PATH" not in os.environ:
@@ -166,6 +182,70 @@ def regression_report(measured: dict) -> None:
     runtime.write(Path(os.environ["REGRESS_EVIDENCE_PATH"]), evidence)
 
 
+def acceptance_binding() -> tuple[str, dict]:
+    """This evaluation's id and identity, exactly as acceptance handed them over.
+
+    Read BEFORE the gate spends anything. A report bound to another evaluation, head or
+    base cannot certify this candidate, and acceptance is right to refuse it -- so a gate
+    that discovers the binding is missing after nine minutes has burned the run and
+    still produced nothing that can be judged.
+    """
+    missing = [key for key in ACCEPT_BINDINGS if not os.environ.get(key)]
+    if missing:
+        raise RuntimeError(
+            "the acceptance profile is what invokes this shape, and it binds "
+            + " and ".join(ACCEPT_BINDINGS) + " into the gate's environment. Missing: "
+            + " ".join(missing))
+    identity = json.loads(os.environ["ACCEPT_IDENTITY"])
+    if not isinstance(identity, dict):
+        raise RuntimeError("ACCEPT_IDENTITY did not carry the evaluation's identity object")
+    return os.environ["ACCEPT_EVALUATION_ID"], identity
+
+
+def acceptance_report(evaluation: str, identity: dict, status: str,
+                      measured: dict | None) -> None:
+    """The public half of a private gate's result, where the acceptance judge reads it.
+
+    THE JUDGE OTHERWISE HAS AN EXIT CODE AND NOTHING ELSE. A fixed profile keeps argv
+    and streams private, which is the only reason this gate may exercise a holdout the
+    builder is not allowed to see -- and it leaves an approval resting on "a command the
+    operator vouched for exited zero". This is the sanitized remainder: the gate's own
+    status, which required markers reported, and the counts it measured.
+
+    SANITIZED BY CONSTRUCTION RATHER THAN BY FILTERING. Nothing assembled here reads a
+    failure message, a holdout scenario, an evaluator path or the command that ran. The
+    judge is a builder-facing context, and a private gate that leaks its own assertions
+    into one has stopped being a holdout.
+    """
+    markers = (measured or {}).get("markers") or {}
+    reported = sorted(name for name, seen in markers.items() if seen)
+    absent = sorted(name for name, seen in markers.items() if not seen)
+    if measured is None:
+        evidence = (
+            f"The factory's fixed structural gate did not reach the project's validation "
+            f"command ({status}). Its structural stage is the secret preflight, the "
+            f"protected-path guard, the diff size and file-scope caps, and the tripwire.")
+    else:
+        evidence = (
+            f"The factory's fixed gate ran against this candidate and {status}. "
+            f"Required markers reporting: {len(reported)} of {len(markers)}"
+            + (" (" + ", ".join(reported) + ")" if reported else "")
+            + ("; absent: " + ", ".join(absent) if absent else "")
+            + ". Measured counts: "
+            + (", ".join(f"{key}={value}" for key, value in sorted(measured["counts"].items()))
+               or "none")
+            + f". {len(measured['errors'])} blocking error(s), "
+              f"{len(measured['holds'])} merge hold(s). The gate's command, its streams "
+              f"and the holdout it exercises are the operator's and are not reproduced here.")
+    runtime.write(config.ROOT / config.ACCEPT_REPORT, {
+        "schema_version": 1, "evaluation_id": evaluation, "identity": identity,
+        "evidence": evidence, "gate_status": status,
+        "required_markers": markers,
+        "measured_counts": (measured or {}).get("counts"),
+        "blocking_errors": None if measured is None else len(measured["errors"]),
+        "merge_holds": None if measured is None else len(measured["holds"])})
+
+
 def main(argv: list[str]) -> int:
     if not argv or argv[0] in {"-h", "--help"}:
         print(__doc__)
@@ -173,6 +253,11 @@ def main(argv: list[str]) -> int:
     profile = runtime.read(Path(argv[0]))
     publication = "--publication" in argv
     regression = "--regression" in argv
+    # ACCEPTANCE IS THE MODE WITH NO FLAG, so it is stated rather than implied. It is
+    # the only one that owes a report back, and it owes one on EVERY exit: a guard
+    # refusal with no evidence file is read as evidence that could not be verified,
+    # which turns a repairable red candidate into an inconclusive one nothing can act on.
+    acceptance = not publication and not regression
 
     # The candidate checkout is wherever the caller ran us. Asserted rather than
     # inherited from import time so the guard, the tripwire and the validate command
@@ -180,12 +265,17 @@ def main(argv: list[str]) -> int:
     config.ROOT = Path.cwd().resolve()
     config.REQUIRED_MARKERS = profile["markers"]
     config.SLACK_CAPS_AUTONOMY = profile["slack_caps_autonomy"]
+    evaluation, identity = acceptance_binding() if acceptance else ("", {})
 
     code, structural_log = structural(profile, publication)
     if code or publication:
         # PUBLICATION STOPS HERE, deliberately. Delivery has already run the project's
         # own gate on this branch; what publication adds is the part a model cannot
         # waive -- protected paths, the size and scope caps, and the secret preflight.
+        # It also writes no report: nothing is judging a receipt at publication time.
+        if acceptance:
+            acceptance_report(evaluation, identity,
+                              "environment" if code == 75 else "failed", None)
         return code
 
     try:
@@ -194,6 +284,8 @@ def main(argv: list[str]) -> int:
                                 errors="replace", timeout=COMMAND_TIMEOUT_SECONDS)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"GATE_UNRUNNABLE: {profile['command']!r} could not run: {error}", file=sys.stderr)
+        if acceptance:
+            acceptance_report(evaluation, identity, "environment", None)
         return 75
     log = structural_log + result.stdout + result.stderr
     print(result.stdout, end="")
@@ -203,11 +295,16 @@ def main(argv: list[str]) -> int:
         measured = measure(log, result.returncode, profile["floor"])
     except (TypeError, ValueError) as error:
         print(f"GATE_UNRUNNABLE: the ratchet floor is unusable: {error}", file=sys.stderr)
+        if acceptance:
+            acceptance_report(evaluation, identity, "environment", None)
         return 75
     runtime.write(Path(profile["result"]), measured)
     print(json.dumps(measured))
     if regression:
         regression_report(measured)
+    if acceptance:
+        acceptance_report(evaluation, identity,
+                          "failed" if measured["errors"] else "passed", measured)
     return 1 if measured["errors"] else 0
 
 
