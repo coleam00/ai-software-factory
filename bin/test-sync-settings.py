@@ -1,5 +1,7 @@
 """Check legacy settings diagnostics and preservation during retirement."""
 import importlib.util
+import contextlib
+import io
 import tempfile
 from pathlib import Path
 
@@ -32,6 +34,29 @@ with tempfile.TemporaryDirectory(prefix="factory-sync-settings-") as temporary:
     check(config.read_bytes() == original, "diagnostics must preserve the user's config")
     config.write_text(old.replace('"factory-triage"', '"my-team-admission"'), encoding="utf-8")
     check("WORKFLOW_TRIAGE" not in dict(sync.missing_settings(root)), "custom workflow selection is preserved")
+
+    # Exercise the actual copy decision with a known historical template version.
+    skill_rel = ".claude/skills/factory-triage/SKILL.md"
+    skill = root / skill_rel
+    skill.parent.mkdir(parents=True)
+    old_skill = "Historical template instructions pointing at the retired triage prompt.\n"
+    skill.write_text(old_skill, encoding="utf-8")
+    sync.SYNC = [skill_rel]
+    sync.shipped_versions = lambda path: {old_skill}
+    with contextlib.redirect_stdout(io.StringIO()):
+        sync.main([str(root)])
+    check(sync.same_content(sync.TEMPLATE / skill_rel, skill), "unchanged historical default upgrades")
+    skill.write_text("My team's customized admission instructions.\n", encoding="utf-8")
+    custom_skill = skill.read_bytes()
+    with contextlib.redirect_stdout(io.StringIO()):
+        sync.main([str(root)])
+    check(skill.read_bytes() == custom_skill, "customized skill remains byte-for-byte intact")
+    sync.shipped_versions = lambda path: set()
+    skill.write_text(old_skill, encoding="utf-8")
+    unknown_skill = skill.read_bytes()
+    with contextlib.redirect_stdout(io.StringIO()):
+        sync.main([str(root)])
+    check(skill.read_bytes() == unknown_skill, "unavailable history preserves even a possible default")
 
     # An edited retired file can return on a later sync; never overwrite the earlier backup.
     owned = root / ".archon/workflows/factory/triage/custom.md"

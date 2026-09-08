@@ -25,12 +25,10 @@ template committed at some point; anything else is MOVED to `.factory/retired/` 
 reported. No recursive delete, no glob: one named list, one file at a time, and
 `rmdir` for the directories, which refuses any that still holds something.
 
-AND IT NEVER OVERWRITES A SKILL YOU REWROTE. The skills are the personalisation
-layer; they are add-only here, installed when missing and left alone when present.
-"Missing" and "edited" are different questions, so a new skill still reaches an
-existing install -- and a kept one that names a path retirement removed is REPORTED,
-because add-only's cost is that a file which was never edited never gets the update
-either, and here the update was "this path no longer exists".
+AND IT NEVER OVERWRITES A SKILL YOU REWROTE. Missing skills are installed. An existing
+skill is updated only when its contents match a version in this template's history.
+Customized skills stay intact; references they retain to retired files are reported.
+Unavailable history preserves the file rather than guessing ownership.
 """
 
 from __future__ import annotations
@@ -60,7 +58,7 @@ SYNC = [
     ".claude/skills",
 ]
 
-# ADD-ONLY. Installed when missing, NEVER overwritten.
+# Customized files are add-only. Proven historical defaults may be updated.
 #
 # These are the personalisation layer: the by-hand half of the same loop. A sync that
 # quietly replaces one you rewrote is first visible as somebody following instructions
@@ -306,10 +304,8 @@ def retire(dest: Path, dry: bool) -> tuple[list[str], list[str]]:
 def stale_references(dest: Path, kept: list[str]) -> list[str]:
     """Files this sync left alone that still point at something retirement removed.
 
-    The add-only rule is what protects a prompt somebody rewrote, and its cost is that a
-    file which was never edited also never gets the template's update. Usually harmless.
-    Not harmless when the template's update was "this path no longer exists": the file
-    then describes a step the factory does not run, accurately enough to be believed.
+    Customized prompts are preserved even when they refer to retired machinery. Such
+    references need an operator edit before the corresponding manual skill is usable.
     """
     stale = []
     for rel in kept:
@@ -362,8 +358,10 @@ def main(argv: list[str]) -> int:
             if target.exists() and (
                 rel.startswith(ADD_ONLY_PREFIXES) or any(c in rel for c in ADD_ONLY_CONTAINS)
             ):
-                skipped.append(rel)
-                continue
+                previous = target.read_text(encoding="utf-8", errors="replace").replace(CRLF, NL)
+                if previous not in shipped_versions(rel):
+                    skipped.append(rel)
+                    continue
             changed.append(rel)
             if not dry:
                 target.parent.mkdir(parents=True, exist_ok=True)
