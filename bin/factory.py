@@ -15,7 +15,7 @@ THE ENGINE COMES WITH IT. `init` installs Archon if it is not already here, the 
 way installing OpenClaw gets you Pi: you asked for a factory, and the workflow engine
 underneath is an implementation detail you are allowed to ignore until you want it.
 When you do want it, it is a normal Archon install with a normal workflow pack in
-`.archon/workflows/factory/`, and every workflow is a YAML file you can read,
+`.archon/workflows/`, and every workflow it dispatches is a YAML file you can read,
 edit, and run by hand.
 
 NOTHING HERE IS CLEVER. It copies files, fills in what it can detect, and refuses to
@@ -91,12 +91,44 @@ def repo_root() -> Path:
 # --- the engine ---------------------------------------------------------------
 
 
-# Where the engine comes from when it is not already installed. The ref moves to a
-# release tag the day one carries `include: ... denied_tools`; until then the branch
-# is the only Archon this factory is safe on, and `factory doctor` asks the engine
-# rather than trusting the name.
+# THE WORKFLOWS THIS FACTORY DISPATCHES. Named here as well as in
+# `template/factory/config.py` because this runs BEFORE the template is copied, and an
+# install that links an engine without them produces a factory whose every dispatch
+# fails at the first tick. `bin/audit.py` checks the two lists agree.
+REQUIRED_WORKFLOWS = ("archon-admit", "archon-ship", "archon-accept", "archon-revise-pr",
+                      "archon-regress", "archon-merge")
+
+# Where the engine comes from when it is not already installed, at the EXACT revision
+# this factory has been tested against.
+#
+# A PLACEHOLDER, AND IT REFUSES TO INSTALL. The upstream SDLC pack and this consumer
+# land together; until the integrating operator replaces this with the 40-character SHA
+# they actually validated, building from source is refused rather than attempted
+# against whatever the branch happens to say today. An installer that guesses a ref is
+# an installer that reports success and leaves a factory that cannot dispatch.
+#
+# It is a constant rather than an environment variable on purpose: a pin somebody can
+# override from the shell is a pin that gets overridden by a copied command line, and
+# the whole reason it exists is that "which Archon" is not a per-run decision.
 ARCHON_SOURCE = "https://github.com/coleam00/Archon"
-ARCHON_REF = "feat/include-tool-policy"
+ARCHON_REF = "PARENT_MUST_SET_TESTED_SDLC_SHA"
+
+
+ARCHON_BIN = os.environ.get("FACTORY_ARCHON_BIN") or "archon"
+
+
+def archon_has_workflows(binary: str = "") -> tuple[bool, str]:
+    """Whether an engine on PATH can run this factory. Named workflows, not a version.
+
+    A VERSION STRING IS NOT THE QUESTION. The factory needs six workflows to exist, and
+    which release first carried them is exactly the sort of fact that goes stale in a
+    comment. Asking the engine what it has is the only answer that cannot drift.
+    """
+    rc, listed = run([binary or ARCHON_BIN, "workflow", "list"], timeout=180)
+    if rc != 0:
+        return False, f"`{binary} workflow list` exited {rc}"
+    missing = [name for name in REQUIRED_WORKFLOWS if name not in listed]
+    return (not missing), ("missing: " + " ".join(missing) if missing else "")
 
 
 def _bun_global_bin() -> Path:
@@ -118,11 +150,33 @@ def ensure_archon(auto: bool) -> bool:
     one anyway -- it is what runs every node -- but they should not have to install it
     as a separate errand, and they should not discover it exists via an error message
     forty seconds into the first dispatch.
+
+    Three outcomes, and the middle one is the point: an engine that can run this
+    factory (accepted), an engine that cannot (refused, with what to do about it), and
+    no engine at all (built from the pinned revision, then asked the same question).
     """
-    if shutil.which("archon"):
-        rc, out = run(["archon", "version"], timeout=120)
+    if shutil.which(ARCHON_BIN):
+        rc, out = run([ARCHON_BIN, "version"], timeout=120)
         step(f"engine        {out.strip().splitlines()[0] if out.strip() else 'archon (version unknown)'}")
-        return True
+        ok, why = archon_has_workflows()
+        if ok:
+            step(f"workflows     {' '.join(REQUIRED_WORKFLOWS)}")
+            return True
+        # REFUSED RATHER THAN SHADOWED. Linking a second `archon` behind one already on
+        # PATH produces an install whose behaviour depends on lookup order, which is
+        # the worst of both outcomes: it appears to work and dispatches with whichever
+        # engine won. The operator has to decide which engine this factory uses.
+        warn(f"the `archon` on PATH cannot run this factory ({why}).\n"
+             f"    Update it to a build carrying the SDLC pack, or point the factory at\n"
+             f"    another one with FACTORY_ARCHON_BIN=/path/to/archon.")
+        return False
+
+    if not re.fullmatch(r"[0-9a-f]{40}", ARCHON_REF):
+        warn(f"cannot build the engine: ARCHON_REF is `{ARCHON_REF}`, not a commit.\n"
+             f"    This build of the factory has not been pinned to a tested Archon yet.\n"
+             f"    Install an engine carrying {' '.join(REQUIRED_WORKFLOWS)} yourself, or\n"
+             f"    set ARCHON_REF in bin/factory.py to the revision you validated.")
+        return False
 
     say()
     say("  Archon is not installed. It is the workflow engine this factory runs on --")
@@ -132,9 +186,9 @@ def ensure_archon(auto: bool) -> bool:
     # FROM SOURCE, NOT FROM NPM. Archon is not published to a registry (the `archon`
     # package on npm is an unrelated tool), so the first version of this ran
     # `bun add -g @coleam00/archon`, got a 404, and every viewer following the README
-    # stopped there. Verified on a fresh Ubuntu VPS. And this factory needs the ref
-    # below, which no release carries yet: `include:` has to keep `denied_tools` or
-    # the holdout wall does not survive composition (see README).
+    # stopped there. Verified on a fresh Ubuntu VPS. It is also how the factory gets a
+    # known revision: it dispatches six workflows from the SDLC pack and needs the one
+    # that was tested, not whichever release is newest.
     if not shutil.which("git") or not shutil.which("bun"):
         warn(
             "Archon is built from source and needs git and bun on PATH.\n"
@@ -145,7 +199,7 @@ def ensure_archon(auto: bool) -> bool:
         return False
 
     source = os.environ.get("FACTORY_ARCHON_SOURCE", ARCHON_SOURCE)
-    ref = os.environ.get("FACTORY_ARCHON_REF", ARCHON_REF)
+    ref = ARCHON_REF
     dest = Path(os.environ.get("FACTORY_ARCHON_DIR", "") or (Path.home() / "archon-src"))
 
     if not auto:
@@ -162,14 +216,15 @@ def ensure_archon(auto: bool) -> bool:
             rc, out = run(["git", "-C", str(dest), "checkout", "--quiet", "FETCH_HEAD"], timeout=120)
     else:
         step(f"cloning       {source} @ {ref}")
-        rc, out = run(["git", "clone", "--quiet", "--depth", "1", "--branch", ref,
-                       source, str(dest)], timeout=900)
+        rc, out = run(["git", "clone", "--quiet", "--no-checkout", source, str(dest)], timeout=900)
+        if rc == 0:
+            rc, out = run(["git", "-C", str(dest), "checkout", "--quiet", ref], timeout=120)
     if rc != 0:
         warn(f"could not fetch Archon at `{ref}`:\n{out[-800:]}")
         return False
 
     step("installing    bun install (in the clone)")
-    rc, out = run(["bun", "install", "--silent"], timeout=1800, cwd=dest)
+    rc, out = run(["bun", "install", "--frozen-lockfile", "--silent"], timeout=1800, cwd=dest)
     if rc != 0:
         warn(f"bun install failed:\n{out[-1200:]}")
         return False
@@ -210,6 +265,16 @@ def ensure_archon(auto: bool) -> bool:
         return False
     rc, out = run(["archon", "version"], timeout=120)
     step(f"engine        {out.strip().splitlines()[0] if out.strip() else 'archon installed'}")
+    # THE PIN IS A CLAIM UNTIL THE BUILT ENGINE ANSWERS. A ref that has moved, a clone
+    # that checked out something else, a pack that did not build: each of them ends
+    # with `archon` on PATH and a factory that cannot dispatch, and the install would
+    # otherwise report success.
+    ok, why = archon_has_workflows("archon")
+    if not ok:
+        warn(f"the engine built from {ARCHON_REF[:12]} does not carry this factory's "
+             f"workflows ({why}). The pin is wrong.")
+        return False
+    step(f"workflows     {' '.join(REQUIRED_WORKFLOWS)}")
     return True
 
 
@@ -329,12 +394,11 @@ def is_greenfield(root: Path) -> bool:
 COPY_PLAN = [
     ("factory", "factory"),
     ("harness", "harness"),
-    (".archon/workflows/factory", ".archon/workflows/factory"),
-    # The interactive half of the same loop. Each skill POINTS AT the workflow's
-    # command file rather than restating it, so rewriting a node prompt changes what
-    # you get by hand too -- and the two can never quietly disagree. A copy would
-    # first show its drift as an unattended run doing something you thought you had
-    # already changed.
+    # The interactive half of the same loop. Each skill names the upstream workflow the
+    # factory dispatches and the arguments it supplies, so running a step by hand runs
+    # the same reasoning the unattended lap runs. None of them restates a node prompt:
+    # those live in the pack now, and a copy here would first show its drift as an
+    # unattended run doing something you thought you had already changed.
     (".claude/skills", ".claude/skills"),
     (".factory/holdout/HOLDOUT.md", ".factory/holdout/HOLDOUT.md"),
     (".factory/locks/floor.json", ".factory/locks/floor.json"),
@@ -642,36 +706,34 @@ def cmd_tick(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    """One unit of work by hand, through the same path the dispatcher uses.
+
+    NOT A RAW `archon workflow run`, and that changed here. Building the command line
+    by hand gave a run with no trusted gate profile, no work order, no lock and nothing
+    watching for its result -- so a hand-run validation produced a receipt the factory
+    never read and a hand-run delivery opened a pull request nothing knew about. It goes
+    through `sdlc.launch` so a manual lap is a lap, not a demonstration.
+
+    The DIAL is not enforced for a person typing a command; the STOP button is, and so
+    is `merge`, whose authority comes from an acceptance receipt rather than from
+    whoever typed it.
+    """
     root = repo_root()
     sys.path.insert(0, str(root / "factory"))
-    import config  # type: ignore  # noqa: E402
+    import sdlc  # type: ignore  # noqa: E402
 
-    mapping = {
-        "triage": (config.WORKFLOW_TRIAGE, False),
-        "implement": (config.WORKFLOW_IMPLEMENT, True),
-        "validate": (config.WORKFLOW_VALIDATE, True),
-        "fix": (config.WORKFLOW_FIX, True),
-        "regress": (config.WORKFLOW_REGRESS, True),
-    }
-    if args.workflow not in mapping:
-        die(f"Unknown workflow '{args.workflow}'. One of: {', '.join(mapping)}")
-    workflow, needs_worktree = mapping[args.workflow]
-
-    target = args.target or ""
-    cmd = [config.ARCHON_BIN, "workflow", "run", workflow]
-    if needs_worktree:
-        slug = target.replace("gh:", "").replace(":", "-") or datetime.now(timezone.utc).strftime("%H%M%S")
-        cmd += ["--branch", f"factory/{args.workflow}-{slug}"]
-    else:
-        cmd += ["--no-worktree"]
+    try:
+        launched = sdlc.launch(args.workflow, args.target or "", manual=True,
+                               detach=args.detach)
+    except Exception as error:  # noqa: BLE001
+        die(f"{args.workflow} {args.target or ''}: {error}")
+    if not launched:
+        warn("nothing dispatched: that target is already in flight, or the flood cap "
+             "holds it until tomorrow.")
+        return 1
     if args.detach:
-        cmd += ["--detach"]
-    cmd += [f"{args.workflow} {target}".strip()]
-
-    say(f"  {' '.join(cmd)}")
-    say()
-    env = {**os.environ, "IS_SANDBOX": "1"}
-    return subprocess.run(cmd, cwd=str(root), env=env).returncode
+        say("  dispatched. `factory tick` applies the result once the run settles.")
+    return 0
 
 
 def cmd_level(args: argparse.Namespace) -> int:
@@ -947,7 +1009,7 @@ def main() -> int:
     t.set_defaults(fn=cmd_tick)
 
     r = sub.add_parser("run", help="dispatch one workflow by hand")
-    r.add_argument("workflow", choices=["triage", "implement", "validate", "fix", "regress"])
+    r.add_argument("workflow", choices=["triage", "implement", "validate", "fix", "regress", "merge"])
     r.add_argument("target", nargs="?", default="")
     r.add_argument("--detach", action="store_true")
     r.set_defaults(fn=cmd_run)

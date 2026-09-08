@@ -42,215 +42,6 @@ def warn(check: str, detail: str) -> None:
     FINDINGS.append(("warn", check, detail))
 
 
-def load_yaml(path: Path) -> dict:
-    try:
-        import yaml  # type: ignore
-    except ImportError:
-        return _mini_yaml(path)
-    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-
-
-def _mini_yaml(path: Path) -> dict:
-    """Enough of a parser to find node ids and output_format keys without a dependency.
-
-    Deliberately crude: this audit must run anywhere, including a fresh checkout with
-    nothing installed. If PyYAML is present it is used instead.
-    """
-    text = path.read_text(encoding="utf-8")
-    nodes = []
-    for m in re.finditer(r"^  - id:\s*(\S+)", text, re.M):
-        nodes.append({"id": m.group(1)})
-    return {"_raw": text, "nodes": nodes}
-
-
-# ---------------------------------------------------------------------------
-
-
-def workflow_yamls(pack: Path) -> list[Path]:
-    """The workflow definitions, and NOT the dry-run fixtures beside them.
-
-    `fixtures/*.stubs.yaml` live inside the pack and are YAML, so every scan that
-    globbed the tree started reading them as workflows the moment the first one landed:
-    the node-output check fails on `$plan.output.ready` quoted in a fixture COMMENT, and
-    the doctor cheerfully reported nine workflows in a five-workflow pack. A fixture is
-    test data about a workflow, not a workflow.
-    """
-    return sorted(y for y in pack.rglob("*.yaml") if y.parent.name != "fixtures")
-
-
-def check_node_outputs(root: Path) -> None:
-    """Every `$node.output.field` must be a field the producer actually declares.
-
-    THE INCIDENT. A script printed one friendly line before its JSON payload, so the
-    payload was unparseable -- and the error surfaced on the CONSUMER two nodes later:
-    "node 'preflight's output is not a JSON object". The first place anyone looks is
-    the file that is not broken.
-
-    Archon catches an undeclared FIELD at load time. What it cannot see is a producer
-    whose script will not actually emit JSON at runtime, which is the next check.
-    """
-    pack = root / ".archon" / "workflows" / "factory"
-    if not pack.is_dir():
-        fail("workflow pack", f"not found at {pack}")
-        return
-
-    for wf in workflow_yamls(pack):
-        text = wf.read_text(encoding="utf-8")
-        declared: dict[str, set[str]] = {}
-        # A node whose output this file cannot describe: `include:` inlines another
-        # workflow, and the fields its output carries are declared by THAT workflow's
-        # `returns:` node -- which lives in the engine's bundled pack, not here. This
-        # audit is deliberately dependency-free and single-file, so it cannot resolve
-        # them and must not pretend to. Claiming "declares no output_format" for an
-        # include would be a false failure that blocks every composed binding, and a
-        # check that is wrong in the BLOCKING direction gets switched off -- after
-        # which it is not checking the real cases either.
-        composed: set[str] = set()
-        for block in re.split(r"^  - id:\s*", text, flags=re.M)[1:]:
-            node_id = block.split("\n", 1)[0].strip()
-            if re.search(r"^\s{4}include:\s*\S+", block, re.M):
-                composed.add(node_id)
-            props = set()
-            m = re.search(r"output_format:.*?properties:(.*?)(?:\n      required:|\n  - id:|\Z)",
-                          block, re.S)
-            if m:
-                props = set(re.findall(r"^\s{8}(\w+):", m.group(1), re.M))
-            declared[node_id] = props
-
-        for ref_node, ref_field in re.findall(r"\$([a-z][\w-]*)\.output\.(\w+)", text):
-            if ref_node not in declared:
-                fail(wf.stem, f"${ref_node}.output.{ref_field} references an unknown node")
-            elif ref_node in composed:
-                # Verified by Archon at load instead: an undeclared field on a composed
-                # producer is a load-time error, so this binding is not unchecked -- it
-                # is checked somewhere this script cannot read.
-                continue
-            elif ref_field not in declared[ref_node]:
-                fail(
-                    wf.stem,
-                    f"${ref_node}.output.{ref_field} is read, but '{ref_node}' declares "
-                    f"{sorted(declared[ref_node]) or 'no output_format'} -- the consumer "
-                    f"will fail, naming itself rather than the producer",
-                )
-
-
-def check_emitting_scripts(root: Path) -> None:
-    """A script whose output is read by field must write ONLY its value to stdout.
-
-    THE INCIDENT, and the reason this check is worth more than it looks. The polluting
-    line was not in the script at all -- it came from a library function printing a
-    marker that is load-bearing when the same module runs as a CLI. So checking the
-    script's own `print()` calls is not enough; the script has to import `nodeio`,
-    which redirects the stream for the whole process.
-    """
-    pack = root / ".archon" / "workflows" / "factory"
-    if not pack.is_dir():
-        return
-
-    consumed: set[str] = set()
-    for wf in workflow_yamls(pack):
-        text = wf.read_text(encoding="utf-8")
-        for block in re.split(r"^  - id:\s*", text, flags=re.M)[1:]:
-            node_id = block.split("\n", 1)[0].strip()
-            script = re.search(r"^\s{4}script:\s*(\S+)", block, re.M)
-            if script and re.search(rf"\${re.escape(node_id)}\.output\.\w+", text):
-                consumed.add(f"{wf.parent.name}/{script.group(1)}")
-
-    for key in sorted(consumed):
-        folder, name = key.split("/", 1)
-        path = pack / folder / "scripts" / f"{name}.py"
-        if not path.exists():
-            fail("emitting script", f"{key} is read by field but {path} does not exist")
-            continue
-        src = path.read_text(encoding="utf-8")
-        if "from nodeio import" not in src:
-            fail(
-                "emitting script",
-                f"{key} is read by field but does not import nodeio -- any library it "
-                f"imports can print to stdout and make its value unparseable",
-            )
-        if "emit(" not in src:
-            fail("emitting script", f"{key} is read by field but never calls emit()")
-        bare = [
-            ln for ln in src.splitlines()
-            if re.match(r"^\s*print\(", ln) and "file=sys.stderr" not in ln
-        ]
-        if bare:
-            warn(
-                "emitting script",
-                f"{key} has {len(bare)} bare print() call(s). nodeio redirects them, so "
-                f"this is survivable -- but note() says what you meant",
-            )
-        try:
-            ast.parse(src)
-        except SyntaxError as e:
-            fail("emitting script", f"{key} does not parse: line {e.lineno}, {e.msg}")
-
-
-def check_script_inputs_are_bound(root: Path) -> None:
-    """Every INPUTS_ a workflow script reads is bound by the node that runs it.
-
-    THE FAILURE MODE IS PERMISSIVE, WHICH IS WHY THIS IS A FAIL AND NOT A WARNING.
-    A workflow script reads its inputs out of the environment:
-
-        plan_ready = (os.environ.get("INPUTS_PLAN_READY") or "").strip().lower()
-
-    An unbound name is not an error. It is the empty string, and every one of these
-    scripts treats empty as "nothing to act on" -- so severing the binding does not
-    break the gate, it opens it. `gate-plan.py` with no `plan_ready:` in its `with:`
-    block cannot see a planner's refusal and every issue proceeds, including the ones
-    archon-plan explicitly declined to plan. Nothing fails, nothing is logged, and the
-    only symptom is a factory that never escalates.
-
-    That binding is also the ONLY thing carrying the pack's refusal into this
-    workflow: `archon-plan` writes no ESCALATE sentinel, so the field is the whole
-    mechanism. It is exactly the kind of one-line wire that survives every test
-    because every test stubs the node that reads it.
-
-    Bindings are unioned across every node that runs a given script inside one
-    workflow folder, because a script is shared between the workflows in it.
-    """
-    pack = root / ".archon" / "workflows" / "factory"
-    if not pack.is_dir():
-        return
-
-    bound: dict[str, set[str]] = {}
-    for wf in workflow_yamls(pack):
-        text = wf.read_text(encoding="utf-8")
-        for block in re.split(r"^  - id:\s*", text, flags=re.M)[1:]:
-            script = re.search(r"^\s{4}script:\s*(\S+)", block, re.M)
-            if not script:
-                continue
-            with_block = re.search(r"^\s{4}with:\s*$(.*?)(?=^\s{0,4}\S|\Z)", block,
-                                   re.M | re.S)
-            keys = set()
-            if with_block:
-                keys = {m.group(1).upper()
-                        for m in re.finditer(r"^\s{6}(\w+):", with_block.group(1), re.M)}
-            bound.setdefault(f"{wf.parent.name}/{script.group(1)}", set()).update(keys)
-
-    for key, keys in sorted(bound.items()):
-        folder, name = key.split("/", 1)
-        path = pack / folder / "scripts" / f"{name}.py"
-        if not path.exists():
-            continue
-        src = path.read_text(encoding="utf-8", errors="replace")
-        read = {m.group(1) for m in re.finditer(r"INPUTS_([A-Z0-9_]+)", src)}
-        for missing in sorted(read - keys):
-            fail(
-                "script inputs",
-                f"{key} reads INPUTS_{missing} and no node running it binds "
-                f"'{missing.lower()}' -- an unbound input is the empty string, and "
-                f"these scripts read empty as 'nothing to act on', so the gate opens "
-                f"instead of failing",
-            )
-        for unused in sorted(keys - read):
-            warn(
-                "script inputs",
-                f"{key} is passed '{unused.lower()}' and never reads INPUTS_{unused}",
-            )
-
-
 def check_referenced_files_exist(root: Path) -> None:
     """A shipped file that names a path inside the pack must name one that is there.
 
@@ -269,17 +60,22 @@ def check_referenced_files_exist(root: Path) -> None:
     findings discipline, no attempt cap, no "never self-certify". Nothing errors.
 
     A deleted file is easy to grep for on the day you delete it and impossible to
-    remember six weeks later, so this is mechanical. Only paths under
-    `.archon/workflows/factory/` are checked -- they are this template's own furniture and
-    a broken one is always a mistake, whereas a path into the USER's repository is a
-    reference to something that does not exist yet, which is often the point.
+    remember six weeks later, so this is mechanical. Only paths this template OWNS are
+    checked -- `factory/`, `harness/` and `.claude/skills/` -- because a broken one of
+    those is always a mistake, whereas a path into the USER's repository is a reference
+    to something that does not exist yet, which is often the point.
+
+    THE OWNED SET MOVED WHEN THE PACK LEFT. It used to be `.archon/workflows/factory/`
+    alone -- precisely the directory this migration deleted -- so the check that would
+    have caught six skills pointing into it was the check aimed only at it. What is
+    scanned now is the skills, because a skill's whole design is to name one file rather
+    than keep a second copy of it, which makes the path the single thing it must get
+    right. A NAMED FILE, WITH AN EXTENSION: a branch name like `factory/fix-pr-14` and a
+    directory like `.archon/workflows/` are not claims that a file exists.
     """
-    ref = re.compile(r"[`'\"( ]((?:\.archon/workflows/factory/)[\w./*-]+)")
-    for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.suffix not in (".md", ".yaml", ".py", ".txt"):
-            continue
-        if "fixtures" in path.parts:
-            continue
+    ref = re.compile(r"[`'\"( ]((?:factory/|harness/|\.factory/|\.archon/workflows/)"
+                     r"[\w./-]+\.(?:md|py|json|ya?ml|sh|ts))")
+    for path in sorted((root / ".claude").rglob("*.md")):
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -313,69 +109,6 @@ def check_all_scripts_parse(root: Path) -> None:
                 ast.parse(p.read_text(encoding="utf-8"))
             except SyntaxError as e:
                 fail("syntax", f"{p.relative_to(root)}: line {e.lineno}, {e.msg}")
-
-
-def check_scoped_grants(root: Path) -> None:
-    """A scoped Bash GRANT grants nothing. Only the DENY is scoped.
-
-    PROVEN BY PROBE, in both directions:
-
-        allowed_tools: ["Bash(python:*)"]   -> the node has NO shell at all
-        allowed_tools: [Bash]               -> the node has a shell
-        denied_tools:  ["Bash(git:*)"]      -> genuinely blocks it
-
-    The first version of this pack scoped the GRANT, on the reasonable assumption that
-    a narrow allowlist is a narrow capability. The build nodes therefore ran with no
-    shell: they could not run the quick gate, asked for a command, were refused, said
-    so politely in prose, and exited 0. Nothing errored. A guard that silently does
-    not apply is worse than no guard, and so is a grant.
-    """
-    pack = root / ".archon" / "workflows" / "factory"
-    if not pack.is_dir():
-        return
-    for wf in workflow_yamls(pack):
-        for i, line in enumerate(wf.read_text(encoding="utf-8").splitlines(), 1):
-            stripped = line.strip()
-            if stripped.startswith("#"):
-                continue
-            if stripped.startswith("allowed_tools:") and "Bash(" in stripped:
-                fail(
-                    "scoped grant",
-                    f"{wf.stem}:{i} scopes a Bash GRANT -- that grants nothing. Use "
-                    f"bare `Bash` in allowed_tools and scope the DENY instead.",
-                )
-
-
-def check_yaml_booleans(root: Path) -> None:
-    """`enum: [yes, no]` in YAML is `[True, False]`, not two strings.
-
-    YAML 1.1 parses bare yes/no/on/off/y/n as booleans. An enum written that way on a
-    `type: string` field loads as a schema demanding a boolean for a string, and the
-    model produces whatever satisfies the contradiction -- here, `summary: "test"` and
-    a finding called "test issue" after two and a half minutes of genuine work.
-    Nothing errors. The verdict is just quietly worthless.
-    """
-    pack = root / ".archon" / "workflows" / "factory"
-    if not pack.is_dir():
-        return
-    try:
-        import yaml  # type: ignore
-    except ImportError:
-        warn("yaml booleans", "PyYAML not installed; this check was skipped")
-        return
-    for wf in workflow_yamls(pack):
-        spec = yaml.safe_load(wf.read_text(encoding="utf-8")) or {}
-        for node in spec.get("nodes", []) or []:
-            props = ((node.get("output_format") or {}).get("properties") or {})
-            for name, definition in props.items():
-                values = (definition or {}).get("enum") or []
-                bools = [v for v in values if isinstance(v, bool)]
-                if bools:
-                    fail(
-                        "yaml booleans",
-                        f"{wf.stem}/{node.get('id')}.{name} has an enum containing "
-                        f"{bools} -- bare yes/no/on/off are YAML booleans. Quote them.",
-                    )
 
 
 def check_state_labels(root: Path) -> None:
@@ -481,24 +214,31 @@ def check_no_freelance_writes(root: Path) -> None:
     as two characters. Every transition was right and the entire explanation was lost.
 
     So every human-facing write goes through one helper that posts in a single process
-    and reads it back. A node holding `gh pr merge` is a node that can merge; a node
-    holding `gh issue edit` is a node that can write a state the transition table
-    forbids, and then the table is decoration.
+    and reads it back. Something holding `gh pr merge` can merge; something holding
+    `gh issue close` can dispose of an issue outside the transition table, and then the
+    table is decoration.
+
+    THE SCOPE MOVED WITH THE PROMPTS. This used to scan the factory's own workflow pack,
+    which is upstream's now -- and the generic pack cannot be audited from here, which
+    is exactly why the factory gives it no tracker authority: every label, comment and
+    merge in this system is `factory/`'s. What is left to check on this side is the
+    interactive half, the skills, where a `gh pr merge` in a set of instructions puts a
+    person around the machinery just as effectively as a node would.
     """
     banned = [
-        (r"gh\s+pr\s+merge", "merges without the merge script's re-checks"),
-        (r"gh\s+pr\s+review", "approves without the gate"),
+        (r"gh\s+pr\s+merge", "merges without archon-merge's policy rereads and readback"),
+        (r"gh\s+pr\s+review", "approves without an acceptance receipt"),
         (r"gh\s+issue\s+close", "disposes of an issue outside the transition table"),
     ]
-    pack = root / ".archon" / "workflows" / "factory"
-    for p in list(pack.rglob("*.py")) + list(pack.rglob("*.md")) + workflow_yamls(pack):
-        text = p.read_text(encoding="utf-8", errors="replace")
+    scanned = sorted(list((root / ".claude").rglob("*.md")) + list((root / "harness").rglob("*.py")))
+    for path in scanned:
+        text = path.read_text(encoding="utf-8", errors="replace")
         for pattern, why in banned:
             if re.search(pattern, text):
-                # A prompt SAYING a node does not have gh is fine; calling it is not.
-                if p.suffix == ".md" and "do not" in text.lower():
+                # Instructions SAYING not to do it are the point, not a violation.
+                if path.suffix == ".md" and "do not" in text.lower():
                     continue
-                fail("freelance write", f"{p.relative_to(root)} contains `{pattern}` -- {why}")
+                fail("freelance write", f"{path.relative_to(root)} contains `{pattern}` -- {why}")
 
 
 def check_loop_and_monitor_agree(root: Path) -> None:
@@ -606,34 +346,6 @@ def check_agent_rungs_wired(root: Path) -> None:
             )
 
 
-def check_deny_lists(root: Path) -> None:
-    """Every node that can read files must be denied the holdout directory.
-
-    A sentence in a prompt is not enforcement. If one node's deny list is missing, that
-    node can read the assertions its work will be judged against -- and it will write
-    code aimed at exactly those assertions instead of at the problem.
-    """
-    pack = root / ".archon" / "workflows" / "factory"
-    for wf in workflow_yamls(pack):
-        text = wf.read_text(encoding="utf-8")
-        for block in re.split(r"^  - id:\s*", text, flags=re.M)[1:]:
-            node_id = block.split("\n", 1)[0].strip()
-            if not re.search(r"^\s{4}(command|prompt):", block, re.M):
-                continue
-            allowed = re.search(r"allowed_tools:\s*\[(.*?)\]", block, re.S)
-            if not allowed:
-                continue
-            tools = allowed.group(1)
-            if "Read" not in tools and "Glob" not in tools and "Grep" not in tools:
-                continue  # no filesystem, nothing to deny
-            if "holdout" not in block:
-                fail(
-                    "holdout deny",
-                    f"{wf.stem}/{node_id} can read files and has no holdout deny list -- "
-                    f"it can open the assertions it will be judged against",
-                )
-
-
 def code_only(source: str) -> str:
     """Source with comments and DOCSTRINGS removed, and every other literal kept.
 
@@ -726,12 +438,13 @@ def check_watchdog_wired(root: Path) -> None:
 
 
 def check_guard_is_trusted(root: Path) -> None:
-    """The guard must be run from the BASE branch, never imported from the branch under test.
+    """The guard must be run from the BASE tree, never imported from the branch under test.
 
     This is the root of trust for the entire protected-path mechanism, and it was
-    broken: `run-gate.py` did `sys.path.insert(0, cwd/"factory"); import guard`, and in
-    a validate run the cwd IS the pull request's checkout. The code deciding whether a
-    PR may touch protected files was code that PR could edit.
+    broken once: the gate runner did `sys.path.insert(0, cwd/"factory"); import guard`,
+    and in a validation the cwd IS the pull request's checkout. The code deciding
+    whether a pull request may touch protected files was code that pull request could
+    edit.
 
     Demonstrated in one commit. A branch that set UNIT_CHECKS to 1 in the protected
     ratchet AND changed `if violations:` to `if False:` in guard.py printed
@@ -740,33 +453,127 @@ def check_guard_is_trusted(root: Path) -> None:
         BLOCK  factory/guard.py
         PROTECTED_OK
 
-    and exited 0. It saw both violations, named them, and waved itself through --
-    and PROTECTED_OK is a required marker, so everything downstream was satisfied.
+    and exited 0. It saw both violations, named them, and waved itself through -- and
+    PROTECTED_OK is a required marker, so everything downstream was satisfied.
 
-    The same branch against a guard materialised from the base ref exits 1 with
-    PROTECTED_VIOLATION=2. Nothing else in the machinery matters if this is wrong: the
-    guard is what makes every other protection real.
+    THE OWNER MOVED, THE INVARIANT DID NOT. `sdlc.snapshot` now materialises the whole
+    trusted set out of the base tree and `fixed_gate` runs it, so this checks the same
+    three things about the new owner: that the guard comes from a git object at the
+    base revision, that the required files are asserted present rather than assumed,
+    and that a missing one refuses instead of falling back to the candidate's copy.
     """
-    runner = root / ".archon" / "workflows" / "factory" / "validate" / "scripts" / "run-gate.py"
-    if not runner.exists():
-        fail("guard is trusted", f"{runner.name} is missing, so nothing runs the guard")
-        return
-    body = code_only(runner.read_text(encoding="utf-8"))
-    if "import guard" in body and "guard.main(" in body:
+    sdlc = root / "factory" / "sdlc.py"
+    gate = root / "factory" / "fixed_gate.py"
+    if not sdlc.exists() or not gate.exists():
         fail("guard is trusted",
-             "run-gate.py imports the guard from the branch under test. A PR that "
-             "neuters factory/guard.py is then judged by its own neutered copy, which "
-             "defeats every protected path at once")
+             "factory/sdlc.py or factory/fixed_gate.py is missing, so nothing "
+             "materialises a trusted guard")
         return
-    if "ls-tree" not in body or "git" not in body:
-        fail("guard is trusted",
-             "run-gate.py no longer imports the guard, but nothing in it materialises "
-             "the guard from the base ref either -- so it is unclear what is being run")
+
+    text = sdlc.read_text(encoding="utf-8")
+    start = text.find("def snapshot(")
+    nxt = text.find("\ndef ", start + 1)
+    body = code_only(text[start:nxt if nxt > 0 else len(text)]) if start >= 0 else ""
+    if not body:
+        fail("guard is trusted", "factory/sdlc.py has no snapshot() to build the trusted gate")
         return
-    if "GUARD_UNAVAILABLE" not in body:
+    if "ls-tree" not in body or "show" not in body:
         fail("guard is trusted",
-             "no fail-closed path: being unable to read the trusted guard must abort, "
-             "never fall back to the branch's own copy, which is the original bug")
+             "snapshot() does not read the factory machinery out of a git tree. Anything "
+             "that copies it from the working checkout is copying whatever is there, "
+             "which in a validation is the candidate")
+        return
+    if "guard.py" not in body or "raise" not in body:
+        fail("guard is trusted",
+             "snapshot() does not assert guard.py is present in the base tree and refuse "
+             "when it is not. A missing trusted guard must abort, never fall back to the "
+             "branch's own copy, which is the original bug")
+
+    gate_body = code_only(gate.read_text(encoding="utf-8"))
+    if "guard.main(" not in gate_body or "guard.preflight(" not in gate_body:
+        fail("guard is trusted",
+             "factory/fixed_gate.py does not run the guard and its secret preflight, so "
+             "the trusted set is materialised and then not consulted")
+    if "base_sha" not in gate_body:
+        fail("guard is trusted",
+             "fixed_gate runs the guard without the base revision from the profile, so "
+             "the diff it judges is against whatever the checkout happens to think base is")
+
+
+def check_installer_pin(root: Path) -> None:
+    """The installer must name the same workflows the runtime dispatches, and pin an engine.
+
+    TWO LISTS, ONE FACT. `bin/factory.py` names the workflows before the template is
+    copied and `factory/config.py` names them at dispatch time. They cannot import each
+    other, so the only thing keeping them equal is this check -- and a factory that
+    installs an engine missing one of them reports a successful install and fails at the
+    first tick, which is the shape of failure this whole auditor exists for.
+
+    The pin is checked as a SHAPE, not a value: a 40-character hex SHA or an explicit
+    refusal. What must never happen is an installer that builds from a moving branch and
+    calls the result tested.
+    """
+    installer = HOME / "bin" / "factory.py"
+    cfg = root / "factory" / "config.py"
+    if not installer.exists() or not cfg.exists():
+        return
+    src = installer.read_text(encoding="utf-8")
+    listed = re.search(r"REQUIRED_WORKFLOWS = \(([^)]*)\)", src, re.S)
+    if not listed:
+        fail("installer pin", "bin/factory.py declares no REQUIRED_WORKFLOWS")
+        return
+    installer_names = set(re.findall(r'"([a-z-]+)"', listed.group(1)))
+    config_names = set(re.findall(r'WORKFLOW_[A-Z]+ = _env\("[A-Z_]+", "([a-z-]+)"\)',
+                                  cfg.read_text(encoding="utf-8")))
+    if installer_names != config_names:
+        fail("installer pin",
+             f"bin/factory.py checks for {sorted(installer_names)} and factory/config.py "
+             f"dispatches {sorted(config_names)}. An install verifies one set and the "
+             f"factory then asks the engine for another")
+
+    ref = re.search(r'ARCHON_REF = "([^"]*)"', src)
+    if not ref:
+        fail("installer pin", "bin/factory.py has no ARCHON_REF")
+        return
+    pinned = bool(re.fullmatch(r"[0-9a-f]{40}", ref.group(1)))
+    if not pinned and "not re.fullmatch" not in src:
+        fail("installer pin",
+             f"ARCHON_REF is `{ref.group(1)}`, which is not a commit, and nothing refuses "
+             f"the install. A build from a moving branch is not the revision this factory "
+             f"was tested against")
+    elif not pinned:
+        warn("installer pin",
+             f"ARCHON_REF is the placeholder `{ref.group(1)}`. Building the engine from "
+             f"source is correctly refused, so `factory init` only works where an engine "
+             f"carrying the SDLC pack is already installed. Set it to the tested SHA.")
+
+
+def check_result_binding(root: Path) -> None:
+    """A settled run's result must be read from THAT run, never from the newest file.
+
+    The failure this prevents is silent and it is the reason the journal exists: two
+    validations of two pull requests write `acceptance.json` into two artifact
+    directories, and a consumer that globs for the newest one applies the second run's
+    verdict to the first run's target. Every label is written successfully. Every
+    receipt is valid. It is simply about the wrong pull request.
+    """
+    sdlc = root / "factory" / "sdlc.py"
+    if not sdlc.exists():
+        return
+    body = code_only(sdlc.read_text(encoding="utf-8"))
+    if "output_root" not in body or "artifact_root(" not in body:
+        fail("result binding",
+             "factory/sdlc.py does not resolve artifacts through the run's persisted "
+             "output_root, so it cannot prove which run produced what it is applying")
+    for pattern, why in (
+        (r"glob\([^)]*acceptance", "globs for an acceptance receipt"),
+        (r"glob\([^)]*result", "globs for a result file"),
+        (r"st_mtime", "picks a result by modification time"),
+    ):
+        if re.search(pattern, body):
+            fail("result binding",
+                 f"factory/sdlc.py {why} -- that is 'whichever run finished last', not "
+                 f"'the run this dispatch started'")
 
 
 def check_install_ships_a_runner(root: Path) -> None:
@@ -909,41 +716,6 @@ def check_lock_liveness(root: Path) -> None:
         )
 
 
-def check_workflow_state_writes(root: Path) -> None:
-    """Every `state=<x>` a workflow script writes must be a declared state.
-
-    These are string literals passed to a CLI, so a typo is not a syntax error and not
-    a test failure -- it is a runtime refusal on a path that might not fire for weeks,
-    at which point it looks like the factory stalling for no reason.
-    """
-    # GUARDED, like every other check here. The first version read this unconditionally
-    # and died with a FileNotFoundError traceback on any root without a factory/ --
-    # which includes this repository, where the factory lives under template/ and where
-    # the README tells you to run `--repo .`. A crash is worse than a finding twice
-    # over: it reports nothing about the check it was doing, and it takes every check
-    # BELOW it down with it (trigger parity and base branch never ran). An audit that
-    # aborts looks the same from the outside as an audit that was never run.
-    state_py = root / "factory" / "state.py"
-    if not state_py.exists():
-        fail("workflow state writes", "factory/state.py is missing")
-        return
-    state_src = state_py.read_text(encoding="utf-8")
-    declared = set(re.findall(r'^\s{4}"([a-z-]+)":\s*(?:set\(\)|\{)', state_src, re.M))
-    if not declared:
-        fail("workflow state writes", "could not read the transition table from state.py")
-        return
-    pack = root / ".archon" / "workflows" / "factory"
-    for script in sorted(pack.rglob("*.py")):
-        body = script.read_text(encoding="utf-8")
-        for m in re.finditer(r'"state=([a-z-]+)"', body):
-            if m.group(1) not in declared:
-                fail(
-                    "workflow state writes",
-                    f"{script.parent.parent.name}/{script.name} writes "
-                    f"state={m.group(1)!r}, which the transition table does not declare",
-                )
-
-
 def check_trigger_parity(root: Path) -> None:
     """Both scheduler backends must install BOTH jobs.
 
@@ -1000,7 +772,8 @@ def check_base_branch(root: Path) -> None:
     worst shape a bug can take in something whose pitch is "install it into your
     repo".
     """
-    for name in ("merge.py", "deploy.py", "doctor.py", "dispatch.py"):
+    for name in ("merge.py", "deploy.py", "doctor.py", "dispatch.py", "sdlc.py",
+                 "fixed_gate.py"):
         f = root / "factory" / name
         if not f.exists():
             continue
@@ -1027,26 +800,21 @@ def main(argv: list[str]) -> int:
 
     print(f"auditing {root}\n")
 
-    check_script_inputs_are_bound(root)
     check_referenced_files_exist(root)
     check_all_scripts_parse(root)
-    check_node_outputs(root)
-    check_emitting_scripts(root)
-    check_scoped_grants(root)
-    check_yaml_booleans(root)
     check_state_labels(root)
     check_markers(root)
     check_no_freelance_writes(root)
     check_agent_rungs_wired(root)
     check_loop_and_monitor_agree(root)
-    check_deny_lists(root)
     check_selftest_wired(root)
     check_watchdog_wired(root)
     check_guard_is_trusted(root)
+    check_installer_pin(root)
+    check_result_binding(root)
     check_install_ships_a_runner(root)
     check_deploy_result_is_read(root)
     check_lock_liveness(root)
-    check_workflow_state_writes(root)
     check_trigger_parity(root)
     check_base_branch(root)
 

@@ -10,12 +10,17 @@ It respects the same two things the dispatcher does: the stop button, and the di
 Level 4 is where a factory is allowed to file its own bugs -- below that the
 regression still RUNS, it just reports rather than filing, because an issue queue that
 fills itself before anyone has watched a full cycle is a queue nobody trusts.
+
+WHAT IT DISPATCHES IS `archon-regress`, and the publication half is upstream's. It
+files an issue only for a case the trusted check profile handed it, already approved
+for export, with a cause it proved -- never from model-written prose. The fixed gate
+this factory supplies reports whether main is green and authors no public cases, so a
+red regression escalates to a person. Filing turns on when the project's own check
+emits `public_cases`. See `factory/fixed_gate.py`.
 """
 
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,39 +66,10 @@ def main() -> int:
             f"it finds are not filed automatically until level 4."
         )
 
-    lock = config.LOCKS_RUNTIME / "regress.lock"
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.close(fd)
-    except FileExistsError:
+    import sdlc
+    if not sdlc.launch("regress", ""):
         log("SKIP - a regression run already holds its lock")
-        return 0
-
-    try:
-        config.RUNS_DIR.mkdir(parents=True, exist_ok=True)
-        logfile = config.RUNS_DIR / "regress.log"
-        cmd = [
-            config.ARCHON_BIN, "workflow", "run", config.WORKFLOW_REGRESS,
-            "--branch", "factory/regress", "--detach", "regress",
-        ]
-        log(f"DISPATCH {config.WORKFLOW_REGRESS}")
-        with logfile.open("a", encoding="utf-8") as fh:
-            fh.write(f"\n=== {datetime.now(timezone.utc).isoformat()} {' '.join(cmd)}\n")
-            fh.flush()
-            rc = subprocess.run(
-                cmd, cwd=str(config.SHARED), stdout=fh, stderr=subprocess.STDOUT,
-                timeout=600, env={**os.environ, "IS_SANDBOX": "1"},
-            ).returncode
-        if rc != 0:
-            log(f"DISPATCH_FAILED exit {rc} - see {logfile}")
-            return 1
-        log("DISPATCHED (detached)")
-        return 0
-    finally:
-        # Released here, not by a completion hook: this dispatch is one shot a week and
-        # a lock that outlives it by six days would silently skip the next run.
-        lock.unlink(missing_ok=True)
+    return 0
 
 
 if __name__ == "__main__":

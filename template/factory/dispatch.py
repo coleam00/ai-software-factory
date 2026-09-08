@@ -204,9 +204,12 @@ def reap_locks() -> None:
     dispatch died before it could record one. There the pid IS the only owner there
     ever was.
 
-    A lock that names a run is freed by evidence about THAT RUN -- release_settled_
-    locks() asking the engine -- or by the long stale cap, which is the backstop for
-    an engine that can no longer be asked.
+    A LOCK THAT NAMES A RUN IS NEVER FREED BY AGE, and the cap that used to do it is
+    gone. Age is not evidence about a run: a four-hour lap and one that died in its
+    first minute look identical to a clock, and freeing both meant the sweep escalated
+    live work as dead. Such a lock is freed by `sdlc.consume` once the run has settled
+    and its result has been applied, or -- for a lock taken before this factory kept
+    that record -- by release_settled_locks() asking the engine about that run.
     """
     config.LOCKS_RUNTIME.mkdir(parents=True, exist_ok=True)
     now = time.time()
@@ -217,16 +220,7 @@ def reap_locks() -> None:
         except (OSError, IndexError):
             continue
 
-        if age_min > config.LOCK_STALE_MINUTES:
-            log(
-                f"LOCK_REAPED {lock.name} - older than {config.LOCK_STALE_MINUTES}m, so "
-                f"its run is gone. Held since: {first}"
-            )
-            lock.unlink(missing_ok=True)
-            continue
-
-        if lock_run_id(lock):
-            # Owned by a detached run. Only a report about that run frees it early.
+        if lock_run_id(lock) or managed_lock(lock):
             continue
 
         if age_min > config.LOCK_GRACE_MINUTES:
@@ -246,115 +240,19 @@ def in_flight() -> list[Path]:
 
 # --- dispatch -----------------------------------------------------------------
 
-WORKFLOW_FOR = {
-    "triage": config.WORKFLOW_TRIAGE,
-    "implement": config.WORKFLOW_IMPLEMENT,
-    "fix": config.WORKFLOW_FIX,
-    "validate": config.WORKFLOW_VALIDATE,
-}
-
-# Which actions need their own git worktree. Triage is advisory -- it reads the
-# repo, writes a label and a comment, and never touches the checkout -- so giving it
-# a worktree buys nothing and costs a checkout on every untriaged issue. Everything
-# that edits or checks out a branch gets isolation.
-NEEDS_WORKTREE = {"implement", "fix", "validate"}
-
-
 def dispatch(action: str, target: str) -> bool:
-    """Hand ONE unit of work to Archon, detached, and return.
+    """Hand ONE unit of work to the SDLC consumer, detached, and return.
 
     The dispatcher never waits: a tick that blocks for twenty minutes is a tick that
-    overlaps the next one. Archon owns the run from here; the labels are how we find
-    out what happened.
+    overlaps the next one. Which workflow, which inputs, which trusted profile and
+    which state moves are `sdlc.launch`'s -- this module's whole remaining job is
+    deciding that this is the thing to do now.
     """
-    workflow = WORKFLOW_FOR[action]
-    branch = f"factory/{action}-{target.replace('gh:', '').replace(':', '-')}"
-    lock = lock_path(action, target)
-
     if DRY_RUN:
-        if lock.exists():
-            log(f"DRY-RUN would SKIP {action} {target} - already in flight")
-            return False
-        where = f"branch {branch}" if action in NEEDS_WORKTREE else "in place (no worktree)"
-        log(f"DRY-RUN would dispatch: {workflow} {target} ({where})")
-        return True
-
-    if not acquire(lock):
-        log(f"SKIP {action} {target} - already in flight")
-        return False
-
-    config.RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    logfile = config.RUNS_DIR / f"{action}-{target.replace(':', '-')}.log"
-
-    cmd = [config.ARCHON_BIN, "workflow", "run", workflow]
-    if action in NEEDS_WORKTREE:
-        cmd += ["--branch", branch]
-    else:
-        cmd += ["--no-worktree"]
-    cmd += ["--detach", f"{action} {target}"]
-    log(f"DISPATCH {workflow} {target} -> {logfile.name}")
-    dispatch_started = time.time()
-    try:
-        with logfile.open("a", encoding="utf-8") as fh:
-            fh.write(f"\n=== {datetime.now(timezone.utc).isoformat()} {' '.join(cmd)}\n")
-            fh.flush()
-            p = subprocess.run(
-                cmd,
-                cwd=str(config.ROOT),
-                stdout=fh,
-                stderr=subprocess.STDOUT,
-                timeout=300,
-                env={**os.environ, "IS_SANDBOX": "1"},
-            )
-    except (OSError, subprocess.SubprocessError) as e:
-        lock.unlink(missing_ok=True)
-        escalate(target, f"could not dispatch {workflow}: {e}")
-        return False
-
-    # THE RUNNER'S EXIT STATUS IS NOT THE WORK'S VERDICT, and it must still be read.
-    # A dispatch that could not even start is a fault in the machinery, and it looks
-    # exactly like a factory with nothing to do unless somebody says so.
-    if p.returncode != 0:
-        lock.unlink(missing_ok=True)
-        tail = ""
-        try:
-            tail = logfile.read_text(encoding="utf-8", errors="replace")[-600:]
-        except OSError:
-            pass
-        escalate(
-            target,
-            f"{workflow} could not be dispatched (exit {p.returncode}). Last output: {tail[-300:]}",
-        )
-        return False
-
-    # Detached: Archon owns it now. The lock is NOT released here, because returning
-    # from a detached launch does not mean the work finished.
-    #
-    # Record WHICH run holds it. Everything downstream that decides a lap is dead
-    # keys on this id, because it is the only identifier both sides agree on: the
-    # dispatching process exits the moment the run detaches, so its PID says nothing,
-    # and the engine's run list does not report the branch.
-    # ASK THE ENGINE WHICH RUN THIS WAS. The id printed by the CLI is not the run's
-    # id (see resolve_run_id), so the log is only the fallback now, not the source.
-    run_id = resolve_run_id(action, target, dispatch_started)
-    if not run_id:
-        try:
-            m = RUN_ID_RE.search(logfile.read_text(encoding="utf-8", errors="replace")[-4000:])
-            run_id = m.group(1) if m else ""
-        except OSError:
-            pass
-        if run_id:
-            log(f"  ! could not resolve the engine's run id; falling back to the "
-                f"printed one ({run_id[:8]}), which historically does not resolve")
-    if run_id:
-        with lock.open("a", encoding="utf-8") as fh:
-            fh.write("run " + run_id + "\n")
-    else:
-        log(f"  ! no run id found in {logfile.name}; this lock can only be freed by age")
-    eventlog.record(eventlog.DISPATCH, action=action, target=target,
-                    workflow=workflow, run=run_id or None)
-    log(f"DISPATCHED {workflow} {target} (detached; lock {lock.name} held until the run settles)")
-    return True
+        log(f"DRY-RUN would dispatch {action} {target}")
+        return not lock_path(action, target).exists()
+    import sdlc
+    return sdlc.launch(action, target)
 
 
 def _grace_minutes() -> float:
@@ -372,87 +270,6 @@ def lock_age_minutes(lock: Path) -> float:
         return (time.time() - lock.stat().st_mtime) / 60
     except OSError:
         return 0.0
-
-
-def resolve_run_id(action: str, target: str, since_epoch: float,
-                   attempts: int = 4, payload_override: dict | list | None = None) -> str:
-    """The run id the ENGINE gave this dispatch, found by the message we sent it.
-
-    THE PRINTED ID IS NOT THE RUN ID, and everything downstream was keyed on it.
-    `archon workflow run --detach` prints "Run id: X" and even says "Track it with:
-    archon workflow get X" -- and that id appears nowhere in the engine's run record.
-    Measured on four consecutive dispatches: the timestamps matched to the second,
-    the workflow names matched, and the overlap between the ids the factory tracked
-    and the ids the engine had was ZERO.
-
-    Every symptom that cost hours today traces back here. Lock liveness could never be
-    answered, so locks sat until the 180-minute stale cap. No run ever read back as
-    `completed`, so the watchdog's progress detectors had nothing to see and its spend
-    detectors had no cost to add up. Each of those looked like its own bug and got its
-    own patch; they were one bug wearing three hats.
-
-    So the id is resolved by the one key the factory itself controls: `user_message`,
-    which dispatch() sets to "<action> <target>" and the engine stores verbatim. The
-    start time is required as well, so a re-dispatch of the same target cannot match
-    the previous run.
-
-    Returns "" if it cannot be resolved, which the caller treats exactly as it treats
-    a missing id today -- a lock freed by age rather than by evidence. Degrading is
-    fine; guessing is not.
-    """
-    want = f"{action} {target}"
-    for attempt in range(attempts):
-        try:
-            if payload_override is not None:
-                # A caller supplying a payload is asserting about THAT payload; it must
-                # not reach the engine. Same rule as release_settled_locks' probe.
-                payload = payload_override
-                runs = payload.get("runs", []) if isinstance(payload, dict) else payload
-                best, best_ts = "", 0.0
-                for r in runs if isinstance(runs, list) else []:
-                    if not isinstance(r, dict) or str(r.get("user_message")) != want:
-                        continue
-                    try:
-                        ts = datetime.fromisoformat(
-                            str(r.get("started_at") or "").replace("Z", "+00:00")).timestamp()
-                    except ValueError:
-                        continue
-                    if ts >= since_epoch - 120 and ts > best_ts:
-                        best, best_ts = str(r.get("id") or ""), ts
-                return best
-            out = subprocess.run(
-                [config.ARCHON_BIN, "workflow", "runs", "--json"],
-                cwd=str(config.ROOT), capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=120,
-            )
-            if out.returncode == 0:
-                raw = out.stdout or ""
-                offsets = [i for i in (raw.find("{"), raw.find("[")) if i >= 0]
-                if offsets:
-                    payload = json.loads(raw[min(offsets):])
-                    runs = payload.get("runs", []) if isinstance(payload, dict) else payload
-                    best, best_ts = "", 0.0
-                    for r in runs if isinstance(runs, list) else []:
-                        if not isinstance(r, dict) or str(r.get("user_message")) != want:
-                            continue
-                        started = str(r.get("started_at") or "")
-                        try:
-                            ts = datetime.fromisoformat(
-                                started.replace("Z", "+00:00")).timestamp()
-                        except ValueError:
-                            continue
-                        # 120s of slack: the row is written a moment after we launched.
-                        if ts >= since_epoch - 120 and ts > best_ts:
-                            best, best_ts = str(r.get("id") or ""), ts
-                    if best:
-                        return best
-        except (OSError, subprocess.SubprocessError, json.JSONDecodeError, ValueError):
-            pass
-        # The row is written asynchronously by the detached child, so a miss on the
-        # first look is expected rather than a failure.
-        if attempt < attempts - 1:
-            time.sleep(3)
-    return ""
 
 
 def run_status(run_id: str) -> str | None:
@@ -538,6 +355,20 @@ def run_cost(run_id: str) -> float | None:
         return None
 
 
+def managed_lock(lock: Path) -> bool:
+    """Whether an SDLC dispatch journal owns this lock.
+
+    UNREADABLE COUNTS AS OWNED. Everything that acts on a lock this returns False for
+    ends up FREEING it, so a transient read error must not be able to turn a live
+    dispatch into an orphan -- the same asymmetry release_settled_locks() is built on.
+    """
+    try:
+        return any(line.startswith("record ") for line in
+                   lock.read_text(encoding="utf-8", errors="replace").splitlines())
+    except OSError:
+        return True
+
+
 def lock_run_id(lock: Path) -> str:
     """The Archon run id recorded on a lock, or empty if it carries none.
 
@@ -573,12 +404,21 @@ def release_settled_locks(payload_override: dict | list | None = None,
     found a live lap holding no lock and escalated it as dead -- while it was still
     running, and while it went on to finish.
 
-    EMPTY IS NOT AN ANSWER. Every unknown below KEEPS the lock and leaves it to the
-    age/PID reaper, which is slow on purpose. A lock held too long stalls one target
-    until LOCK_STALE_MINUTES; a lock dropped too early runs two writers over one
-    worktree and escalates work that was going fine. Those costs are not symmetric.
+    EMPTY IS NOT AN ANSWER. Every unknown below KEEPS the lock. A lock held too long
+    stalls one target and is visible in every tick's capacity line; a lock dropped too
+    early runs two writers over one worktree and escalates work that was going fine.
+    Those costs are not symmetric.
     """
-    locks = [lk for lk in in_flight() if lock_run_id(lk)]
+    # LOCKS THIS FACTORY KEEPS A JOURNAL FOR ARE NOT ASKED ABOUT HERE. Their run's
+    # result still has to be applied after it settles, and freeing the lock on
+    # "the engine says it finished" would release the target to the next tick with the
+    # verdict not yet recorded. `sdlc.consume` frees those, after applying.
+    #
+    # What is left is a lock taken by a dispatch that predates that journal -- a
+    # factory upgraded while a lap was in flight. Nothing else knows what those runs
+    # were, and asking the engine about the run they name is the only honest way to
+    # find out they are over.
+    locks = [lk for lk in in_flight() if lock_run_id(lk) and not managed_lock(lk)]
     if not locks:
         return
     # THE PROBE IS INJECTABLE, and it defaults to OFF for a caller supplying a payload.
@@ -780,6 +620,14 @@ def main() -> int:
     #
     # So it is reported unconditionally, before the dial and before the capacity
     # check, and it never consumes the tick's dispatch budget.
+    # APPLYING A SETTLED RUN IS THE FIRST THING, AND IT IS NOT A DISPATCH. Everything
+    # below reads GitHub labels to decide what to do next, and a run that finished
+    # since the last tick has not moved a label yet -- so a tick that dispatched first
+    # would decide from state one lap out of date, and re-select a target whose work
+    # is already done and merely unrecorded.
+    if not DRY_RUN:
+        import sdlc
+        sdlc.reconcile()
     release_settled_locks()
     reap_locks()
     held = {p.stem for p in in_flight()}
@@ -856,7 +704,7 @@ def main() -> int:
     if len(running) >= config.MAX_PARALLEL:
         log(f"at capacity ({len(running)}/{config.MAX_PARALLEL}), nothing dispatched")
         log("  held by: " + " ".join(p.name for p in running))
-        log(f"  a lock with no running workflow is reaped after {config.LOCK_STALE_MINUTES}m")
+        log("  a lock is freed when its run settles and its result has been applied")
         return 0
 
     # =========================================================================
@@ -886,7 +734,7 @@ def main() -> int:
                 log("  The PR passed every gate and is waiting for a human. This is level 2 working.")
             break
 
-        if action in ("fix", "validate", "implement", "triage"):
+        if action in ("fix", "validate", "implement", "triage", "merge"):
             log(f"NEXT {action} {target} ({why})")
             dispatch(action, target)
             exclude.add(target)
@@ -897,30 +745,6 @@ def main() -> int:
 
         if action == "escalate":
             exclude |= escalate(target, f"fix-attempt cap reached (FACTORY_RULES 8): {why}")
-
-        elif action == "merge":
-            log(f"MERGE {target}")
-            if DRY_RUN:
-                continue
-            rc = subprocess.run(
-                [sys.executable, str(Path(__file__).parent / "merge.py"), target],
-                cwd=str(config.ROOT),
-            ).returncode
-            if rc == 0:
-                run_deploy(f"after merging {target}")
-            elif rc == 2:
-                # ALREADY HANDLED. The branch went stale while it was in flight --
-                # somebody pushed to main, which on any repo with velocity is Tuesday
-                # -- and merge.py requeued it for revalidation, which is the designed
-                # remedy. Escalating on top would send it straight to needs-human,
-                # which is TERMINAL for nodes: a recovery that undid itself, and a
-                # person woken for a situation the factory had already resolved.
-                log(f"REQUEUED {target} - the branch was behind base; it will be rebased and re-judged")
-            else:
-                # Everything else: merge.py printed the reason and could not recover.
-                exclude |= escalate(
-                    target, "merge refused for a PR that passed every gate; see the log above"
-                )
 
         elif action in ("stalled-pr", "stalled-issue"):
             # Reported by state.py, acted on here -- only the dispatcher holds the

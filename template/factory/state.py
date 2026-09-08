@@ -576,6 +576,14 @@ def next_action(exclude: set[str] | None = None) -> tuple[str, str, str]:
 def linked_issue(pr_target: str) -> str | None:
     """`Fixes #N` in the PR body. A PR without it cannot be validated."""
     import re
+    import runtime
+
+    link = runtime.root() / "links" / f"{pr_target.replace(':', '-')}.json"
+    if link.exists():
+        issue = runtime.read(link)["issue"]
+        if parse_target(issue)[0] != "issue":
+            raise ValueError("Recorded PR linkage is not an issue")
+        return issue
 
     pr = fetch(pr_target)
     m = re.search(r"(?:fixes|closes|resolves)\s+#(\d+)", pr.get("body") or "", re.I)

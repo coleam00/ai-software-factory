@@ -15,6 +15,7 @@ regression here is reported before the dial is trusted rather than after.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
@@ -32,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config  # noqa: E402
 import dispatch  # noqa: E402
+import ledger as ledger_module  # noqa: E402
 import gate  # noqa: E402
 import state  # noqa: E402
 
@@ -211,15 +213,50 @@ def lock_checks(tmp: Path) -> None:
         check("an aged lock naming NO run is still reaped", not orphan.exists(),
               "a dispatch that died before recording a run id would wedge capacity")
 
+        # AGE IS NOT EVIDENCE ABOUT A RUN, and the cap that used to act on it is gone.
+        # A four-hour lap and one that died in its first minute look identical to a
+        # clock, and freeing both meant the sweep escalated live work as dead.
         ancient = config.LOCKS_RUNTIME / "implement-gh-issue-5.lock"
         ancient.write_text(
             "999999 2020-01-01T00:00:00+00:00\nrun " + run_id + "\n", encoding="utf-8"
         )
-        very_old = _time.time() - (config.LOCK_STALE_MINUTES + 5) * 60
+        very_old = _time.time() - 90 * 24 * 60 * 60
         os.utime(ancient, (very_old, very_old))
         dispatch.reap_locks()
-        check("the stale cap still frees a lock the engine can no longer be asked about",
-              not ancient.exists())
+        check("a lock naming a run is never freed by age, however old",
+              ancient.exists(),
+              "a ninety-day-old lock still names a run, and the only honest way to free "
+              "it is an answer about that run")
+        ancient.unlink(missing_ok=True)
+
+        # A MANAGED LOCK IS THE SDLC CONSUMER'S, AND NOTHING ELSE MAY FREE IT. Its run
+        # settling is not the end of the work: the result still has to be applied, and a
+        # lock released on "the engine says it finished" hands the target to the next
+        # tick with the verdict not yet recorded.
+        managed = config.LOCKS_RUNTIME / "validate-gh-pr-21.lock"
+        managed.write_text("0 now\nrecord C:/nowhere/record.json\nrun " + run_id + "\n",
+                           encoding="utf-8")
+        os.utime(managed, (very_old, very_old))
+        dispatch.reap_locks()
+        check("a managed lock survives the reaper", managed.exists())
+        dispatch.release_settled_locks(payload_override={"runs": [
+            {"id": run_id, "status": "completed"}]})
+        check("a managed lock is not freed by the run settling either", managed.exists(),
+              "the result has not been applied yet; sdlc.consume frees it, after applying")
+        check("and it is recognised as managed", dispatch.managed_lock(managed))
+
+        unmanaged = config.LOCKS_RUNTIME / "validate-gh-pr-22.lock"
+        unmanaged.write_text("0 now\nrun " + run_id + "\n", encoding="utf-8")
+        check("a lock with no journal is not managed", not dispatch.managed_lock(unmanaged))
+        dispatch.release_settled_locks(payload_override={"runs": [
+            {"id": run_id, "status": "completed"}]})
+        check("and IS freed once the engine says its run settled", not unmanaged.exists(),
+              "a lock taken before the journal existed has no other way to be freed")
+        check("an unreadable lock counts as managed",
+              dispatch.managed_lock(config.LOCKS_RUNTIME / "does-not-exist.lock"),
+              "everything that acts on an unmanaged lock FREES it, so a read error must "
+              "not be able to turn a live dispatch into an orphan")
+        managed.unlink(missing_ok=True)
         held.unlink(missing_ok=True)
     finally:
         config.LOCKS_RUNTIME = original
@@ -373,8 +410,9 @@ def escalation_checks() -> None:
           "exclude: set[str] = set(escalated_here)" in src,
           "the sweep would park a target and the loop would dispatch it anyway")
     check("in-loop escalations exclude too",
-          src.count("exclude |= escalate(") >= 2,
-          "the fix cap and the merge refusal park a target mid-tick as well")
+          "exclude |= escalate(" in src,
+          "the fix cap parks a target mid-tick as well, and the loop asks again "
+          "afterwards")
     check("escalate parks with force",
           src.count('"needs-human", force=True') >= 2,
           "an escalation that the transition table can refuse is not an escalation -- "
@@ -457,24 +495,22 @@ def enforcement_checks() -> None:
         # following the instruction had to reach for `gh pr merge` and silently skip
         # the ratchet raise, the labels and the issue close. Guidance that contradicts
         # the mechanism is worse than none: it is trusted.
-        held_msg = (Path(__file__).resolve().parent / "gate.py").read_text(encoding="utf-8")
+        sdlc_src = (Path(__file__).resolve().parent / "sdlc.py").read_text(encoding="utf-8")
         check("the hold message names `factory accept`, not a raw transition",
-              "factory accept" in held_msg and "waits for a human to merge it" not in held_msg,
+              "factory accept" in sdlc_src and "waits for a human to merge it" not in sdlc_src,
               "the comment must name the command that ARCHIVES what was chosen. The first "
               "version of this fix printed `state.py set ... state=open`, which clears the "
               "hold and throws away the record of who agreed and when -- the same mistake "
               "as the original message, one layer down")
-        gate_src = (Path(__file__).resolve().parent / "gate.py").read_text(encoding="utf-8")
-        check("the gate writes held rather than passed when it holds",
-              'state.set_state(target, "held")' in gate_src,
+        check("the consumer writes held rather than passed when it holds",
+              'value = "held"' in sdlc_src,
               "the hold would be a comment and the next tick would merge it")
-        # A HOLD NOBODY CAN CLEAR IS A STALL. The gate re-reads the assumptions file
-        # every run, so without an accept path a held PR holds again on the next
-        # validation, and the next, forever. The hold shipped before its other half
-        # did, and the stall would have looked like a factory with nothing to do.
-        gate_reads = "ASSUMPTIONS_DIR" in gate_src
-        cli = (Path(__file__).resolve().parent.parent / "factory" / "doctor.py")
-        check("the gate holds on a file it re-reads every run", gate_reads)
+        # A HOLD NOBODY CAN CLEAR IS A STALL. The assumptions file is re-read on every
+        # validation, so without an accept path a held PR holds again on the next one,
+        # and the next, forever. The hold shipped before its other half did, and the
+        # stall would have looked like a factory with nothing to do.
+        check("the hold is taken from a file re-read on every validation",
+              "ASSUMPTIONS_DIR" in sdlc_src)
 
         # AN ISSUE MARKED done MUST ACTUALLY CLOSE. Relying on `Fixes #N` in the PR
         # body is relying on GitHub's prose parsing of text an agent wrote -- and one
@@ -491,11 +527,17 @@ def enforcement_checks() -> None:
         check("marking an issue done closes it", closed,
               "the label would say finished while the issue stayed open")
 
-        merge_src = (Path(__file__).resolve().parent / "merge.py").read_text(encoding="utf-8")
+        # THE SECOND LINE OF DEFENCE FOR THE HOLD, and for a stale read of any kind. The
+        # merge path does not trust that acceptance already decided: it asks the live
+        # label before it prepares, and the policy it hands archon-merge asks AGAIN in
+        # the instant before the mutation.
         check("merge refuses any state that is not exactly passed",
-              """if pr["_state"] != "passed":""" in merge_src,
-              "the second line of defence for the hold, and for a stale read of any "
-              "kind -- merge.py does not trust that the gate already decided")
+              sdlc_src.count("""!= "passed\"""") >= 2,
+              "one check at dispatch is not enough -- a PR held or parked during the "
+              "merge run must not be merged by a policy written before that happened")
+        check("the merge policy is revoked before it is rewritten",
+              '"authorized": False' in sdlc_src,
+              "a crash between the two writes must leave a denial, not the last yes")
 
         at("open")
         before = len(writes)
@@ -746,42 +788,80 @@ def size_cap_checks() -> None:
 
 
 def run_resolution_checks() -> None:
-    """The run id must come from the ENGINE, matched on a key the factory controls.
+    """The run id must be the one the ENGINE acknowledged, and nothing else.
 
-    `archon workflow run --detach` prints a "Run id" that appears nowhere in the run
-    record: across four consecutive dispatches the timestamps and workflow names
-    matched and the id overlap was zero. Keying on it meant lock liveness could never
-    be answered, no run ever read back as `completed`, and no cost was ever available
-    -- three symptoms, each patched separately, all one bug.
+    `archon workflow run --detach` used to be read for a "Run id" it printed that
+    appeared nowhere in the run record: across four consecutive dispatches the
+    timestamps and workflow names matched and the id overlap was ZERO. Keying on it
+    meant lock liveness could never be answered, no run ever read back as `completed`,
+    and no cost was ever available -- three symptoms, each patched separately, all one
+    bug. The cure was a search of the run list for a message the factory itself had
+    sent, which is inference: it worked, and it could still match the wrong run.
+
+    `--json` ends it. The launch returns `{ok, runId, ...}` and that id IS the handle,
+    written to the journal and to the lock before anything else happens. So what has to
+    be true now is narrower and much stronger: nothing is accepted that is not an
+    acknowledgement, and one document is read out of the reply rather than a buffer.
     """
-    now = 1_756_000_000.0
-    iso = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    older = datetime.fromtimestamp(now - 4000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    payload = {"runs": [
-        {"id": "right", "user_message": "validate gh:pr:15", "started_at": iso},
-        {"id": "stale", "user_message": "validate gh:pr:15", "started_at": older},
-        {"id": "other", "user_message": "validate gh:pr:14", "started_at": iso},
-    ]}
-    check("the run is found by the message the factory sent",
-          dispatch.resolve_run_id("validate", "gh:pr:15", now, payload_override=payload) == "right")
-    check("a PREVIOUS run of the same target is not matched",
-          dispatch.resolve_run_id("validate", "gh:pr:15", now, payload_override=payload) != "stale",
-          "a re-dispatch would otherwise adopt the run it just replaced")
-    check("a different target is not matched",
-          dispatch.resolve_run_id("validate", "gh:pr:99", now, payload_override=payload) == "")
-    check("an empty engine answer resolves to nothing, not to a guess",
-          dispatch.resolve_run_id("validate", "gh:pr:15", now,
-                                  payload_override={"runs": []}) == "")
+    import sdlc
+
+    original = sdlc.command
+    try:
+        sdlc.command = lambda argv, **kw: '{"ok": true, "runId": "abc-123"}'
+        check("the acknowledgement is read back",
+              sdlc.engine(["workflow", "run"])["runId"] == "abc-123")
+
+        # A WARNING ON STDOUT IS NOT THE DOCUMENT. `--json` promises one machine-readable
+        # line and puts the CLI's own warnings on stderr, but a runtime warning from
+        # underneath it still lands on stdout ahead of the payload -- and a dispatch that
+        # dies on a JSON parse error names the parser rather than the warning.
+        sdlc.command = lambda argv, **kw: ('warning: something\n'
+                                           '{"ok": true, "runId": "abc-123"}')
+        check("a line printed before the payload does not break the read",
+              sdlc.engine(["workflow", "run"])["runId"] == "abc-123")
+
+        sdlc.command = lambda argv, **kw: ""
+        try:
+            sdlc.engine(["workflow", "run"])
+            check("an empty reply is refused, not read as success", False)
+        except RuntimeError:
+            check("an empty reply is refused, not read as success", True)
+
+        sdlc.command = lambda argv, **kw: "[1, 2, 3]"
+        try:
+            sdlc.engine(["workflow", "run"])
+            check("a reply that is not an object is refused", False)
+        except RuntimeError:
+            check("a reply that is not an object is refused", True)
+    finally:
+        sdlc.command = original
+
+    src = (Path(__file__).resolve().parent / "sdlc.py").read_text(encoding="utf-8")
+    check("the launch refuses a reply with no acknowledged run id",
+          'response.get("ok") is not True' in src and "re.fullmatch" in src,
+          "a dispatch whose id the factory cannot name is work nothing can settle")
+    check("the run id is written to the journal before the lock",
+          src.index('record.update(run_id=run_id') < src.index('stream.write(f"run {run_id}'),
+          "the journal is the record; the lock line is a convenience for the reaper")
+    check("the journal exists before the engine is asked for anything",
+          src.index("runtime.write(journal, record)") < src.index("response = engine(argv)"),
+          "a run started with nothing on disk knowing about it is a run nothing settles")
 
 
 def ratchet_raise_checks() -> None:
     """The auto-raise may only ever move a floor UP, and only for keys it already has.
 
-    This is the one place the machinery writes the protected floor file, so the
-    property that makes it safe has to be asserted rather than argued. A pull request
-    touching floor.json is still auto-rejected by the guard; this path runs after the
-    merge, in the machinery, and can only tighten. "The floor never falls without a
-    human" IS the ratchet, and these checks are what keep that true.
+    This is the one place the machinery writes the protected floor file, so the property
+    that makes it safe has to be asserted rather than argued. A pull request touching
+    floor.json is still auto-rejected by the guard; this path runs after the merge, in
+    the machinery, and can only tighten. "The floor never falls without a human" IS the
+    ratchet, and these checks are what keep that true.
+
+    THE COUNTS ARE AN ARGUMENT NOW. They used to arrive through an environment variable
+    on one merge path and through a file on the other, and the file branch shipped with
+    a mangled regex that raised at import, was swallowed by the caller, and silently
+    never moved a floor on a real merge. One function, two branches, one of them never
+    executed by a test. There is one caller and one parameter.
     """
     import json as _json
     import merge as _merge
@@ -794,14 +874,12 @@ def ratchet_raise_checks() -> None:
         floor.write_text(_json.dumps(before), encoding="utf-8")
 
         calls: list[tuple] = []
-        original_git, original_env = _merge.git, os.environ.get("FACTORY_OBSERVED_COUNTS")
+        original_git = _merge.git
         _merge.git = lambda *a: (calls.append(a), (0, ""))[1]  # type: ignore[assignment]
         try:
             # observed: one higher, one LOWER, one absent, plus a key not in the floor
-            os.environ["FACTORY_OBSERVED_COUNTS"] = _json.dumps(
-                {"UNIT_CHECKS": 70, "VITEST_PASSED": 9, "NEW_KEY": 999,
-                 "UNCALIBRATED_MAX": 99})
-            _merge.raise_floor(str(root))
+            _merge.raise_floor(str(root), {"UNIT_CHECKS": 70, "VITEST_PASSED": 9,
+                                           "NEW_KEY": 999, "UNCALIBRATED_MAX": 99})
             after = _json.loads(floor.read_text(encoding="utf-8"))
 
             check("a higher observed count RAISES the floor", after["UNIT_CHECKS"] == 70)
@@ -819,58 +897,68 @@ def ratchet_raise_checks() -> None:
             check("the raise is committed and pushed",
                   any("commit" in c for c in calls) and any("push" in c for c in calls))
 
-            # nothing to raise -> nothing written, nothing committed
             calls.clear()
-            os.environ["FACTORY_OBSERVED_COUNTS"] = _json.dumps({"UNIT_CHECKS": 70})
-            check("no raise means no commit", _merge.raise_floor(str(root)) == ""
+            check("no raise means no commit",
+                  _merge.raise_floor(str(root), {"UNIT_CHECKS": 70}) == ""
                   and not any("commit" in c for c in calls))
 
-            # THE FILE FALLBACK, which is the branch that shipped broken.
-            #
-            # Everything above exercises the env-var hand-off. The DISPATCHER merge path
-            # has no env var and reads a counts file instead, and that branch contained a
-            # regex whose character class had been mangled by tooling -- so it raised
-            # `unterminated character set` the moment it ran, was swallowed by the
-            # caller's except, and the floor silently never moved on a real merge. One
-            # function, two branches, and only one of them was ever executed by a test.
-            # A SEPARATE SANDBOX, so raising a floor here cannot disturb the
-            # assertions above and below that are about THIS root's floor.
             calls.clear()
-            os.environ.pop("FACTORY_OBSERVED_COUNTS", None)
-            os.environ["FACTORY_MERGE_TARGET"] = "gh:pr:7"
-            original_findings = config.FINDINGS_DIR
-            with tempfile.TemporaryDirectory() as td2:
-                root2 = Path(td2)
-                (root2 / ".factory" / "locks").mkdir(parents=True)
-                (root2 / ".factory" / "locks" / "floor.json").write_text(
-                    _json.dumps({"UNIT_CHECKS": 64}), encoding="utf-8")
-                try:
-                    config.FINDINGS_DIR = root2 / ".factory" / "findings"
-                    config.FINDINGS_DIR.mkdir(parents=True, exist_ok=True)
-                    (config.FINDINGS_DIR / "gh-pr-7.counts.json").write_text(
-                        _json.dumps({"UNIT_CHECKS": 88}), encoding="utf-8")
-                    raised = _merge.raise_floor(str(root2))
-                    check("the counts FILE is read when no env hand-off exists",
-                          "UNIT_CHECKS" in raised and "88" in raised,
-                          f"returned {raised!r}; without this the dispatcher merge path "
-                          f"raises nothing at all")
-                    check("and the file-fallback path committed", any("commit" in c for c in calls))
-                finally:
-                    config.FINDINGS_DIR = original_findings
-                    os.environ.pop("FACTORY_MERGE_TARGET", None)
+            check("a non-integer count changes nothing",
+                  _merge.raise_floor(str(root), {"UNIT_CHECKS": "99"}) == ""
+                  and _json.loads(floor.read_text(encoding="utf-8"))["UNIT_CHECKS"] == 70,
+                  "a string compares greater than every int in some languages and "
+                  "raises here in this one; neither is a measurement")
 
-            # a missing/garbled hand-off must be a no-op, never a rewrite
             calls.clear()
-            os.environ["FACTORY_OBSERVED_COUNTS"] = "not json"
-            check("an unreadable hand-off changes nothing",
-                  _merge.raise_floor(str(root)) == ""
-                  and _json.loads(floor.read_text(encoding="utf-8"))["UNIT_CHECKS"] == 70)
+            check("no counts at all changes nothing",
+                  _merge.raise_floor(str(root), {}) == ""
+                  and not any("commit" in c for c in calls),
+                  "a gate that produced no measurements must not be able to move a floor")
         finally:
             _merge.git = original_git  # type: ignore[assignment]
-            if original_env is None:
-                os.environ.pop("FACTORY_OBSERVED_COUNTS", None)
-            else:
-                os.environ["FACTORY_OBSERVED_COUNTS"] = original_env
+
+    # THE BOOKKEEPING MUST RAISE, NOT RETURN, when it cannot do its job. The caller
+    # records it as an effect that has not been applied and retries it next tick;
+    # returning quietly marks it done, and the floor silently never moves on a merge
+    # that already landed -- the gap the ratchet exists to close, left open with
+    # nothing red anywhere.
+    original_git = _merge.git
+    try:
+        listing = (f"worktree C:/repo{NL}branch refs/heads/{config.BASE_BRANCH}{NL}")
+
+        def fake(*a: str) -> tuple:
+            if "worktree" in a:
+                return (0, listing)
+            if "status" in a:
+                return (0, " M somefile")
+            return (0, "")
+
+        _merge.git = fake  # type: ignore[assignment]
+        try:
+            _merge.bookkeeping({"head_sha": "0" * 40}, {"counts": {}})
+            check("a dirty base checkout stops the bookkeeping loudly", False,
+                  "it returned; the caller would record the raise as done")
+        except RuntimeError as e:
+            check("a dirty base checkout stops the bookkeeping loudly",
+                  "uncommitted" in str(e), f"raised {e!r}")
+
+        def diverged(*a: str) -> tuple:
+            if "worktree" in a:
+                return (0, listing)
+            if "rev-parse" in a:
+                return (0, "treeA" if "-C" in a else "treeB")
+            return (0, "")
+
+        _merge.git = diverged  # type: ignore[assignment]
+        try:
+            _merge.bookkeeping({"head_sha": "0" * 40}, {"counts": {"UNIT": 9}})
+            check("a base that moved past the measured tree stops the raise", False,
+                  "the floor would claim coverage measured on a different tree")
+        except RuntimeError as e:
+            check("a base that moved past the measured tree stops the raise",
+                  "advanced past" in str(e), f"raised {e!r}")
+    finally:
+        _merge.git = original_git  # type: ignore[assignment]
 
 
 def uncalibrated_ceiling_checks() -> None:
@@ -925,17 +1013,21 @@ def assumption_count_checks() -> None:
     # line-counting back into the hold message passed all of them, because the hold
     # message is built inline in main() where a unit check cannot reach it. Source
     # inspection is how the rest of this machinery pins its call sites too.
-    gate_src = (Path(__file__).parent / "gate.py").read_text(encoding="utf-8")
+    sdlc_src = (Path(__file__).parent / "sdlc.py").read_text(encoding="utf-8")
     check("the hold message counts assumptions via assumption_keys",
-          "keys = assumption_keys(assumptions)" in gate_src,
-          "the gate is counting something else; line-counting reported 8 as 80")
+          "gate.assumption_keys(assumptions)" in sdlc_src,
+          "the consumer is counting something else; line-counting reported 8 as 80")
     check("the hold message does not count raw lines",
-          "assumptions.splitlines() if" not in gate_src,
+          "assumptions.splitlines()" not in sdlc_src,
           "that expression IS the bug: it counts WHY paragraphs as assumptions")
+    fixed_src = (Path(__file__).parent / "fixed_gate.py").read_text(encoding="utf-8")
     check("the uncalibrated hold compares against the ceiling",
-          "uncal_max is not None and uncal_total > uncal_max" in gate_src,
+          "uncalibrated > ceiling" in fixed_src,
           "holding whenever any margin is uncalibrated is a permanent off switch, "
           "because seven of them are uncalibrated on main by design")
+    check("and a floor file with no ceiling does not hold at all",
+          "isinstance(ceiling, int)" in fixed_src,
+          "a missing UNCALIBRATED_MAX must mean 'not measured here', never zero")
 
 
 def floor_reader_agreement_checks() -> None:
@@ -1588,6 +1680,1195 @@ def irreversible_scripts_refuse_arguments_checks() -> None:
         )
 
 
+# --- the SDLC consumer -------------------------------------------------------
+# The factory dispatches six generic workflows and owns everything they are not
+# allowed to touch: the labels, the caps, the dial, the receipts it will act on. That
+# boundary is the whole design, and every check below is about a way it can be crossed
+# without anything going red -- a receipt for a different pull request, a merge policy
+# written before the hold arrived, a repair spent on a cap that had already been
+# reached, an apply that half happened and reported success.
+
+TODAY = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+SHA_A = "a" * 40
+SHA_B = "b" * 40
+IDENTITY = {"repository": "acme/widget", "pr": 12, "head_sha": SHA_A, "base_sha": SHA_B}
+
+
+def receipt(**overrides: object) -> dict:
+    base = {
+        "schema_version": 1,
+        "repository": {"owner": "acme", "name": "widget"},
+        "pr": 12, "head_sha": SHA_A, "base_sha": SHA_B,
+        "verdict": "approve", "summary": "It does what the issue asked for.",
+        "findings": [], "clipped": False,
+        "timestamp": "2026-01-01T00:00:00Z",
+        "work_order_sha256": "w" * 64, "policy_sha256": "p" * 64,
+        "evidence_sha256": "e" * 64, "judgment_sha256": "j" * 64,
+        "isolation": "fresh_context_only",
+        "checks": [{
+            "id": "factory-gate", "identity": {**IDENTITY,
+                                               "repository": {"owner": "acme", "name": "widget"}},
+            "argv": None, "command_sha256": "c" * 64, "source": "trusted_policy",
+            "exit_code": 0, "status": "passed",
+            "stdout": "accept-private/out.txt", "stderr": "accept-private/err.txt",
+            "stdout_sha256": "o" * 64, "stderr_sha256": "r" * 64,
+            "timestamp": "2026-01-01T00:00:00Z",
+        }],
+    }
+    base.update(overrides)
+    return base
+
+
+def refuses(what: str, call, detail: str = "") -> None:
+    """The check spelling for "this must not be accepted"."""
+    try:
+        call()
+        check(what, False, detail or "it was accepted")
+    except Exception:  # noqa: BLE001
+        check(what, True)
+
+
+def receipt_identity_checks() -> None:
+    """An acceptance is evidence about ONE candidate, and about nothing else.
+
+    Every field here is what stops a valid receipt from being applied to the wrong
+    thing. A receipt for pull request 12 used on 13 approves code nobody judged, and
+    every label written afterwards is written successfully.
+    """
+    import sdlc
+
+    sdlc.validate_receipt(receipt(), IDENTITY)
+    check("a complete approval for this exact candidate is accepted", True)
+
+    refuses("a receipt for another pull request is refused",
+            lambda: sdlc.validate_receipt(receipt(pr=13), IDENTITY))
+    refuses("a receipt for another head is refused",
+            lambda: sdlc.validate_receipt(receipt(head_sha="c" * 40), IDENTITY))
+    refuses("a receipt for another BASE is refused",
+            lambda: sdlc.validate_receipt(receipt(base_sha="c" * 40), IDENTITY),
+            "the base is half the identity: the same head merged onto a different base "
+            "is a different change")
+    refuses("a receipt for another repository is refused",
+            lambda: sdlc.validate_receipt(
+                receipt(repository={"owner": "acme", "name": "gadget"}), IDENTITY))
+    refuses("a repository that is not an owner/name object is refused",
+            lambda: sdlc.validate_receipt(receipt(repository="acme/widget"), IDENTITY))
+    refuses("an unknown schema version is refused",
+            lambda: sdlc.validate_receipt(receipt(schema_version=2), IDENTITY),
+            "a version this consumer has not been written against may mean anything")
+    refuses("an abbreviated commit id is refused",
+            lambda: sdlc.validate_receipt(receipt(head_sha="a" * 12), IDENTITY))
+    refuses("an uppercase commit id is refused",
+            lambda: sdlc.validate_receipt(receipt(head_sha="A" * 40), IDENTITY),
+            "the contract says lowercase, and a comparison that normalises is a "
+            "comparison that accepts two spellings of one field")
+    refuses("an unknown verdict is refused",
+            lambda: sdlc.validate_receipt(receipt(verdict="looks-fine"), IDENTITY))
+    refuses("an approval with no execution evidence is refused",
+            lambda: sdlc.validate_receipt(receipt(checks=[]), IDENTITY),
+            "no checks and no findings is what a judge that never ran produces")
+    refuses("an approval carrying findings is refused",
+            lambda: sdlc.validate_receipt(
+                receipt(findings=[{"code": "x", "summary": "y", "evidence": []}]), IDENTITY))
+    refuses("an approval whose evidence was clipped is refused",
+            lambda: sdlc.validate_receipt(receipt(clipped=True), IDENTITY),
+            "material evidence over the packet budget means the judge did not see it")
+    refuses("an approval with a check that did not pass is refused",
+            lambda: sdlc.validate_receipt(
+                receipt(checks=[{**receipt()["checks"][0], "status": "failed"}]), IDENTITY))
+    refuses("an approval with a check that exited non-zero is refused",
+            lambda: sdlc.validate_receipt(
+                receipt(checks=[{**receipt()["checks"][0], "exit_code": 1}]), IDENTITY),
+            "a passed LABEL is not evidence; the exit code is")
+    refuses("an approval whose check is about another candidate is refused",
+            lambda: sdlc.validate_receipt(
+                receipt(checks=[{**receipt()["checks"][0],
+                                 "identity": {**receipt()["checks"][0]["identity"], "pr": 13}}]),
+                IDENTITY),
+            "the evidence would belong to a different pull request than the receipt")
+    refuses("an unreadable timestamp is refused",
+            lambda: sdlc.validate_receipt(receipt(timestamp="last tuesday"), IDENTITY))
+    refuses("a receipt with no summary is refused",
+            lambda: sdlc.validate_receipt(receipt(summary=""), IDENTITY))
+
+    # A NON-APPROVAL IS STILL CHECKED FOR IDENTITY, and only for identity. Repair
+    # findings have to be about this pull request; requiring passing checks of them
+    # would refuse every receipt that exists to say something failed.
+    sdlc.validate_receipt(receipt(verdict="request_changes", checks=[],
+                                  findings=[{"code": "x", "summary": "y", "evidence": []}]),
+                          IDENTITY)
+    check("a request_changes receipt does not need passing checks", True)
+    refuses("but it still has to be about this candidate",
+            lambda: sdlc.validate_receipt(receipt(verdict="request_changes", pr=13), IDENTITY))
+
+
+class Recorder:
+    """A stand-in for everything that talks to GitHub, that remembers what it was told."""
+
+    def __init__(self, state_of: dict, labels: dict | None = None) -> None:
+        self.state_of = state_of
+        self.labels = labels or {}
+        self.transitions: list[tuple[str, str]] = []
+        self.comments: list[tuple[str, str]] = []
+        self.priorities: list[tuple[str, str]] = []
+        self.attempts = 0
+        self.notified: list[str] = []
+
+    def fetch(self, target: str) -> dict:
+        return {"_state": self.state_of.get(target, "open"),
+                "_attempts": self.labels.get(target, 0),
+                "_labels": [], "_kind": target.split(":")[1], "_target": target,
+                "number": int(target.split(":")[-1]), "state": "OPEN",
+                "url": f"https://github.com/acme/widget/issues/{target.split(':')[-1]}",
+                "author": {"login": "someone"}, "createdAt": "2026-01-01T00:00:00Z"}
+
+    def set_state(self, target: str, value: str, force: bool = False) -> None:
+        self.transitions.append((target, value))
+        self.state_of[target] = value
+
+    def set_priority(self, target: str, priority: str) -> None:
+        self.priorities.append((target, priority))
+
+    def comment(self, target: str, body: str) -> None:
+        self.comments.append((target, body))
+
+    def bump_attempt(self, target: str) -> int:
+        self.attempts += 1
+        return self.attempts
+
+    def gh(self, *args: str, **kw: object) -> str:
+        if args[:2] in (("pr", "view"), ("issue", "view")):
+            return json.dumps({"comments": []})
+        return ""
+
+
+def with_consumer(tmp: Path, recorder: "Recorder", body) -> None:
+    """Run `body` with the consumer's world replaced by temp files and a recorder.
+
+    NO NETWORK AND NO ENGINE. Everything below exercises the real `sdlc` code; what is
+    replaced is the two edges it cannot reach offline -- GitHub and the workflow engine.
+    The state machine, the receipt validation, the effect journal and every refusal in
+    between are the shipped ones.
+    """
+    import notify
+    import runtime
+    import sdlc
+
+    saved = {
+        "root": runtime.root, "fetch": state.fetch, "gh": state.gh,
+        "set_state": state.set_state, "set_priority": state.set_priority,
+        "comment": state.comment, "bump": state.bump_attempt,
+        "linked": state.linked_issue, "send": notify.send,
+        "identity": sdlc.identity, "repository": sdlc.repository,
+        "assumptions": config.ASSUMPTIONS_DIR, "needs_human": config.NEEDS_HUMAN,
+        "ledger": ledger_module.LEDGER, "stop": state.stop_requested,
+    }
+    runtime.root = lambda: tmp
+    state.fetch = recorder.fetch
+    state.gh = recorder.gh
+    state.set_state = recorder.set_state
+    state.set_priority = recorder.set_priority
+    state.comment = recorder.comment
+    state.bump_attempt = recorder.bump_attempt
+    state.stop_requested = lambda: (False, "clear")
+    notify.send = lambda t, m: recorder.notified.append(m) or "notified"
+    sdlc.identity = lambda target, repo: {**IDENTITY, "pr": int(target.split(":")[-1])}
+    sdlc.repository = lambda: "acme/widget"
+    config.ASSUMPTIONS_DIR = tmp / "assumptions"
+    config.NEEDS_HUMAN = tmp / "needs-human.md"
+    ledger_module.LEDGER = tmp / "ledger.jsonl"
+    try:
+        body()
+    finally:
+        runtime.root = saved["root"]
+        state.fetch = saved["fetch"]
+        state.gh = saved["gh"]
+        state.set_state = saved["set_state"]
+        state.set_priority = saved["set_priority"]
+        state.comment = saved["comment"]
+        state.bump_attempt = saved["bump"]
+        state.linked_issue = saved["linked"]
+        state.stop_requested = saved["stop"]
+        notify.send = saved["send"]
+        sdlc.identity = saved["identity"]
+        sdlc.repository = saved["repository"]
+        config.ASSUMPTIONS_DIR = saved["assumptions"]
+        config.NEEDS_HUMAN = saved["needs_human"]
+        ledger_module.LEDGER = saved["ledger"]
+
+
+def journal_for(tmp: Path, **fields: object) -> tuple[Path, dict]:
+    import runtime
+    record = {"action": "validate", "target": "gh:pr:12", "repository": "acme/widget",
+              "manual": False, "status": "running", "applied": [], "run_id": "run-1",
+              "identity": dict(IDENTITY), "base_sha": SHA_B,
+              "lock": str(tmp / "runs" / "one" / "lock")}
+    record.update(fields)
+    journal = tmp / "runs" / record.get("run_id", "one") / "record.json"
+    runtime.write(journal, record)
+    return journal, record
+
+
+def state_adapter_checks(tmp: Path) -> None:
+    """What each workflow returns, turned into this factory's state -- and only that."""
+    import runtime
+    import sdlc
+
+    # --- admission ----------------------------------------------------------
+    rec = Recorder({"gh:issue:5": "untriaged"})
+
+    def admission() -> None:
+        journal, record = journal_for(tmp, action="triage", target="gh:issue:5",
+                                      run_id="t1", identity=None)
+        sdlc.apply(journal, record, {"disposition": "accepted", "priority": "high",
+                                     "route": "deliver", "summary": "In scope.",
+                                     "assumptions": ["RATE=5 | WHY: measured"],
+                                     "rules_cited": ["MISSION 2"]})
+        check("an accepted admission labels the issue accepted",
+              ("gh:issue:5", "accepted") in rec.transitions)
+        check("and writes the priority it decided",
+              ("gh:issue:5", "high") in rec.priorities)
+        check("and records the assumptions where the merge hold will read them",
+              (config.ASSUMPTIONS_DIR / "gh-issue-5.txt").read_text(encoding="utf-8").strip()
+              == "RATE=5 | WHY: measured",
+              "an assumption the admission made and nothing recorded is a merge that "
+              "never gets held")
+        check("and comments once, keyed on the run",
+              len(rec.comments) == 1 and "factory-run:t1" in rec.comments[0][1])
+
+        journal, record = journal_for(tmp, action="triage", target="gh:issue:6",
+                                      run_id="t2", identity=None)
+        refuses("a disposition the transition table has never heard of is refused",
+                lambda: sdlc.apply(journal, record,
+                                   {"disposition": "probably-fine", "priority": "low",
+                                    "summary": "x"}),
+                "an unknown disposition would be written as a label nothing reads")
+
+    with_consumer(tmp, rec, admission)
+
+    # --- delivery -----------------------------------------------------------
+    rec = Recorder({"gh:issue:5": "in-progress"})
+
+    def delivery() -> None:
+        pr = {"number": 12, "url": "https://github.com/acme/widget/pull/12",
+              "head": "factory/x", "base": config.BASE_BRANCH, "head_sha": SHA_A,
+              "base_sha": SHA_B, "repository": "acme/widget", "is_draft": False}
+        journal, record = journal_for(tmp, action="implement", target="gh:issue:5",
+                                      run_id="i1", identity=None)
+        sdlc.apply(journal, record, {"outcome": "delivered", "summary": "Opened.",
+                                     "pr": pr, "reports": []})
+        check("a delivered pull request arrives awaiting validation",
+              ("gh:pr:12", "open") in rec.transitions)
+        check("the issue linkage is recorded on disk, not left to prose",
+              runtime.read(tmp / "links" / "gh-pr-12.json")["issue"] == "gh:issue:5",
+              "`Closes #N` is text an agent wrote, and one run put it inside backticks "
+              "so GitHub ignored it entirely")
+
+        journal, record = journal_for(tmp, action="implement", target="gh:issue:7",
+                                      run_id="i2", identity=None)
+        refuses("a pull request in another repository is refused",
+                lambda: sdlc.apply(journal, record,
+                                   {"outcome": "delivered", "summary": "x",
+                                    "pr": {**pr, "repository": "acme/other"}, "reports": []}))
+        journal, record = journal_for(tmp, action="implement", target="gh:issue:8",
+                                      run_id="i3", identity=None)
+        refuses("a pull request against another base is refused",
+                lambda: sdlc.apply(journal, record,
+                                   {"outcome": "delivered", "summary": "x",
+                                    "pr": {**pr, "base": "some-other-branch"}, "reports": []}),
+                "it would be validated against a base nobody chose")
+        journal, record = journal_for(tmp, action="implement", target="gh:issue:9",
+                                      run_id="i4", identity=None)
+        refuses("a candidate that moved between delivery and application is refused",
+                lambda: sdlc.apply(journal, record,
+                                   {"outcome": "delivered", "summary": "x",
+                                    "pr": {**pr, "head_sha": "c" * 40}, "reports": []}),
+                "the head we would queue for validation is not the head that was built")
+
+        journal, record = journal_for(tmp, action="fix", target="gh:pr:12", run_id="f1")
+        refuses("a repair that opened a REPLACEMENT pull request is refused",
+                lambda: sdlc.apply(journal, record,
+                                   {"outcome": "delivered", "summary": "x",
+                                    "pr": {**pr, "number": 13}, "reports": []}),
+                "the attempt cap, the findings and the acceptance are all about the "
+                "original; a replacement escapes every one of them")
+
+        rec.transitions.clear()
+        journal, record = journal_for(tmp, action="implement", target="gh:issue:10",
+                                      run_id="i5", identity=None)
+        sdlc.apply(journal, record, {"outcome": "blocked", "summary": "Could not.",
+                                     "pr": None, "reports": []})
+        check("a delivery that did not deliver escalates the issue",
+              ("gh:issue:10", "needs-human") in rec.transitions)
+        check("and tells somebody", rec.notified and "Could not." in rec.notified[-1],
+              "an escalation nobody is told about is a file nobody opens")
+
+    with_consumer(tmp, rec, delivery)
+
+    # --- acceptance ---------------------------------------------------------
+    def acceptance(state_before: str, verdict: str, measured: dict,
+                   assumptions: str = "") -> "Recorder":
+        rec = Recorder({"gh:pr:12": state_before, "gh:issue:5": "in-progress"})
+
+        def run() -> None:
+            state.linked_issue = lambda t: "gh:issue:5"
+            journal, record = journal_for(tmp, run_id="v" + verdict[:3] + state_before[:2])
+            runtime.write(journal.parent / "measurements.json", measured)
+            # NO ASSUMPTIONS UNLESS THIS CASE ASKS FOR THEM. They are read from a
+            # directory shared with the admission checks above, and a leaked file turns
+            # every "clean approval" case into a hold -- which is the behaviour under
+            # test, arriving from the fixture rather than from the code.
+            shutil_rm(config.ASSUMPTIONS_DIR)
+            if assumptions:
+                path = config.ASSUMPTIONS_DIR / "gh-pr-12.txt"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(assumptions, encoding="utf-8")
+            sdlc.apply(journal, record, receipt(
+                verdict=verdict,
+                findings=[] if verdict == "approve" else [{"code": "c", "summary": "s",
+                                                           "evidence": []}],
+                checks=receipt()["checks"] if verdict == "approve" else []))
+        with_consumer(tmp, rec, run)
+        return rec
+
+    clean = {"errors": [], "holds": [], "counts": {"UNIT": 9}}
+    rec = acceptance("validating", "approve", clean)
+    check("a clean approval passes the pull request",
+          ("gh:pr:12", "passed") in rec.transitions)
+
+    rec = acceptance("validating", "approve", {"errors": [], "holds": ["ratchet slack"],
+                                               "counts": {}})
+    check("an approval with a gate hold is HELD, not passed",
+          ("gh:pr:12", "held") in rec.transitions,
+          "passed is what a mergeable pull request is called; the next tick would merge it")
+    check("and the hold says how to clear it",
+          any("factory accept" in body for _, body in rec.comments),
+          "a hold with no way out is a stall that looks like a factory with nothing to do")
+
+    rec = acceptance("validating", "approve", clean, assumptions="RATE=5 | WHY: measured")
+    check("an approval with recorded assumptions is HELD",
+          ("gh:pr:12", "held") in rec.transitions,
+          "nobody read the diff; an assumption is the one thing a person still has to agree to")
+    check("and the hold counts assumptions rather than lines",
+          any("1 recorded assumption(s)" in body for _, body in rec.comments),
+          "line-counting reported 8 assumptions as 80, which made a reviewable hold look "
+          "like an unreviewable wall")
+
+    rec = acceptance("validating", "request_changes", {"errors": ["red"], "holds": [],
+                                                       "counts": {}})
+    check("request_changes sends the pull request round the repair loop",
+          ("gh:pr:12", "failed") in rec.transitions)
+    check("and does not wake anybody", not rec.notified,
+          "a failing check is what the repair loop is for; escalating it wakes a person "
+          "for the ordinary case")
+
+    rec = acceptance("validating", "reject", {"errors": ["red"], "holds": [], "counts": {}})
+    check("a rejection parks the pull request AND its issue",
+          ("gh:pr:12", "rejected") in rec.transitions
+          and ("gh:issue:5", "needs-human") in rec.transitions,
+          "an issue left in-progress behind a rejected pull request is an escalation "
+          "nothing can see")
+
+    rec = acceptance("validating", "inconclusive", {"errors": [], "holds": [], "counts": {}})
+    check("an inconclusive acceptance reaches a person",
+          ("gh:pr:12", "needs-human") in rec.transitions and bool(rec.notified),
+          "'we could not tell' is not 'it failed' and it is certainly not 'it passed'")
+
+    # AN APPROVAL WITHOUT THE FACTORY'S OWN MEASUREMENTS IS NOT AN APPROVAL. The judge
+    # reads streams; the ratchet, the markers and the mutation score are read here, and
+    # a receipt that approves while those are red means the fixed gate never ran.
+    rec = Recorder({"gh:pr:12": "validating"})
+
+    def missing_measurements() -> None:
+        state.linked_issue = lambda t: None
+        journal, record = journal_for(tmp, run_id="vnomeasure")
+        refuses("an approval with no factory measurements is refused",
+                lambda: sdlc.apply(journal, record, receipt()),
+                "the fixed gate did not run, so nothing checked the markers or the ratchet")
+        journal, record = journal_for(tmp, run_id="vredmeasure")
+        runtime.write(journal.parent / "measurements.json",
+                      {"errors": ["marker absent"], "holds": [], "counts": {}})
+        refuses("an approval contradicted by the factory's own gate is refused",
+                lambda: sdlc.apply(journal, record, receipt()),
+                "when the raw measurements and the judge disagree, the measurements win")
+    with_consumer(tmp, rec, missing_measurements)
+
+    # --- merge --------------------------------------------------------------
+    def merge_result(**over: object) -> dict:
+        base = {"status": "merged", "repository": "acme/widget", "pr": 12,
+                "head_sha": SHA_A, "base_sha": SHA_B, "merge_commit": "d" * 40,
+                "summary": "Merged."}
+        base.update(over)
+        return base
+
+    rec = Recorder({"gh:pr:12": "passed", "gh:issue:5": "in-progress"})
+
+    def merged() -> None:
+        import merge as merge_module
+        state.linked_issue = lambda t: "gh:issue:5"
+        calls: list = []
+        original = merge_module.bookkeeping
+        merge_module.bookkeeping = lambda result, m: calls.append(result)
+        try:
+            journal, record = journal_for(tmp, action="merge", run_id="m1",
+                                          measurements={"counts": {}})
+            sdlc.apply(journal, record, merge_result())
+            check("a merged pull request is labelled merged and its issue done",
+                  ("gh:pr:12", "merged") in rec.transitions
+                  and ("gh:issue:5", "done") in rec.transitions)
+            check("and the ratchet bookkeeping runs after the remote merge", len(calls) == 1)
+            check("the remote merge commit is recorded before any local bookkeeping",
+                  runtime.read(journal)["remote_merge"] == "d" * 40,
+                  "a ratchet commit that fails afterwards must be a retry, never a lost merge")
+            check("a merged pull request is not commented on again",
+                  not any(t == "gh:pr:12" for t, _ in rec.comments),
+                  "merging it IS the answer")
+
+            journal, record = journal_for(tmp, action="merge", run_id="m2",
+                                          measurements={"counts": {}})
+            refuses("a merge reported for another candidate is refused",
+                    lambda: sdlc.apply(journal, record, merge_result(head_sha="c" * 40)),
+                    "that is somebody else's merge, or ours onto something we did not accept")
+        finally:
+            merge_module.bookkeeping = original
+    with_consumer(tmp, rec, merged)
+
+    rec = Recorder({"gh:pr:12": "passed"})
+
+    def held_merge() -> None:
+        state.linked_issue = lambda t: None
+        journal, record = journal_for(tmp, action="merge", run_id="m3",
+                                      measurements={"counts": {}})
+        sdlc.apply(journal, record, merge_result(status="held", merge_commit="",
+                                                 summary="Checks have not reported."))
+        check("a held merge changes nothing and says nothing", not rec.transitions
+              and not rec.comments,
+              "nothing is wrong and nothing happened; the next tick asks again, and a "
+              "comment per tick is how a channel gets muted")
+    with_consumer(tmp, rec, held_merge)
+
+    rec = Recorder({"gh:pr:12": "passed"})
+
+    def stale_merge() -> None:
+        state.linked_issue = lambda t: None
+        journal, record = journal_for(tmp, action="merge", run_id="m4",
+                                      measurements={"counts": {}})
+        sdlc.apply(journal, record, merge_result(status="revalidation_required",
+                                                 merge_commit="",
+                                                 summary="The base moved."))
+        check("a stale branch is requeued for validation, not escalated",
+              ("gh:pr:12", "open") in rec.transitions and not rec.notified,
+              "somebody pushed to the base branch, which on any repository with velocity "
+              "is Tuesday; waking a person for it is how the channel gets muted")
+    with_consumer(tmp, rec, stale_merge)
+
+    rec = Recorder({"gh:pr:12": "passed"})
+
+    def already_merged_differently() -> None:
+        state.linked_issue = lambda t: None
+        journal, record = journal_for(tmp, action="merge", run_id="m5",
+                                      measurements={"counts": {}})
+        sdlc.apply(journal, record, merge_result(status="revalidation_required",
+                                                 merge_commit="e" * 40,
+                                                 summary="Merged with other parents."))
+        check("a pull request already merged with OTHER parents reaches a person",
+              ("gh:pr:12", "needs-human") in rec.transitions,
+              "requeueing it for validation would ask the factory to judge something "
+              "that has already landed")
+    with_consumer(tmp, rec, already_merged_differently)
+
+    rec = Recorder({"gh:pr:12": "passed"})
+
+    def failed_merge() -> None:
+        state.linked_issue = lambda t: None
+        journal, record = journal_for(tmp, action="merge", run_id="m6",
+                                      measurements={"counts": {}})
+        sdlc.apply(journal, record, merge_result(status="failed", repository="", pr=0,
+                                                 head_sha="", base_sha="",
+                                                 merge_commit="",
+                                                 summary="Unknown remote outcome."))
+        check("a failed merge with unknown identity reaches a person",
+              ("gh:pr:12", "needs-human") in rec.transitions and bool(rec.notified),
+              "after a mutation attempt, a failed readback is an UNKNOWN remote outcome; "
+              "retrying it blind is how a pull request merges twice")
+    with_consumer(tmp, rec, failed_merge)
+
+    # --- regression ---------------------------------------------------------
+    rec = Recorder({})
+
+    def regression() -> None:
+        journal, record = journal_for(tmp, action="regress", target="", run_id="r1",
+                                      identity=None)
+        refuses("a regression that tested a different revision is refused",
+                lambda: sdlc.apply(journal, record,
+                                   {"status": "clean", "summary": "ok",
+                                    "revision": "c" * 40, "base": config.BASE_BRANCH}),
+                "a clean report about a commit nobody asked about proves nothing about "
+                "the one that merged")
+        journal, record = journal_for(tmp, action="regress", target="", run_id="r2",
+                                      identity=None)
+        sdlc.apply(journal, record, {"status": "inconclusive", "summary": "Could not run.",
+                                     "revision": SHA_B, "base": config.BASE_BRANCH})
+        check("a regression that is not clean reaches a person", bool(rec.notified))
+        check("and there is no target to comment on", not rec.comments)
+    with_consumer(tmp, rec, regression)
+
+
+def apply_recovery_checks(tmp: Path) -> None:
+    """A result is applied effect by effect, and a retry does exactly what did not land.
+
+    THE FAILURE THIS EXISTS FOR is a machine that dies between two of the four or five
+    writes one verdict produces. Re-applying from the top posts a second comment and
+    re-runs a ratchet commit; not re-applying at all loses the half that never happened.
+    """
+    import runtime
+    import sdlc
+
+    rec = Recorder({"gh:pr:12": "validating", "gh:issue:5": "in-progress"})
+
+    def once() -> None:
+        state.linked_issue = lambda t: None
+        journal, record = journal_for(tmp, run_id="rec1")
+        runtime.write(journal.parent / "measurements.json",
+                      {"errors": [], "holds": [], "counts": {}})
+        sdlc.apply(journal, record, receipt())
+        first = (len(rec.transitions), len(rec.comments))
+        check("applying once writes the state and the comment", first == (1, 1))
+        check("and records what it did", set(runtime.read(journal)["applied"]) ==
+              {"state:gh:pr:12:passed", "comment"},
+              "an effect nothing recorded is an effect a retry performs twice")
+
+        sdlc.apply(journal, runtime.read(journal), receipt())
+        check("applying the same result again does nothing",
+              (len(rec.transitions), len(rec.comments)) == first,
+              "a retry that re-posts is a pull request with the same verdict on it twice")
+    with_consumer(tmp, rec, once)
+
+    # A HALF-APPLIED RESULT KEEPS WHAT LANDED. The comment fails; the label already
+    # went. A retry must not write the label again and must try the comment again.
+    rec = Recorder({"gh:pr:12": "validating"})
+
+    def half() -> None:
+        state.linked_issue = lambda t: None
+        journal, record = journal_for(tmp, run_id="rec2")
+        runtime.write(journal.parent / "measurements.json",
+                      {"errors": [], "holds": [], "counts": {}})
+
+        def explode(target: str, body: str) -> None:
+            raise RuntimeError("GitHub said no")
+
+        state.comment = explode
+        try:
+            sdlc.apply(journal, record, receipt())
+            check("a failing effect stops the apply", False, "it swallowed the failure")
+        except RuntimeError:
+            check("a failing effect stops the apply", True)
+        recorded = runtime.read(journal)["applied"]
+        check("the effect that landed is remembered",
+              recorded == ["state:gh:pr:12:passed"],
+              "a retry would otherwise re-write the label, and on a state machine that "
+              "refuses repeats that turns a recoverable failure into a stuck one")
+        state.comment = rec.comment
+        sdlc.apply(journal, runtime.read(journal), receipt())
+        check("and the retry performs only what did not land",
+              len(rec.transitions) == 1 and len(rec.comments) == 1)
+    with_consumer(tmp, rec, half)
+
+
+def dispatch_refusal_checks(tmp: Path) -> None:
+    """What must be refused BEFORE anything is spent or any state is moved."""
+    import runtime
+    import sdlc
+
+    rec = Recorder({"gh:pr:12": "failed", "gh:issue:5": "accepted"})
+
+    def refusals() -> None:
+        state.linked_issue = lambda t: "gh:issue:5"
+        saved = {"git": sdlc.git, "snapshot": sdlc.snapshot, "live": sdlc.live}
+        sdlc.git = lambda *a: SHA_B
+        sdlc.snapshot = lambda directory, base: {
+            "require_isolation": False, "autonomy": 3, "floor": {},
+            "command": "python harness/ci.py", "markers": [], "floor_path": "f.json",
+            "slack_caps_autonomy": False, "accept_races": False, "required_checks": []}
+        sdlc.live = lambda: {"autonomy": 3, "accept_races": False, "required_checks": []}
+        directory = tmp / "prep"
+        try:
+            # --- the repair path, and the two counters that bound it ---------
+            (tmp / "work-orders").mkdir(parents=True, exist_ok=True)
+            (tmp / "work-orders" / "gh-issue-5.txt").write_text("Build it.", encoding="utf-8")
+            runtime.write(tmp / "acceptance" / "gh-pr-12.json",
+                          {"receipt": str(tmp / "r.json"), "run_id": "v1",
+                           "measurements": {}})
+            runtime.write(tmp / "r.json",
+                          receipt(verdict="request_changes", checks=[],
+                                  findings=[{"code": "c", "summary": "s", "evidence": []}]))
+
+            shutil_rm(directory)
+            directory.mkdir(parents=True)
+            sdlc.prepare("fix", "gh:pr:12", directory, False)
+            check("a failed pull request under the cap may be repaired", True)
+
+            rec.labels["gh:pr:12"] = config.MAX_FIX_ATTEMPTS
+            shutil_rm(directory)
+            directory.mkdir(parents=True)
+            refuses("a pull request at the attempt cap is refused",
+                    lambda: sdlc.prepare("fix", "gh:pr:12", directory, False),
+                    "FACTORY_RULES 8: the cap is what stops a repair loop from running "
+                    "forever on something it cannot fix")
+            rec.labels["gh:pr:12"] = 0
+
+            rec.state_of["gh:pr:12"] = "held"
+            shutil_rm(directory)
+            directory.mkdir(parents=True)
+            refuses("a pull request that is not failed has nothing to repair",
+                    lambda: sdlc.prepare("fix", "gh:pr:12", directory, False))
+            rec.state_of["gh:pr:12"] = "failed"
+
+            runtime.write(tmp / "r.json", receipt())
+            shutil_rm(directory)
+            directory.mkdir(parents=True)
+            refuses("a cold repair with no request_changes findings is refused",
+                    lambda: sdlc.prepare("fix", "gh:pr:12", directory, False),
+                    "the repair would re-derive the findings from the diff and spend an "
+                    "attempt on an objection nobody made")
+
+            # --- strict isolation fails closed --------------------------------
+            sdlc.snapshot = lambda directory, base: {
+                "require_isolation": True, "autonomy": 3, "floor": {},
+                "command": "x", "markers": [], "floor_path": "f.json",
+                "slack_caps_autonomy": False, "accept_races": False, "required_checks": []}
+            shutil_rm(directory)
+            directory.mkdir(parents=True)
+            refuses("strict isolation with nothing attesting it refuses to deliver",
+                    lambda: sdlc.prepare("implement", "gh:issue:5", directory, False),
+                    "no provider this factory dispatches to enforces an execution "
+                    "boundary; running anyway would deliver without the thing that was "
+                    "asked for and say nothing")
+        finally:
+            sdlc.git, sdlc.snapshot, sdlc.live = saved["git"], saved["snapshot"], saved["live"]
+    with_consumer(tmp, rec, refusals)
+
+
+def shutil_rm(path: Path) -> None:
+    import shutil as _shutil
+    if path.exists():
+        _shutil.rmtree(path)
+
+
+def stop_and_dial_checks(tmp: Path) -> None:
+    """The STOP button and the dial, asked again at the moment of spending.
+
+    Preparation reads GitHub and git and can take a minute. A STOP raised during that
+    minute has to land, or the button only works while nothing is happening -- which is
+    exactly when nobody needs it.
+    """
+    import sdlc
+
+    saved_stop, saved_live = state.stop_requested, sdlc.live
+    try:
+        sdlc.live = lambda: {"autonomy": 2, "accept_races": False, "required_checks": []}
+        state.stop_requested = lambda: (False, "clear")
+        check("the dial gates an automatic dispatch",
+              sdlc.authorized("validate", False) and not sdlc.authorized("merge", False),
+              "level 2 validates and does not merge; that IS the dial")
+        check("a person may run a step the dial has not reached",
+              sdlc.authorized("validate", True) and sdlc.authorized("triage", True),
+              "`factory run` is somebody asking for one unit of work by hand")
+        check("but not a merge",
+              not sdlc.authorized("merge", True),
+              "a merge's authority comes from an acceptance receipt, never from whoever "
+              "typed the command")
+
+        state.stop_requested = lambda: (True, "the STOP file exists")
+        check("STOP refuses everything, including by hand",
+              not any(sdlc.authorized(a, m) for a in sdlc.LEVELS for m in (True, False)),
+              "one brake, one place to look")
+    finally:
+        state.stop_requested, sdlc.live = saved_stop, saved_live
+
+    src = (Path(__file__).resolve().parent / "sdlc.py").read_text(encoding="utf-8")
+    body = src[src.index("def launch("):src.index("def artifact_root(")]
+    check("the dispatch re-asks after preparation",
+          body.count("authorized(action, manual)") >= 2,
+          "a STOP raised while the factory was reading GitHub would otherwise be "
+          "checked only against the state before it")
+    check("and the re-ask is the last thing before the engine is called",
+          body.index("changed during preparation") < body.index("response = engine(argv)"))
+
+
+def merge_policy_checks(tmp: Path) -> None:
+    """The merge authorization is rewritten immediately before every read of it."""
+    import runtime
+    import sdlc
+
+    def policy_for(pr_state: str, dial: int, assumptions: str = "") -> dict:
+        rec = Recorder({"gh:pr:12": pr_state})
+        out: dict = {}
+
+        def run() -> None:
+            state.linked_issue = lambda t: None
+            saved = sdlc.live
+            sdlc.live = lambda: {"autonomy": dial, "accept_races": False,
+                                 "required_checks": ["ci"]}
+            try:
+                if assumptions:
+                    path = config.ASSUMPTIONS_DIR / "gh-pr-12.txt"
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(assumptions, encoding="utf-8")
+                directory = tmp / ("policy-" + pr_state + str(dial) + str(bool(assumptions)))
+                directory.mkdir(parents=True, exist_ok=True)
+                out.update(sdlc.merge_policy(
+                    {"target": "gh:pr:12", "repository": "acme/widget"}, directory))
+                out["_path"] = str(directory / "policy.json")
+            finally:
+                sdlc.live = saved
+        with_consumer(tmp, rec, run)
+        return out
+
+    check("a passed pull request at level 3 is authorized",
+          policy_for("passed", 3)["authorized"] is True)
+    check("the same pull request at level 2 is not",
+          policy_for("passed", 2)["authorized"] is False,
+          "the dial is the operator's, and archon-merge rereads this file in the "
+          "instant before it mutates")
+    check("a HELD pull request is not authorized",
+          policy_for("held", 3)["authorized"] is False,
+          "the hold is the second line of defence, and this is where it holds")
+    check("a pull request with recorded assumptions is not authorized",
+          policy_for("passed", 3, "RATE=5 | WHY: measured")["authorized"] is False,
+          "somebody has to agree to an assumption before code nobody read merges on it")
+    policy = policy_for("passed", 3)
+    check("the policy names the stop file the merge must reread",
+          policy["stop_file"] == str(config.STOP_FILE),
+          "a stop button the merge cannot see is a stop button you do not have")
+    check("and the checks the operator requires", policy["required_checks"] == ["ci"])
+    check("and never asks for the races to be accepted by default",
+          policy["accept_races"] is False,
+          "accepting them is an explicit statement about branch protection, and turning "
+          "the dial up is not that statement")
+
+    # REVOKED FIRST. A crash between the two writes must leave a denial.
+    rec = Recorder({"gh:pr:12": "passed"})
+
+    def revocation() -> None:
+        state.linked_issue = lambda t: None
+        directory = tmp / "revoke"
+        directory.mkdir(parents=True, exist_ok=True)
+        runtime.write(directory / "policy.json", {"authorized": True})
+        saved = sdlc.live
+        sdlc.live = lambda: {"autonomy": 3, "accept_races": False, "required_checks": []}
+        original = runtime.write
+        seen: list = []
+
+        def spy(path: Path, value: object) -> None:
+            if path.name == "policy.json":
+                seen.append(dict(value))  # type: ignore[arg-type]
+            original(path, value)
+
+        runtime.write = spy
+        try:
+            sdlc.merge_policy({"target": "gh:pr:12", "repository": "acme/widget"}, directory)
+        finally:
+            runtime.write = original
+            sdlc.live = saved
+        check("the old authorization is revoked before the new one is written",
+              len(seen) == 2 and seen[0]["authorized"] is False,
+              "a crash between the two must leave a denial, not the last yes")
+    with_consumer(tmp, rec, revocation)
+
+
+def artifact_binding_checks(tmp: Path) -> None:
+    """A result is read out of THE run that produced it, and out of nowhere else.
+
+    Two validations of two pull requests write `acceptance.json` into two artifact
+    directories. A consumer that reaches for the newest one applies the second run's
+    verdict to the first run's target -- and every label it writes afterwards is
+    written successfully.
+    """
+    import runtime
+    import sdlc
+
+    home = tmp / "home"
+    root = home / "artifacts" / "runs" / "run-1"
+    root.mkdir(parents=True)
+    (root / "acceptance.json").write_text("{}", encoding="utf-8")
+
+    resolved = sdlc.artifact_root({"id": "run-1", "output_root": str(home)}, "run-1")
+    check("the artifacts of a run are found under its own persisted output root",
+          resolved == root.resolve())
+    refuses("a reply about a DIFFERENT run is refused",
+            lambda: sdlc.artifact_root({"id": "run-2", "output_root": str(home)}, "run-1"),
+            "that is somebody else's result, arriving with a valid shape")
+    refuses("a run that persisted no output root is refused",
+            lambda: sdlc.artifact_root({"id": "run-1", "output_root": None}, "run-1"),
+            "guessing where it wrote is how a consumer reads another run's directory")
+
+    check("an artifact inside the run resolves",
+          sdlc.artifact(root, "acceptance.json").name == "acceptance.json")
+    refuses("an artifact path that climbs out of the run is refused",
+            lambda: sdlc.artifact(root, "../../secrets.json"),
+            "the receipt names its own stream files, and a receipt is a document the "
+            "run under judgement had a hand in producing")
+
+    receipt_with = receipt(evidence_sha256=hashlib_sha256(b"packet"),
+                           checks=[{**receipt()["checks"][0],
+                                    "stdout": "out.txt", "stderr": "err.txt",
+                                    "stdout_sha256": hashlib_sha256(b"hello"),
+                                    "stderr_sha256": hashlib_sha256(b"")}])
+    (root / "out.txt").write_bytes(b"hello")
+    (root / "err.txt").write_bytes(b"")
+    (root / "accept-private").mkdir()
+    (root / "accept-private" / "evidence.json").write_bytes(b"packet")
+    sdlc.verify_evidence(receipt_with, root)
+    check("evidence that still matches its digests is accepted", True)
+
+    (root / "out.txt").write_bytes(b"hello, actually it passed")
+    refuses("a stream that no longer matches its digest is refused",
+            lambda: sdlc.verify_evidence(receipt_with, root),
+            "a digest nobody re-computes is decoration on a document produced beside "
+            "the code it is about")
+
+
+def hashlib_sha256(data: bytes) -> str:
+    import hashlib
+    return hashlib.sha256(data).hexdigest()
+
+
+def flood_cap_checks(tmp: Path) -> None:
+    """FACTORY_RULES 1: a DELAY, not a wastebasket, and never a way to lock yourself out.
+
+    The cap is applied before a triage costs anything. What it must get right is who it
+    applies to (not the owner), how it counts (issues listed, never the search index,
+    which lags by minutes on exactly the day somebody is running a flood), and that
+    yesterday's held issues come back.
+    """
+    import sdlc
+
+    class Flood(Recorder):
+        def __init__(self, author: str, today: list[int], held: list[dict]) -> None:
+            super().__init__({})
+            self.author = author
+            self.today = today
+            self.held = held
+            self.edits: list[tuple] = []
+
+        def fetch(self, target: str) -> dict:
+            item = super().fetch(target)
+            item["author"] = {"login": self.author}
+            item["createdAt"] = TODAY + "T09:00:00Z"
+            return item
+
+        def gh(self, *args: str, **kw: object) -> str:
+            if args[:2] == ("repo", "view"):
+                return json.dumps({"owner": {"login": "owner"}})
+            if args[:2] == ("issue", "list") and "factory:rate-limited" in args:
+                return json.dumps(self.held)
+            if args[:2] == ("issue", "list"):
+                return json.dumps([
+                    {"number": n, "author": {"login": self.author},
+                     "createdAt": TODAY + "T0" + str(i) + ":00:00Z"}
+                    for i, n in enumerate(self.today)])
+            if args[:2] == ("issue", "edit"):
+                self.edits.append(args)
+            return ""
+
+    cap = config.ISSUE_CAP_PER_DAY
+    under = list(range(1, cap + 1))
+
+    rec = Flood("stranger", under, [])
+    with_consumer(tmp, rec, lambda: check(
+        "an issue inside the cap is triaged", sdlc.flood_allowed("gh:issue:" + str(under[-1]))))
+
+    over = under + [99]
+    rec = Flood("stranger", over, [])
+    with_consumer(tmp, rec, lambda: check(
+        "the one past the cap is held", not sdlc.flood_allowed("gh:issue:99")))
+    check("and it is labelled so a person can see why",
+          any("factory:rate-limited" in a for a in rec.edits),
+          "an issue silently ignored is indistinguishable from one nobody has got to")
+
+    rec = Flood("owner", over, [])
+    with_consumer(tmp, rec, lambda: check(
+        "the repository owner is exempt", sdlc.flood_allowed("gh:issue:99"),
+        "you should not be able to lock yourself out of your own factory by filing "
+        "four issues in a morning"))
+
+    rec = Flood("stranger", over, [{"number": 3, "createdAt": "2020-01-01T00:00:00Z"}])
+    with_consumer(tmp, rec, lambda: sdlc.flood_allowed("gh:issue:99"))
+    check("yesterday's held issues are unstuck first",
+          any("--remove-label" in a and "3" in a for a in rec.edits),
+          "without this the cap is permanent for anyone who ever tripped it, which "
+          "makes it a wastebasket rather than a delay")
+
+    class Broken(Flood):
+        def gh(self, *args: str, **kw: object) -> str:
+            if args[:2] == ("issue", "list"):
+                raise RuntimeError("GitHub returned 503")
+            return super().gh(*args, **kw)
+
+    rec = Broken("stranger", over, [])
+    with_consumer(tmp, rec, lambda: check(
+        "an unreachable API does not stop every triage in the factory",
+        sdlc.flood_allowed("gh:issue:99"),
+        "a thirty-second blip in somebody else's service must not read as a flood"))
+
+    src = (Path(__file__).resolve().parent / "sdlc.py").read_text(encoding="utf-8")
+    check("the count comes from a listing, never the search index",
+          "--search" not in src,
+          "the search index lags issue creation by minutes, and a cap computed from a "
+          "stale index lets the flood straight through on the day somebody runs one")
+
+
+def fixed_gate_checks(tmp: Path) -> None:
+    """The one command acceptance, publication and the regression all run.
+
+    EVERY CHECK IS A POSITIVE ASSERTION, and the reason is the whole design: a check
+    that never ran produces no failures, and "did anything fail?" reads that as success.
+    So `measure` is asked what the log PROVES, and the cases below are the ways a log
+    can prove nothing while looking fine.
+    """
+    import fixed_gate
+    import runtime
+
+    green = (NL.join([
+        "PREFLIGHT_OK secrets_ignored=5", "PROTECTED_OK", "TRIPWIRE_CLEAR",
+        "APP_STARTED", "E2E_PASSED journeys=3", "UNIT_PASSED tests=64",
+        "MUTATIONS_TOTAL=9", "MUTATIONS_CAUGHT=9", "GATE_OK",
+        "BALANCE_CLAIMS=10 FAILED=0 UNCALIBRATED=2",
+    ]) + NL)
+    floor = {"e2e_journeys": 3, "unit_tests": 64}
+
+    saved = (config.REQUIRED_MARKERS, config.SLACK_CAPS_AUTONOMY)
+    config.REQUIRED_MARKERS = ["PROTECTED_OK", "APP_STARTED", "E2E_PASSED", "GATE_OK"]
+    config.SLACK_CAPS_AUTONOMY = False
+    try:
+        clean = fixed_gate.measure(green, 0, floor)
+        check("a complete green run has no errors and no holds",
+              clean["errors"] == [] and clean["holds"] == [], str(clean))
+        check("and its counts are what the ratchet will be raised to",
+              clean["counts"]["unit_tests"] == 64 and clean["counts"]["e2e_journeys"] == 3)
+
+        missing = fixed_gate.measure(green.replace("APP_STARTED" + NL, ""), 0, floor)
+        check("a required marker that never appeared is an error",
+              any("APP_STARTED" in e for e in missing["errors"]),
+              "a check that did not report that it ran, and did not report that it "
+              "failed, did not run")
+
+        red = fixed_gate.measure(green, 1, floor)
+        check("a non-zero exit is an error", any("exited 1" in e for e in red["errors"]))
+
+        unmeasured = fixed_gate.measure(green, 0, {**floor, "holdout_scenarios": 2})
+        check("a floor nothing measures is an error, not a pass",
+              any("holdout_scenarios" in e for e in unmeasured["errors"]),
+              "a floor nobody is held to looks configured the whole time")
+
+        short = fixed_gate.measure(green, 0, {**floor, "unit_tests": 99})
+        check("fewer checks than the floor requires is an error",
+              any("64 of a required 99" in e for e in short["errors"]),
+              "the rest were skipped, and skipped is not passed")
+
+        escaped = fixed_gate.measure(green.replace("MUTATIONS_CAUGHT=9",
+                                                   "MUTATIONS_CAUGHT=8"), 0, floor)
+        check("a deliberate defect the gate missed is an error",
+              any("8 of 9" in e for e in escaped["errors"]),
+              "every miss is a class of bug that can currently merge unreviewed")
+
+        none_injected = fixed_gate.measure(green.replace("MUTATIONS_TOTAL=9",
+                                                         "MUTATIONS_TOTAL=0"), 0, floor)
+        check("zero deliberate defects injected is an error",
+              any("never failed" in e for e in none_injected["errors"]),
+              "a gate that has never failed is a gate nobody has tested")
+
+        anchor_moved = fixed_gate.measure(green + "MUTATIONS_NOT_INJECTED=1" + NL, 0, floor)
+        check("a defect that could not be injected is an error",
+              any("could not be injected" in e for e in anchor_moved["errors"]),
+              "a mutation set that silently stops injecting reports a perfect score "
+              "for doing nothing")
+
+        # HOLDS ARE NOT ERRORS. Green, and waiting for a person to agree with a call
+        # the factory made. Reporting one as a failure sends the pull request round the
+        # repair loop for something no repair can fix.
+        ceiling = fixed_gate.measure(green, 0, {**floor, "UNCALIBRATED_MAX": 1})
+        check("uncalibrated margins over the ceiling HOLD rather than fail",
+              ceiling["errors"] == [] and any("uncalibrated" in h for h in ceiling["holds"]),
+              str(ceiling))
+        under = fixed_gate.measure(green, 0, {**floor, "UNCALIBRATED_MAX": 7})
+        check("and under the ceiling they do not hold at all", under["holds"] == [],
+              "seven margins are uncalibrated on main by design; holding on any of them "
+              "is a permanent off switch")
+        no_ceiling = fixed_gate.measure(green, 0, floor)
+        check("a floor file with no ceiling does not hold either",
+              no_ceiling["holds"] == [],
+              "absent must mean 'not measured here', never zero")
+
+        config.SLACK_CAPS_AUTONOMY = True
+        slack = fixed_gate.measure(green, 0, {**floor, "unit_tests": 60})
+        check("ratchet slack holds only when the operator asked it to",
+              any("slack" in h for h in slack["holds"]) and slack["errors"] == [])
+        config.SLACK_CAPS_AUTONOMY = False
+        check("and not otherwise",
+              fixed_gate.measure(green, 0, {**floor, "unit_tests": 60})["holds"] == [],
+              "every merge closes the slack it opened, so holding on it would deadlock "
+              "the pull requests that ADD tests")
+    finally:
+        config.REQUIRED_MARKERS, config.SLACK_CAPS_AUTONOMY = saved
+
+    # --- the structural half, which must actually run ------------------------
+    import guard
+    import tripwire
+
+    saved_guard = (guard.preflight, guard.main, tripwire.main)
+    calls: list = []
+    try:
+        guard.preflight = lambda: (print("PREFLIGHT_OK secrets_ignored=5"), 0)[1]
+        guard.main = lambda argv: (calls.append(argv), print("PROTECTED_OK"), 0)[2]
+        tripwire.main = lambda argv: (print("TRIPWIRE_CLEAR"), 0)[1]
+        code, log = fixed_gate.structural({"base_sha": SHA_B}, False)
+        check("the structural checks run and pass", code == 0)
+        check("the guard is run against the base revision from the profile",
+              calls and calls[0] == ["--base", SHA_B, "--head", "HEAD"],
+              "a guard run against whatever the checkout thinks base is compares the "
+              "wrong two trees, and the diff it judges is not this change")
+        check("their markers come from the checks themselves, not from the gate",
+              "PROTECTED_OK" in log and "PREFLIGHT_OK" in log and "TRIPWIRE_CLEAR" in log,
+              "an earlier version prepended the string PROTECTED_OK because the guard "
+              "had returned zero -- a marker the gate wrote about itself")
+
+        guard.main = lambda argv: 1
+        check("a guard violation stops the gate as a candidate failure",
+              fixed_gate.structural({"base_sha": SHA_B}, False)[0] == 1)
+        guard.main = lambda argv: 2
+        check("a guard that COULD NOT RUN is an environment failure, not a verdict",
+              fixed_gate.structural({"base_sha": SHA_B}, False)[0] == 75,
+              "'we could not check' recorded as 'we checked and it failed' sends the "
+              "repair loop after a broken machine")
+
+        guard.main = lambda argv: 0
+        tripwire.main = lambda argv: 1
+        check("a builder artifact in the validator's tree stops the gate",
+              fixed_gate.structural({"base_sha": SHA_B}, False)[0] == 1)
+        check("but publication does not run the tripwire at all",
+              fixed_gate.structural({"base_sha": SHA_B}, True)[0] == 0,
+              "the builder's own tree is full of the builder's own artifacts; that is "
+              "only a leak when it reaches an independent judge")
+
+        guard.preflight = lambda: 1
+        check("a secret that is not gitignored stops everything, first",
+              fixed_gate.structural({"base_sha": SHA_B}, False)[0] == 1,
+              "a broad `git add` inside a publish step is publication, not a mistake "
+              "you can take back")
+    finally:
+        guard.preflight, guard.main, tripwire.main = saved_guard
+
+    # --- the exit code a caller reads ---------------------------------------
+    saved_guard = (guard.preflight, guard.main, tripwire.main)
+    saved_root = config.ROOT
+    try:
+        guard.preflight = lambda: 0
+        guard.main = lambda argv: 0
+        tripwire.main = lambda argv: 0
+        profile = {"base_sha": SHA_B, "markers": [], "slack_caps_autonomy": False,
+                   "floor": {}, "result": str(tmp / "measurements.json"),
+                   "command": "this-command-does-not-exist --please"}
+        runtime.write(tmp / "gate.json", profile)
+        check("a gate command that cannot start reports an ENVIRONMENT exit",
+              fixed_gate.main([str(tmp / "gate.json")]) == 75,
+              "declared to acceptance as environment, because a gate that could not run "
+              "must never be recorded as a gate that ran")
+    finally:
+        guard.preflight, guard.main, tripwire.main = saved_guard
+        config.ROOT = saved_root
+
+
+def trusted_snapshot_checks(tmp: Path) -> None:
+    """The judge is rebuilt from the BASE tree, and refuses when it cannot be.
+
+    This is the root of trust for every protected path. A gate imported from the branch
+    under test is a gate that branch can edit: one commit that set a floor to 1 AND
+    changed `if violations:` to `if False:` printed both violations, printed
+    PROTECTED_OK, and exited 0.
+    """
+    import sdlc
+
+    files = {
+        "factory/config.py": "AUTONOMY = 3",
+        "factory/guard.py": "PROTECTED = []",
+        "factory/gate.py": "",
+        "factory/tripwire.py": "",
+        "factory/fixed_gate.py": "",
+        "factory/runtime.py": "",
+        ".factory/locks/floor.json": '{"unit_tests": 3}',
+    }
+
+    def fake_git(*args: str) -> str:
+        if args[0] == "ls-tree":
+            return NL.join(sorted(files))
+        if args[0] == "show":
+            return files[args[1].split(":", 1)[1]]
+        return SHA_B
+
+    saved = (sdlc.git, sdlc.settings)
+    try:
+        sdlc.git = fake_git
+        sdlc.settings = lambda directory: {
+            "autonomy": 3, "command": "python harness/ci.py", "markers": ["GATE_OK"],
+            "slack_caps_autonomy": False, "floor_path": ".factory/locks/floor.json",
+            "require_isolation": False, "accept_races": False, "required_checks": []}
+
+        directory = tmp / "ok"
+        directory.mkdir(parents=True)
+        profile = sdlc.snapshot(directory, SHA_B)
+        check("the trusted set is written out of the base tree",
+              (directory / "trusted" / "guard.py").read_text(encoding="utf-8").strip()
+              == "PROTECTED = []",
+              "a copy taken from the working checkout is a copy of whatever is there, "
+              "which in a validation is the candidate")
+        check("and the profile carries the base revision the guard will diff against",
+              profile["base_sha"] == SHA_B)
+        check("and the ratchet floor from that same revision",
+              profile["floor"] == {"unit_tests": 3},
+              "a floor read from the candidate is a floor the candidate chose")
+
+        removed = files.pop("factory/guard.py")
+        directory = tmp / "no-guard"
+        directory.mkdir(parents=True)
+        refuses("a base tree with no guard refuses rather than falling back",
+                lambda: sdlc.snapshot(directory, SHA_B),
+                "falling back to the branch's own copy IS the original bug")
+        files["factory/guard.py"] = removed
+
+        floor_entry = files.pop(".factory/locks/floor.json")
+        directory = tmp / "no-floor"
+        directory.mkdir(parents=True)
+        check("a base tree with no ratchet floor is a day-one factory, not an error",
+              sdlc.snapshot(directory, SHA_B)["floor"] == {},
+              "a repository that has not set a floor yet must still be able to validate")
+        files[".factory/locks/floor.json"] = floor_entry
+    finally:
+        sdlc.git, sdlc.settings = saved
+
+
+def sdlc_checks(tmp: Path) -> None:
+    """Everything above, with the consumer's own reporting kept out of the results.
+
+    These paths print: a notification, a rate-limit reason, a ratchet line. That output
+    is a feature in production and noise here, and noise around a list of failures is
+    how somebody reads past the one line that mattered.
+    """
+    import contextlib
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        receipt_identity_checks()
+        state_adapter_checks(tmp / "adapters")
+        apply_recovery_checks(tmp / "recovery")
+        dispatch_refusal_checks(tmp / "refusals")
+        stop_and_dial_checks(tmp / "dial")
+        merge_policy_checks(tmp / "policy")
+        artifact_binding_checks(tmp / "artifacts")
+        flood_cap_checks(tmp / "flood")
+        fixed_gate_checks(tmp / "gate")
+        trusted_snapshot_checks(tmp / "snapshot")
+
+
 def main() -> int:
     quiet = "--quiet" in sys.argv
     # POINT THE LEDGER SOMEWHERE HARMLESS FOR THE WHOLE RUN, before any check fires.
@@ -1597,6 +2878,7 @@ def main() -> int:
     _led.LEDGER.unlink(missing_ok=True)
     with tempfile.TemporaryDirectory() as td:
         lock_checks(Path(td))
+        sdlc_checks(Path(td) / "sdlc")
     gate_checks()
     state_checks()
     marker_checks()

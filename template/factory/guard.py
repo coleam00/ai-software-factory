@@ -54,9 +54,12 @@ PROTECTED = [
     # own test directory instead.
     "harness/*",
     "harness/**",
-    # The workflow pack. A node that can rewrite its own workflow can remove the
-    # node that checks it.
-    ".archon/workflows/factory/**",
+    # WORKFLOWS, ALL OF THEM, not just a `factory/` subdirectory this repository no
+    # longer ships. A node that can rewrite its own workflow can remove the node that
+    # checks it, and a project-scope workflow overrides the bundled one of the same
+    # name -- so a pull request that adds `.archon/workflows/archon-review.yaml` has
+    # replaced the reviewer that was about to read it.
+    ".archon/**",
     # CI, because a required check the factory can edit is not a required check.
     ".github/**",
     # Secrets. Being unable to EDIT one does not stop a broad `git add` from

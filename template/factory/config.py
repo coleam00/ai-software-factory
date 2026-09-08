@@ -101,18 +101,24 @@ def _env_int(name: str, default: int) -> int:
 # engine is an implementation detail you are allowed to ignore until you want it.
 ARCHON_BIN = _env("FACTORY_ARCHON_BIN", "archon")
 
-# The workflow pack this factory dispatches. Five workflows, one job each.
+# THE WORKFLOWS THIS FACTORY DISPATCHES, AND IT OWNS NONE OF THEM.
 #
-# `fix` is its own workflow rather than a loop inside `validate`, and that is a
-# holdout decision, not a structural preference: a fix that runs in the same process
+# Six upstream SDLC workflows, one job each. They are generic by design -- they judge,
+# build, repair, test and merge, and they return a result. Everything that makes this
+# a factory rather than six commands (the labels, the dial, the caps, the locks, the
+# trusted project profile they evaluate against) is on this side, in `factory/sdlc.py`.
+#
+# `fix` is `archon-revise-pr` rather than a loop inside acceptance, and that is a
+# holdout decision, not a structural preference: a repair that runs in the same process
 # as the judgement it is answering can inherit the judge's reasoning. A separate
-# dispatch gets a separate process, a separate worktree and a separate context, and
-# the findings reach it as a file on disk rather than as ambient memory.
-WORKFLOW_TRIAGE = _env("FACTORY_WORKFLOW_TRIAGE", "factory-triage")
-WORKFLOW_IMPLEMENT = _env("FACTORY_WORKFLOW_IMPLEMENT", "factory-implement")
-WORKFLOW_VALIDATE = _env("FACTORY_WORKFLOW_VALIDATE", "factory-validate")
-WORKFLOW_FIX = _env("FACTORY_WORKFLOW_FIX", "factory-fix")
-WORKFLOW_REGRESS = _env("FACTORY_WORKFLOW_REGRESS", "factory-regress")
+# dispatch gets a separate process, a separate worktree and a separate context, and the
+# findings reach it as a file on disk rather than as ambient memory.
+WORKFLOW_TRIAGE = _env("FACTORY_WORKFLOW_TRIAGE", "archon-admit")
+WORKFLOW_IMPLEMENT = _env("FACTORY_WORKFLOW_IMPLEMENT", "archon-ship")
+WORKFLOW_VALIDATE = _env("FACTORY_WORKFLOW_VALIDATE", "archon-accept")
+WORKFLOW_FIX = _env("FACTORY_WORKFLOW_FIX", "archon-revise-pr")
+WORKFLOW_REGRESS = _env("FACTORY_WORKFLOW_REGRESS", "archon-regress")
+WORKFLOW_MERGE = _env("FACTORY_WORKFLOW_MERGE", "archon-merge")
 
 # Flood protection, FACTORY_RULES section 1. It lives here rather than in the node
 # script because a node runs under the engine, which does not pass this process's
@@ -247,8 +253,20 @@ SLACK_CAPS_AUTONOMY = _env("FACTORY_SLACK_CAPS_AUTONOMY", "false").lower() == "t
 # 1  accepted issue -> branch and PR open
 # 2  + the validator runs and writes a verdict
 # 3  + the validator AUTO-MERGES on green structural gates   <- THE TARGET
-# 4  + it triages its own issues, and the scheduled regression files its own bugs
-# 5  + it writes its own issues from the mission
+# 4  + it triages its own issues, and the scheduled regression may file its own bugs
+#
+# THERE IS NO LEVEL 5. It used to read "it writes its own issues from the mission",
+# which nothing in this repository has ever implemented. A dial that names a level the
+# code cannot reach is a promise the product does not keep, and the honest fix is to
+# delete the line rather than to build the feature it advertised.
+#
+# WHAT LEVEL 4 ACTUALLY BUYS, stated exactly, because the regression's publication side
+# is upstream's and it is deliberately narrow: the scheduled run is authorized to file
+# issues, and `archon-regress` will only file a case its trusted check profile handed
+# it, already approved for export, with a proven cause. The shipped fixed gate reports
+# whether main is green; it does not author public bug reports, so a level-4 factory
+# whose regression goes red escalates to a person rather than filing. Publication turns
+# on when a project's own check emits `public_cases`.
 #
 # LEVEL 3 IS THE DESTINATION and 1 and 2 are the way there, not places to stop: at
 # 2 a person still merges every PR, which is the bottleneck the factory was built
@@ -282,12 +300,16 @@ MAX_PARALLEL = _env_int("FACTORY_MAX_PARALLEL", 1)
 MAX_FIX_ATTEMPTS = _env_int("FACTORY_MAX_FIX_ATTEMPTS", 2)
 TRIAGE_BATCH = _env_int("FACTORY_TRIAGE_BATCH", 10)
 
-# How long a dispatch lock may outlive the run that took it. A lock is reaped early
-# when its recorded PID is gone -- that is the common case: a reboot, a closed
-# terminal, a killed run, none of which run a cleanup handler -- with GRACE minutes
-# of slack so a run that has not yet settled is never reaped out from under itself.
-# STALE is the fallback for when the PID cannot be checked at all.
-LOCK_STALE_MINUTES = _env_int("FACTORY_LOCK_STALE_MINUTES", 180)
+# How long a lock that never got as far as naming a run may sit before it is reaped.
+# That is the only case age decides: a dispatch killed between taking the lock and
+# recording anything, where the recorded PID really is the only owner there ever was.
+#
+# THERE IS NO AGE CAP ON A LOCK THAT NAMES A RUN, and removing the one there used to be
+# is the point. Age is not evidence about a run. A lap that takes four hours and a lap
+# that died in its first minute look identical to a clock, and the cap freed both --
+# so the sweep escalated live work as dead. A named run is freed when the engine says
+# it settled, or when the factory has applied its result. Both are answers about that
+# run; a stopwatch is not.
 LOCK_GRACE_MINUTES = _env_int("FACTORY_LOCK_GRACE_MINUTES", 5)
 
 # --- the stop button ----------------------------------------------------------
@@ -302,6 +324,33 @@ LOCK_GRACE_MINUTES = _env_int("FACTORY_LOCK_GRACE_MINUTES", 5)
 # is not a stop button.
 STOP_FILE = SHARED / _env("FACTORY_STOP_FILE", ".factory/STOP")
 STOP_LABEL = _env("FACTORY_STOP_LABEL", "factory:stop")
+
+# --- what the factory refuses to pretend it has --------------------------------
+# A WORKTREE IS NOT A SANDBOX, and a fresh context is not one either. Candidate code
+# this factory builds and validates runs as the operator's own user and can reach the
+# host, its credentials and its artifacts. Codex cannot enforce a tool restriction at
+# all; the providers that can, enforce a request, not a boundary.
+#
+# So this is off by default and it is not a switch that TURNS ON isolation -- nothing
+# here can. It says "refuse to deliver unless an enforced boundary is attested", and
+# because none is, it FAILS CLOSED: delivery and acceptance both refuse rather than
+# running without the thing that was asked for. Set it when the host itself is
+# disposable and you want the refusal if that ever stops being true.
+REQUIRE_ISOLATION = _env("FACTORY_REQUIRE_ISOLATION", "false").lower() == "true"
+
+# GitHub pins the HEAD on merge and nothing else. A base update, a check rerun, a hold
+# or a policy revocation between the last read and the mutation is a race the merge
+# workflow cannot close, and enforced up-to-date branch protection with required checks
+# is what actually closes it. This is the operator saying, explicitly, that they accept
+# those remaining races on a repository without that protection. It is deliberately
+# separate from the dial: turning autonomy up is not the same statement.
+MERGE_ACCEPT_RACES = _env("FACTORY_MERGE_ACCEPT_RACES", "false").lower() == "true"
+
+# Check names that must be present and passing before a merge, on top of every check
+# the repository itself reports. A name here does not authenticate its publisher --
+# configure GitHub's required checks for that -- it stops a merge from proceeding while
+# a check the operator cares about has not reported.
+MERGE_REQUIRED_CHECKS = _env("FACTORY_MERGE_REQUIRED_CHECKS", "").split()
 
 # --- limits -------------------------------------------------------------------
 # Crude, and it works. An unsupervised agent will otherwise ship a 3,000-line PR
