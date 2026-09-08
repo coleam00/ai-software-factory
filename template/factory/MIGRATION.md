@@ -55,11 +55,12 @@ same state only within that scenario. Preserve assertion-level observed evidence
 required coverage and product-failure versus infrastructure/inconclusive outcomes.
 A retry belongs to a visible Archon node, never to these helpers.
 
-The retained appproc helper starts ordinary app commands and offers HTTP, CLI and
-library access. Its cleanup is best effort. It does not guarantee containment,
-private holdout isolation, daemon/browser cleanup or fresh database deletion. The
-shared producer must prove those properties on the final environment. Factory no
-longer claims its old deny lists enforce a private judge boundary.
+The retained appproc helper is legacy best-effort machinery. Use the new
+[runtime host](RUNTIME_HOST.md) for owned ordinary processes, independent source
+snapshots and fresh filesystem state. Its supported command shapes, Windows job
+ownership, Unix session limits, candidate identity contract and private scenario
+placement are explicit. The final shared producer integration still needs live
+verification; neither helper is a same-user filesystem sandbox.
 
 Deterministic mutation commands:
 
@@ -108,7 +109,7 @@ home-scoped fallbacks. A producer syntax change may require a consumer update.
 
 Select and record a complete tested producer SHA in pack.json (or explicitly pass
 an integration SHA to init). Missing required workflows must keep installation red.
-Finalize runtime input mapping, environment isolation/cleanup, coverage and result
+Finalize live runtime input mapping, coverage and result
 schemas; queue and merge gates; regression/discovery composition; standing intake
 and release workflow ownership. Preserve native provider authentication and validate
 unsupported providers against the final producer. No unattended operation is claimed.

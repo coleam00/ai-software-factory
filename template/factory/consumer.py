@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -15,11 +16,11 @@ ENTRY = "packages/cli/src/cli.ts"
 
 
 def execute(argv: list[str], cwd: Path, *, capture: bool = True,
-            timeout: int | None = 180) -> subprocess.CompletedProcess:
+            timeout: int | None = 180, env: dict | None = None) -> subprocess.CompletedProcess:
     # Resolve PATH and PATHEXT once, including Windows .cmd launchers.
     argv = [shutil.which(argv[0]) or argv[0], *argv[1:]]
     return subprocess.run(argv, cwd=cwd, capture_output=capture, text=True,
-                          encoding="utf-8", errors="replace", timeout=timeout)
+                          encoding="utf-8", errors="replace", timeout=timeout, env=env)
 
 
 def checked(argv: list[str], cwd: Path, timeout: int = 180) -> str:
@@ -202,6 +203,27 @@ def refuse(action: str) -> int:
 
 
 def invoke(root: Path, action: str, args: list[str]) -> int:
+    args = list(args)
+    runtime_config = None
+    options = args[:args.index("--")] if "--" in args else args[:]
+    runtime_flags = [a for a in options if a.split("=", 1)[0] == "--runtime-host"]
+    if runtime_flags:
+        if action != "run" or len(runtime_flags) != 1:
+            raise ValueError("--runtime-host supports one foreground run only")
+        if any(a.split("=", 1)[0] in {"--detach", "--resume", "-d"} for a in options):
+            raise ValueError("Detached/resumed runtime-host mode is unsupported: no public durable ownership contract; use a new foreground run")
+        flag = runtime_flags[0]
+        index = args.index(flag)
+        if "=" in flag:
+            runtime_config = flag.split("=", 1)[1]
+            del args[index]
+        else:
+            if index + 1 >= len(options) or options[index + 1].startswith("--"):
+                raise ValueError("--runtime-host requires a trusted project configuration path")
+            runtime_config = args.pop(index + 1)
+            args.pop(index)
+        if not runtime_config:
+            raise ValueError("--runtime-host requires a configuration path")
     if action in RETIRED:
         return refuse(action)
     if action not in {"run", "list", "get", "status", "approve", "reject", "respond",
@@ -252,6 +274,11 @@ def invoke(root: Path, action: str, args: list[str]) -> int:
         print(f"Factory source={source} revision={settings['revision']} local_STOP={stop.exists()}", file=sys.stderr)
     # Native output, exit code, inputs, identity and gates pass through unchanged.
     # No subprocess deadline or retry can guess whether a native run is alive.
+    if runtime_config:
+        from runtime_host import RuntimeHost
+        with RuntimeHost(root / runtime_config) as host:
+            return execute([*cli(settings, source), *native], root, capture=False,
+                           timeout=None, env={**os.environ, **host.environment()}).returncode
     return execute([*cli(settings, source), *native], root,
                    capture=False, timeout=None).returncode
 
@@ -260,6 +287,8 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in {"--help", "-h"}:
         print("factory run <shared-workflow> [native arguments]\n"
+              "factory run <shared-workflow> --runtime-host <config.json> [foreground native arguments]\n"
+              "Runtime host: fresh ordinary apps; detach/resume unsupported. Manual: python factory/runtime_host.py serve --help\n"
               "factory list | doctor | status | get <run-id>\n"
               "factory approve | reject | respond | cancel | resume <run-id>\n"
               "factory halt | unhalt (local launch brake only)")

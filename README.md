@@ -6,7 +6,7 @@ Factory owns installation, project input data, native invocation and state displ
 
 This migration is a supervised integration milestone. The final complete producer
 revision is still required. Queue, regression, standing intake, release automation
-and runtime cleanup need integration verification before unattended operation can
+and live runtime integration need verification before unattended operation can
 be advertised.
 
 ## Install
@@ -78,11 +78,14 @@ zero counted tests and failed commands cannot claim success. Runtime and holdout
 verification must be composed separately by the shared runtime workflow. Ordinary
 checks succeeding do not authorize a merge or prove runtime coverage.
 
-`harness/runtime.inputs.json` contains scenario and environment data. The shared
-workflow must supply fresh app and database environments for runtime, holdout,
-retries and each mutation candidate. The Python helpers do not schedule these
-runs. [Migration details](template/factory/MIGRATION.md) map legacy inputs and
-list the remaining producer contracts.
+`harness/runtime.inputs.json` contains scenario and environment data. The
+[project runtime host](template/factory/RUNTIME_HOST.md) provides fresh ordinary
+apps, source snapshots and state for shared runtime, holdout, retry and mutation
+nodes. Use `factory run <workflow> --runtime-host <trusted-config.json>` for a
+foreground run, or keep the host foreground for manual native Archon use. Host
+mode rejects detach/resume until durable ownership is supported. Python never
+schedules evaluations. [Migration details](template/factory/MIGRATION.md) map
+legacy inputs and list the remaining producer contracts.
 
 ```text
 python /path/to/ai-software-factory/bin/sync-to.py /path/to/application --dry-run
@@ -102,6 +105,7 @@ All fixtures are local; the fake native CLI records argv without launching an ag
 
 ```text
 python bin/test_consumer.py
+python bin/test_runtime_host.py
 python template/factory/_selftest.py
 python template/factory/_test_watchdog.py
 python bin/audit.py

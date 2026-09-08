@@ -124,6 +124,27 @@ def classify(rc: int, out: str) -> Verdict:
     return Verdict("CAUGHT", rung, "")
 
 
+def classify_runtime(result: dict, candidate: str) -> Verdict:
+    """Consume the shared runtime's typed return, bound to a host attempt identity.
+
+    The caller supplies a trusted native return (not a model process exit code).
+    Attribution and assertion artifacts remain owned by the shared suite.
+    """
+    unknown = Verdict("INCONCLUSIVE", "runtime", "missing, inconsistent or mismatched typed runtime result")
+    if (not isinstance(result, dict) or not isinstance(candidate, str) or not candidate.strip()
+            or result.get("candidate") != candidate.strip()
+            or not isinstance(result.get("checkout"), str)
+            or type(result.get("verified")) is not bool
+            or not isinstance(result.get("summary"), str) or not result["summary"].strip()):
+        return unknown
+    verdict = result.get("verdict")
+    if verdict == "verified" and result["verified"] is True:
+        return Verdict("ESCAPED", "runtime", "shared runtime verified this candidate")
+    if verdict == "failed" and result["verified"] is False:
+        return Verdict("CAUGHT", "runtime", "shared runtime recorded a product failure")
+    return unknown
+
+
 def apply(dest: Path, d: dict) -> tuple[bool, str]:
     """Textual mutation. Returns (injected, why-not).
 
@@ -177,7 +198,18 @@ def main() -> int:
     score = subs.add_parser("score")
     score.add_argument("--log", type=Path, required=True)
     score.add_argument("--exit-code", type=int, required=True)
+    runtime = subs.add_parser("score-runtime", help="score an actual shared typed runtime return")
+    runtime.add_argument("--result", type=Path, required=True)
+    runtime.add_argument("--candidate", required=True, help="expected host attempt identity")
     args = parser.parse_args()
+    if args.action == "score-runtime":
+        try:
+            result = json.loads(args.result.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            result = None
+        verdict = classify_runtime(result, args.candidate)
+        print(json.dumps(verdict._asdict()))
+        return 0 if verdict.outcome == "CAUGHT" else 1
     if args.action == "score":
         verdict = classify(args.exit_code, args.log.read_text(encoding="utf-8"))
         print(json.dumps(verdict._asdict()))

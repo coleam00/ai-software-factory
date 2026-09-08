@@ -45,6 +45,13 @@ elif args[:2] == ["validate", "workflows"]:
     print(json.dumps({"results": [{"workflowName": name, "valid": valid}], "summary": {"errors": 0 if valid else 1}}))
     raise SystemExit(0 if valid else 1)
 else:
+    if os.environ.get("FACTORY_RUNTIME_URL"):
+        from urllib.request import Request, urlopen
+        req = Request(os.environ["FACTORY_RUNTIME_URL"] + "/start",
+                      data=json.dumps({"slot":"baseline", "root":"candidate"}).encode(),
+                      headers={"Authorization":"Bearer " + os.environ["FACTORY_RUNTIME_TOKEN"]})
+        with urlopen(req) as response:
+            Path(os.environ["FACTORY_TEST_HOST_RESULT"]).write_bytes(response.read())
     status = os.environ.get("FACTORY_TEST_STATUS", "paused")
     print(json.dumps({"id": "run-123", "status": status, "source": str(source),
                       "working_path": "candidate checkout", "argv": args}, indent=2))
@@ -109,6 +116,34 @@ class Fixture(unittest.TestCase):
 
 
 class ConsumerTests(Fixture):
+    def test_runtime_host_detach_and_resume_refused_before_native_launch(self):
+        for args in [("--detach",), ("--detach=true",), ("-d",), ("--resume",)]:
+            result = self.command("run", "archon-ship", "--runtime-host", "missing.json", *args)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("ownership contract", result.stderr)
+        self.assertEqual(self.calls(), [])
+        result = self.command("run", "archon-ship", "--detach", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--detach", json.loads(result.stdout)["argv"])
+
+    def test_foreground_runtime_host_wraps_exactly_one_native_run_and_cleans(self):
+        from test_runtime_host import TARGET
+        (self.app / "app.py").write_text(TARGET)
+        config = self.app / "runtime.json"
+        config.write_text(json.dumps({"version": 1, "roots": {"candidate": str(self.app)},
+            "include": ["app.py"], "shape": "http", "command": [sys.executable, "app.py"],
+            "health_path": "/health", "identity_path": "/identity", "timeout_s": 5}))
+        output = self.base / "host-result.json"
+        for rc in (0, 23):
+            result = self.command("run", "archon-ship", "--runtime-host", str(config), "--json",
+                env={"FACTORY_TEST_HOST_RESULT": str(output), "FACTORY_TEST_EXIT": str(rc)})
+            self.assertEqual(result.returncode, rc, result.stderr)
+            argv = json.loads(result.stdout)["argv"]
+            self.assertNotIn("--runtime-host", argv)
+            item = json.loads(output.read_text())
+            self.assertFalse(Path(item["snapshot"]).parent.exists())
+        self.assertEqual(len([row for row in self.calls() if row[:2] == ["workflow", "run"]]), 2)
+
     def test_pinned_run_ignores_local_conflict_and_provider_override(self):
         local = self.app / ".archon/workflows/archon-ship.yaml"
         local.parent.mkdir(parents=True)
@@ -433,6 +468,18 @@ class HarnessTests(unittest.TestCase):
                  (1, "could not run missing\nGATE_FAILED: unit", "INCONCLUSIVE"),
                  (1, "ModuleNotFoundError: missing\nGATE_FAILED: unit", "INCONCLUSIVE")]:
             self.assertEqual(runner.classify(rc, log).outcome, expected)
+
+    def test_runtime_mutation_scoring_requires_bound_typed_return(self):
+        runner = load("runtime_mutation_verdict_test", TEMPLATE / "harness/mutations/run.py")
+        result = {"verified": False, "verdict": "failed", "candidate": "attempt-id",
+                  "checkout": "", "summary": "observed failure"}
+        self.assertEqual(runner.classify_runtime(result, "attempt-id").outcome, "CAUGHT")
+        self.assertEqual(runner.classify_runtime({**result, "verified": True, "verdict": "verified"},
+                                               "attempt-id").outcome, "ESCAPED")
+        for invalid in (None, {}, {**result, "verified": True}, {**result, "candidate": "old"},
+                        {**result, "summary": ""}, {**result, "verdict": "inconclusive"},
+                        {"exit_code": 0, "stdout": "[PASS]"}):
+            self.assertEqual(runner.classify_runtime(invalid, "attempt-id").outcome, "INCONCLUSIVE")
 
 
 if __name__ == "__main__":

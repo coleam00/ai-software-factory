@@ -27,6 +27,17 @@ def audit(root):
                 modules = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module or ""]
                 if any(m.split(".")[0] in {"subprocess", "consumer", "sdlc", "anthropic", "openai"} for m in modules):
                     errors.append(f"Execution dependency in data-only helper: {name}")
+    for name in ("factory/runtime_host.py", "factory/runtime_process.py"):
+        tree = ast.parse((root / name).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                modules = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module or ""]
+                if any(m.split(".")[0] in {"consumer", "sdlc", "anthropic", "openai"} for m in modules):
+                    errors.append(f"Workflow/provider dependency in ordinary runtime host: {name}")
+            if isinstance(node, ast.Call) and any(k.arg == "shell" and
+                    not (isinstance(k.value, ast.Constant) and k.value.value is False)
+                    for k in node.keywords):
+                errors.append(f"Shell execution in ordinary runtime host: {name}")
     for error in errors:
         print(error)
     print(f"CONSUMER_AUDIT errors={len(errors)}; live source/provenance requires factory doctor")
