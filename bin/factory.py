@@ -112,7 +112,7 @@ REQUIRED_WORKFLOWS = ("archon-admit", "archon-ship", "archon-accept", "archon-re
 # override from the shell is a pin that gets overridden by a copied command line, and
 # the whole reason it exists is that "which Archon" is not a per-run decision.
 ARCHON_SOURCE = "https://github.com/coleam00/Archon"
-ARCHON_REF = "b18a6f82b631eff4d46529499952e0f85a250c19"
+ARCHON_REF = "3b50ac1cbe8622bb1ca16002b5409e8cc589514a"
 
 
 ARCHON_BIN = os.environ.get("FACTORY_ARCHON_BIN") or "archon"
