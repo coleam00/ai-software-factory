@@ -282,8 +282,12 @@ def main() -> int:
         # field), and not once on the product. A defect fails both attempts, and the
         # mutation rung keeps proving that. The second verdict is the verdict; the first
         # is printed so a real flake in the product is still visible in the log.
+        # NOT INSIDE A MUTATION COPY. There the rung is SUPPOSED to fail, so a rerun
+        # buys nothing and doubles the cost of every caught defect: nine mutations
+        # stopped fitting the rung's 30-minute budget and a healthy candidate went
+        # red on TIMEOUT (2026-09-08).
         _, _, failures = result
-        if failures:
+        if failures and os.environ.get("FACTORY_IN_MUTATION") != "1":
             print(f"{kind.upper()}_RETRY {len(failures)} assertion(s) failed; once more on a "
                   f"fresh app before the verdict:", flush=True)
             for f in failures:
