@@ -80,11 +80,11 @@ def measure(log: str, code: int, floor: dict) -> dict:
     nothing to hold on.
     """
     minimums = gate.floors(floor)
+    markers = {marker: marker in log for marker in config.REQUIRED_MARKERS}
     errors = [f"the gate command exited {code}"] if code else []
     errors += [f"required marker absent from the run log: {marker}"
-               for marker in config.REQUIRED_MARKERS if marker not in log]
+               for marker, seen in markers.items() if not seen]
 
-    markers = {marker: marker in log for marker in config.REQUIRED_MARKERS}
     counts = gate.observed_counts(log, list(minimums))
     for key, minimum in minimums.items():
         observed = counts.get(key)

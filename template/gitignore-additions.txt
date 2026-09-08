@@ -45,6 +45,11 @@ uv.lock
 .factory/loop.pid
 .factory/assumptions/
 .factory/followups/
+# The report the fixed gate writes for the acceptance judge. It is produced inside
+# the temporary candidate checkout acceptance owns, and acceptance REFUSES it if the
+# path is tracked at the candidate SHA -- so a committed copy does not become stale
+# evidence, it stops every validation this repository will ever run.
+.factory/acceptance-report.json
 # Where the cron entry `factory arm` writes sends every tick's output.
 .factory/factory.log
 # The arming shell's environment, snapshotted for cron (which has none). It carries
