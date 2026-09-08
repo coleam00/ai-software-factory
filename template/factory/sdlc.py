@@ -937,7 +937,21 @@ def consume(journal: Path) -> bool:
     result_file = journal.parent / "result.json"
     if not result_file.exists():
         root = artifact_root(run, record["run_id"])
-        result = runtime.read(artifact(root, ARTIFACTS[record["action"]]))
+        returned = artifact(root, ARTIFACTS[record["action"]])
+        if (record["action"] in {"implement", "fix"}
+                and str(run.get("status", "")).lower() != "completed"
+                and not returned.exists()):
+            # A repair can correctly diagnose an inherited red gate and stop before
+            # publication. Its spent attempt must end at a human, not an eternal
+            # missing-artifact retry. Never synthesize a successful delivery.
+            report = artifact(root, "implementation.md")
+            result = {"outcome": "blocked", "pr": None,
+                      "summary": f"Run {record['run_id']} ended without a verified publication result. "
+                                 "Inspect the remote pull request and its implementation report "
+                                 "and execution trace in the Archon run artifacts before retrying.",
+                      "reports": [str(report)] if report.is_file() else []}
+        else:
+            result = runtime.read(returned)
         if record["action"] == "validate":
             validate_receipt(result, record["identity"])
             for key in ("work_order_sha256", "policy_sha256"):

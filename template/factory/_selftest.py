@@ -3417,6 +3417,54 @@ def trusted_snapshot_checks(tmp: Path) -> None:
         sdlc.git, sdlc.settings = saved
 
 
+def terminal_repair_checks(tmp: Path) -> None:
+    """A diagnosed red repair spends its attempt and stops for a person."""
+    import runtime
+    import sdlc
+    import dispatch
+    rec = Recorder({"gh:pr:12": "failed"})
+
+    def exercise() -> None:
+        state.linked_issue = lambda target: None
+        saved = (sdlc.engine, sdlc.prepare, dispatch.lock_path)
+        try:
+            journal, record = journal_for(tmp, action="fix", run_id="failed-repair", manual=True)
+            lock = Path(record["lock"])
+            lock.parent.mkdir(parents=True, exist_ok=True)
+            lock.write_text("owned repair")
+            root = tmp / "artifacts" / "runs" / record["run_id"]
+            root.mkdir(parents=True)
+            (root / "implementation.md").write_text("The red gate is inherited; protected harness needs operator repair.")
+            sdlc.engine = lambda argv: {"id": record["run_id"], "output_root": str(tmp),
+                                       "workflow_name": sdlc.WORKFLOWS["fix"], "status": "failed"}
+            check("a terminal repair without publication settles", sdlc.consume(journal))
+            check("the diagnosed repair is parked for a person",
+                  ("gh:pr:12", "needs-human") in rec.transitions and bool(rec.notified))
+            result = runtime.read(journal.parent / "result.json")
+            check("the repair diagnosis remains linked without inventing delivery",
+                  result["outcome"] == "blocked" and result["pr"] is None
+                  and result["reports"] == [str(root / "implementation.md")])
+            before = (len(rec.transitions), len(rec.comments))
+            sdlc.consume(journal)
+            check("settling the failed repair again has no effects",
+                  before == (len(rec.transitions), len(rec.comments)) and not lock.exists())
+
+            sdlc.prepare = lambda *args: {"inputs": {}, "base_sha": SHA_B}
+            dispatch.lock_path = lambda *args: tmp / "launch-failure.lock"
+            def cannot_launch(argv):
+                check("the repair attempt is spent before the engine can fail", rec.attempts == 1)
+                raise RuntimeError("engine unavailable")
+            sdlc.engine = cannot_launch
+            try:
+                sdlc.launch("fix", "gh:pr:12", manual=True)
+                check("a failed repair launch remains a visible error", False)
+            except RuntimeError:
+                check("a failed repair launch remains a visible error", rec.attempts == 1)
+        finally:
+            sdlc.engine, sdlc.prepare, dispatch.lock_path = saved
+    with_consumer(tmp, rec, exercise)
+
+
 def sdlc_checks(tmp: Path) -> None:
     """Everything above, with the consumer's own reporting kept out of the results.
 
@@ -3438,6 +3486,47 @@ def sdlc_checks(tmp: Path) -> None:
         fixed_gate_checks(tmp / "gate")
         owned_process_tree_checks(tmp / "owned")
         trusted_snapshot_checks(tmp / "snapshot")
+        terminal_repair_checks(tmp / "terminal-repair")
+def fix_verdict_checks() -> None:
+    """One night, three fix runs, the same three defects.
+
+    A holdout scenario restarted the app with the command the harness printed, which
+    carried `http.start` but not `http.env`, so the restart opened the app's default
+    database and every persistence scenario failed against a product that lost nothing.
+    Three fix runs diagnosed it, correctly refused to touch protected files, reported
+    `red_cause: inherited`, and were each failed by land-fix as "changed nothing" and
+    dispatched again -- with the attempt counter never moving, because it was bumped
+    after the step that died. The watchdog had to halt the factory.
+    """
+    here = Path(__file__).resolve().parent
+    harness = here.parent / "harness"
+    sys.path.insert(0, str(harness))
+    try:
+        import agentcheck  # noqa: PLC0415
+
+        class _App:
+            base = "http://127.0.0.1:43501"
+            port = 43501
+
+        text = agentcheck.reach(
+            {"driver": "http",
+             "http": {"start": "python -m app.server --port {port}",
+                      "env": {"APP_DB": ".factory/runs/gate-{port}.db"}}},
+            _App(),
+        )
+        check("the restart line the agent is handed carries http.env",
+              "APP_DB=.factory/runs/gate-43501.db" in text,
+              "a restart without the harness env opens the default database, empty, "
+              "and every persistence-across-restart scenario fails on a healthy app")
+        check("and {port} is substituted inside the env values",
+              "{port}" not in text)
+    finally:
+        sys.path.remove(str(harness))
+
+    # SDLC owns publication now. Its consumer counts attempts before launch,
+    # parks blocked delivery, and sends delivered identity back to acceptance.
+    # Executable consumer checks cover those paths below; the retired script's
+    # source strings are not a second implementation to preserve.
 
 
 def main() -> int:
@@ -3474,6 +3563,7 @@ def main() -> int:
     gh_retry_checks()
     undefined_module_checks()
     clean_tree_is_not_empty_work_checks()
+    fix_verdict_checks()
     operator_settings_live_in_config_checks()
     unreachable_code_checks()
     irreversible_scripts_refuse_arguments_checks()
