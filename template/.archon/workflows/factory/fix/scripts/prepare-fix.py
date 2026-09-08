@@ -56,6 +56,14 @@ branch = pr.get("headRefName") or ""
 if not branch:
     die(f"{target} has no head branch")
 
+# The fix node is a builder too, so the same wall goes up here before it runs.
+import holdoutwall  # noqa: E402
+
+try:
+    note(holdoutwall.wall())
+except RuntimeError as e:
+    die(f"could not wall off the holdout in this worktree: {e}")
+
 if pr["_state"] == "needs-human":
     die(f"{target} is parked at needs-human; a human has to remove the label first")
 if pr["_state"] != "failed":

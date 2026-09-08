@@ -60,6 +60,12 @@ if ! [ -x "$HOME/.local/bin/claude" ]; then
   curl -fsSL https://claude.ai/install.sh | bash >/dev/null
 fi
 
+say "Codex (OpenAI): node from apt, then the CLI"
+if ! command -v codex >/dev/null 2>&1; then
+  apt-get install -y -qq nodejs npm >/dev/null
+  npm install -g @openai/codex >/dev/null 2>&1
+fi
+
 say "PATH for future shells"
 # Both files. Ubuntu's .bashrc returns early for non-interactive shells, before any
 # line appended to it, so `ssh host cmd` and login shells read .profile instead.

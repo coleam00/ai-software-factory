@@ -20,6 +20,7 @@ import os
 import re
 import sys
 from datetime import datetime, timezone
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -1644,6 +1645,64 @@ def fix_verdict_checks() -> None:
           "without it land can only fail on an empty diff")
 
 
+def holdout_wall_checks() -> None:
+    """The holdout is removed from a BUILDER's worktree, and only there.
+
+    A tool deny is honoured by some providers and ignored, with a warning, by others
+    (Codex, for one). On those the builder could read the scenarios it is judged on
+    with every check still green. The wall that works everywhere is a checkout that
+    does not contain the files: sparse-checkout in the builder's worktree, files kept
+    in the branch, nothing reported as deleted, the main checkout never touched.
+    """
+    import holdoutwall  # noqa: PLC0415
+
+    here = Path(__file__).resolve().parent
+    for rel in (".archon/workflows/factory/implement/scripts/preflight.py",
+                ".archon/workflows/factory/fix/scripts/prepare-fix.py"):
+        src = (here.parent / rel).read_text(encoding="utf-8")
+        check(f"{Path(rel).name} raises the holdout wall before any model runs",
+              "holdoutwall.wall()" in src,
+              "a builder that can see the answer key writes to it")
+
+    def g(*args: str, cwd: Path) -> tuple[int, str]:
+        p = subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+                           cwd=str(cwd), capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=120)
+        return p.returncode, (p.stdout + p.stderr).strip()
+
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir()
+        g("init", "-q", "-b", "main", cwd=repo)
+        (repo / ".factory" / "holdout").mkdir(parents=True)
+        (repo / ".factory" / "holdout" / "HOLDOUT.md").write_text("secret scenarios\n", encoding="utf-8")
+        (repo / "app.py").write_text("print(1)\n", encoding="utf-8")
+        g("add", "-A", cwd=repo)
+        g("commit", "-q", "-m", "seed", cwd=repo)
+        wt = Path(td) / "wt"
+        rc, out = g("worktree", "add", "-q", "-b", "build", str(wt), cwd=repo)
+        if rc != 0:
+            check("a worktree could be created for the wall test", False, out)
+            return
+
+        msg = holdoutwall.wall(root=wt, shared=repo)
+        check("the wall removes the holdout from a builder worktree",
+              msg.startswith("HOLDOUT_WALL sparse-checkout")
+              and not (wt / ".factory" / "holdout" / "HOLDOUT.md").exists(), msg)
+        rc, status = g("status", "--porcelain", cwd=wt)
+        check("and git reports nothing deleted, so the commit step cannot stage it",
+              rc == 0 and not status.strip(), status)
+        check("the rest of the checkout is untouched", (wt / "app.py").exists())
+        rc, tracked = g("ls-files", "--", ".factory/holdout", cwd=wt)
+        check("the branch still carries the holdout", "HOLDOUT.md" in tracked)
+
+        msg2 = holdoutwall.wall(root=repo, shared=repo)
+        check("the wall refuses the main checkout, where a human edits the scenarios",
+              msg2.startswith("HOLDOUT_WALL skipped")
+              and (repo / ".factory" / "holdout" / "HOLDOUT.md").exists(), msg2)
+        g("worktree", "remove", "--force", str(wt), cwd=repo)
+
+
 def main() -> int:
     quiet = "--quiet" in sys.argv
     # POINT THE LEDGER SOMEWHERE HARMLESS FOR THE WHOLE RUN, before any check fires.
@@ -1678,6 +1737,7 @@ def main() -> int:
     undefined_module_checks()
     clean_tree_is_not_empty_work_checks()
     fix_verdict_checks()
+    holdout_wall_checks()
     operator_settings_live_in_config_checks()
     unreachable_code_checks()
     irreversible_scripts_refuse_arguments_checks()

@@ -53,6 +53,17 @@ def die(msg: str) -> None:
 if guard.preflight() != 0:
     die("a credential-shaped path is not gitignored; see above")
 
+# --- 1b. the holdout wall ----------------------------------------------------
+# Before a single token is spent. The deny list on the AI nodes is honoured by some
+# providers and ignored (with a warning) by others; removing the files from this
+# worktree works on all of them. See factory/holdoutwall.py.
+import holdoutwall  # noqa: E402
+
+try:
+    note(holdoutwall.wall())
+except RuntimeError as e:
+    die(f"could not wall off the holdout in this worktree: {e}")
+
 # --- 2. the issue is buildable ------------------------------------------------
 try:
     issue = state.fetch(target)
