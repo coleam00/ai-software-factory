@@ -1,11 +1,19 @@
 # First hour
 
-Read the [installation and operation instructions](../README.md) and
-[migration contract](../template/factory/MIGRATION.md). Choose a complete tested
-integration SHA. Configure provider authentication through native Archon, install
-with an immutable source cache, then run factory doctor and factory list.
+Start with the [setup prompt in the README](../README.md#set-it-up). Your coding
+agent runs the installer, configures Archon and helps write your mission and journeys.
+The installer selects the shared Archon source revision automatically.
 
-Configure ordinary static/unit commands and author runtime/holdout scenario data.
-Run project checks, then invoke one supported shared workflow with explicit inputs.
-Inspect its run ID with get and status. Respond to actual declared gates explicitly.
-Queue, standing intake and unattended operation remain producer integration work.
+1. Review the mission, especially what is out of scope.
+2. Review the journeys and independent holdout scenarios. Have the agent configure
+   runtime inputs and app startup using the installed `factory/RUNTIME_HOST.md`.
+3. Have the agent run `python factory/consumer.py doctor` and
+   `python factory/consumer.py list`, then explain anything still missing.
+4. Watch one small issue go to a PR with `archon-ship`. For the full sequence,
+   use `archon-lifecycle` with the prepared runtime/holdout inputs and merge approval.
+5. Inspect the result before asking the agent to configure scheduling.
+
+The current integration still needs live end-to-end validation. Installation checks
+alone do not prove a successful factory run.
+
+For an older installation, read the [migration guide](../template/factory/MIGRATION.md).
