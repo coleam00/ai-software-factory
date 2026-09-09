@@ -162,7 +162,7 @@ starts a fresh copy of the candidate on a private port. This is what makes
 "verified" mean something.
 
 ```text
-On the server, follow ~/<app>/factory/RUNTIME_HOST.md. Write the runtime host configuration and the scenario JSON for my journeys, plus a separate holdout scenario, under /root/private (outside the repo, mode 700). Run the runtime host as a systemd service with a private connection file, and prove one start, identity and teardown cycle by hand against a copy of main. The app must answer /build-id with the host's candidate string.
+On the server, follow ~/<app>/factory/RUNTIME_HOST.md. Write the runtime host configuration and the scenario JSON for my journeys, plus a separate holdout scenario, under /root/private (outside the repo, mode 700). Run the runtime host as a systemd service with a private connection file, and prove one start, identity and teardown cycle against a copy of main. The app must answer /build-id with the host's candidate string.
 ```
 
 ## 9. Watch one issue go through before any timer
