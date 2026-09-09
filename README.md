@@ -232,7 +232,8 @@ that same target every tick.
 
 A factory that only runs while your laptop is open is a demo. It wants a Linux box
 that never sleeps. Any provider. Use the same setup prompt and tell your agent
-which server and application repo to use.
+which server and application repo to use. [`docs/server-cheat-sheet.md`](docs/server-cheat-sheet.md)
+has every prompt for the whole server setup, in order, from the SSH key to the timer.
 
 For Ubuntu, the agent can inspect and run [`bin/bootstrap-ubuntu.sh`](bin/bootstrap-ubuntu.sh)
 to install the toolchain, then help with GitHub and provider sign-in. Run the
@@ -301,6 +302,7 @@ template/                    what init copies into your repo
   factory/factory-timer.service.example   the timer as a systemd service
   harness/                   project checks and END-TO-END.md
 docs/first-hour.md            what to do after setup
+docs/server-cheat-sheet.md    every prompt for a server install, in order
 docs/incidents.md             historical failures and lessons
 ```
 
