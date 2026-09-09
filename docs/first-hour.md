@@ -7,7 +7,9 @@ The installer selects the shared Archon source revision automatically.
 1. Review the mission, especially what is out of scope.
 2. Starting from a PRD instead of an app? Have the agent run `archon-backlog` on it
    and review the issues it proposes before they are published; the first one makes
-   the product runnable. Ship that one with `archon-ship` and merge it, then continue.
+   the product runnable and names its start command, so the runtime host is wired
+   from it before it is built. That ticket then goes through the lifecycle like
+   every other one.
 3. Review the journeys and independent holdout scenarios. Have the agent configure
    runtime inputs and app startup using the installed `factory/RUNTIME_HOST.md`.
 4. Have the agent run `python factory/consumer.py doctor` and

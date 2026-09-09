@@ -33,9 +33,11 @@ Replace the placeholders before pasting:
 
 A GitHub repo that holds either a working application or only a PRD. Step 7's
 install asks which and follows the README's path for each: with an application,
-you file issues; with a PRD, the factory slices it into the issues itself and the
-first one makes the product runnable. Runtime verification (step 8) is wired once
-something runs, so on the PRD path it comes after the first ticket lands.
+you file issues; with a PRD, the factory slices it into the issues itself, the
+first one makes the product runnable, and the journeys are written from the PRD.
+Runtime verification (step 8) is wired from the start command that first ticket
+declares, so on the PRD path it comes right after the backlog exists and the first
+ticket goes through step 9 like any other.
 
 ---
 

@@ -120,11 +120,13 @@ these scenarios are meant to be hidden.
 
 Journeys describe what the product **does today**, never what it should do. A
 journey for behaviour that does not exist yet leaves the gate red before the first
-lap, and nothing can merge, including the change that would make it pass. When the
-repo holds only a PRD, write `MISSION.md` and the harness commands now (the
-interview decides the stack, so the declared gate has something to run) and the
-journeys and holdout right after the first ticket lands (step 5); there is nothing
-to describe before that.
+lap, and nothing can merge, including the change that would make it pass. A PRD is
+the exception: it is the one document that describes behaviour before the code
+exists, so when the repo holds only a PRD, write all three files from it now, plus
+the harness commands (the interview decides the stack, so the declared gate has
+something to run). Replace the installed example journeys entirely; a merge
+assessor that finds task-service journeys in a pastebin holds the PR. Only the
+runtime host waits, for the start command the first ticket declares (step 5).
 
 Configure the project's static/unit commands and translate the journeys into the
 runtime scenario inputs required by the shared workflows. Follow the installed
@@ -158,13 +160,15 @@ python factory/consumer.py run archon-backlog --input prd=<path to the PRD> --in
 The shared workflow slices the document into ordered issues the way an engineering
 lead would, the first one making the product runnable end to end (start command,
 health check, build-identity endpoint, tests, CI). Re-running it never duplicates
-an issue. Then ship the first issue with `archon-ship` and merge it with
-`archon-merge-queue`: there is nothing to verify at runtime yet. If the queue holds
-the PR, the reason is a comment on it starting `<!-- archon-merge-hold -->`; re-run
+an issue. The first ticket's body names the exact start command and the health and
+build-id paths, so wire the runtime host from it now, before anything is built, and
+then every ticket, the first included, goes through `archon-lifecycle` with the
+journeys and holdout from step 3. There is no special first-ticket path: the
+lifecycle verifies the skeleton against the journeys before merging it, which is
+also the first proof the journeys are right. If the merge queue holds a PR, the
+reason is a comment on it starting `<!-- archon-merge-hold -->`; re-run
 `archon-deliver` adopting the delivery run (`--adopt <run id>`) and the review turns
-that hold into a finding it fixes. Once the product runs, write the journeys and
-holdout against it, wire the runtime host, and every later issue goes through
-`archon-lifecycle` with full verification.
+that hold into a finding it fixes.
 
 **6. Stop there.** Leave scheduling off until the user has watched a lap complete.
 If they already asked you to run that first lap, continue within that scope.
