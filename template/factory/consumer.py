@@ -165,9 +165,15 @@ def validate(settings: dict, source: Path, name: str) -> None:
 
 def doctor(settings: dict) -> dict:
     source = verify_source(settings)
+    # Global flags such as --json are documented once, in the top-level workflow
+    # help, and not repeated under every subcommand (`workflow status --help` lists
+    # only --events and --all, yet `status --json` works). A flag counts as
+    # documented when either help names it; the subcommand itself must still exist.
+    shared_help = checked([*cli(settings, source), "workflow", "--help"], source)
     for command, flags in MANIFEST["capabilities"].items():
         help_text = checked([*cli(settings, source), "workflow", command, "--help"], source)
-        if f"workflow {command}" not in help_text or any(flag not in help_text for flag in flags):
+        if f"workflow {command}" not in help_text or any(
+                flag not in help_text and flag not in shared_help for flag in flags):
             raise ValueError(f"Pinned CLI missing workflow {command} capability: {flags}")
     discovered = discover(settings, source)
     missing = sorted(set(MANIFEST["entries"]) - discovered.keys())
