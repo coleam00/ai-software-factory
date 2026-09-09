@@ -179,7 +179,8 @@ shared SDLC pack. You can run the workflows individually or use the full composi
 | Re-test existing behavior and diagnose regressions | `archon-regress` |
 | Recheck discoveries, deduplicate them and optionally publish issues | `archon-discoveries` |
 | Check PRs and CI, then merge according to the selected approval mode | `archon-merge-queue` |
-| Run shipping, runtime/holdout verification, bounded repair, discoveries and merge | `archon-lifecycle` |
+| Roll the default branch onto a running service and read the revision back | `archon-deploy` |
+| Run shipping, runtime/holdout verification, bounded repair, discoveries, merge and deployment | `archon-lifecycle` |
 
 **Ship runs its own triage.** You do not have to run triage first. Deliver can use
 an existing run's worktree to repair the same PR. Lifecycle connects the shared
@@ -219,9 +220,11 @@ After the first successful lap, ask your agent to configure
 `python factory/consumer.py tick` submits one whole workflow.
 `bash .factory/loop.sh` repeats it, every five minutes by default.
 
-A fixed issue target repeats that same target; the scheduler does not select the
-next issue from a backlog. Any AI intake or selection must also live in a shared
-Archon workflow.
+The scheduler never selects work itself. Backlog intake lives in the shared
+lifecycle: with an empty `target` and `publish=true`, each run takes the oldest
+open issue nobody has touched (no `archon-*` label, no open PR naming it), and a
+run that finds nothing completes with nothing to do. A fixed `target` repeats
+that same target every tick.
 
 ---
 
@@ -239,8 +242,11 @@ Watch one issue become a PR, verify the running app, and approve its merge befor
 starting a persistent loop or OS timer. The service needs the same tool paths and
 authentication as the successful manual run. Installation does not start it for you.
 
-Deployment is project-specific and is not automatically configured by a merge.
-Have the setup agent wire the application's deployment separately.
+Deployment is project-specific: the setup agent wires the service (systemd, a
+reverse proxy, DNS) and gives the lifecycle its `deploy`, `health` and `identity`
+commands. With those set, a confirmed merge runs the shared `archon-deploy`
+workflow, which rolls the default branch onto the service and reads the deployed
+revision back. Without them, a merge is only a merge.
 
 ---
 
@@ -250,8 +256,9 @@ Have the setup agent wire the application's deployment separately.
 the layer a machine can check is intact.
 
 **It does not invent a backlog.** A schedule runs the workflow you configured with
-the inputs you supplied. Discovery can publish verified findings; that is different
-from deciding what the product should become.
+the inputs you supplied; intake only picks up issues people filed. Discovery can
+publish verified findings; that is different from deciding what the product
+should become.
 
 **It does not maintain a second set of AI workflows.** Factory runs the pinned
 shared SDLC source. Changes to agent behavior belong there.

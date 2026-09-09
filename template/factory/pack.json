@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/coleam00/Archon",
-  "integration_revision_required": "27b8fe6debae7adb4d622431e3addb9031589c07",
-  "description": "Shared workflow integration candidate. No new forge or scheduling engine features. Live validation is pending.",
+  "integration_revision_required": "91cba07ec2b2a1a328c37ed427de5278f41b6ba4",
+  "description": "Shared workflow integration candidate with deterministic deployment and lifecycle backlog intake. No new forge or scheduling engine features.",
   "source_directory": ".archon/workflows/sdlc",
   "entries": {
     "archon-triage": "Assess one request against current repository evidence",
@@ -14,7 +14,8 @@
     "archon-merge-queue": "Assess and merge an authorized batch with gh",
     "archon-lifecycle": "Issue through delivery, runtime, holdout, discovery and merge",
     "archon-regress": "Validate and diagnose regressions",
-    "archon-verify-runtime-suite": "Run baseline and deliberate runtime controls"
+    "archon-verify-runtime-suite": "Run baseline and deliberate runtime controls",
+    "archon-deploy": "Roll the default branch onto a running service and read the revision back"
   },
   "capabilities": {
     "run": [
