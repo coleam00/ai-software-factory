@@ -93,10 +93,13 @@ coding-agent subprocesses to factory scripts or create factory-local workflow co
 
 **3. Write the three files with them.**
 
+The repo holds either an application or only a product document (a PRD). The
+interview is the same either way; a PRD answers what the code would have.
+
 Read the repo FIRST. The language, the test command, the start command, the entry
-point and the routes are all in there. Then ask at most four questions, each with
-your proposed answer already filled in so the cheapest reply is "yes". Every
-question the repo already answered is a reason to regret starting.
+point and the routes are all in there, or the PRD is. Then ask at most four
+questions, each with your proposed answer already filled in so the cheapest reply
+is "yes". Every question the repo already answered is a reason to regret starting.
 
 | File | What you are writing |
 |---|---|
@@ -116,7 +119,9 @@ these scenarios are meant to be hidden.
 
 Journeys describe what the product **does today**, never what it should do. A
 journey for behaviour that does not exist yet leaves the gate red before the first
-lap, and nothing can merge, including the change that would make it pass.
+lap, and nothing can merge, including the change that would make it pass. When the
+repo holds only a PRD, write `MISSION.md` now and the journeys and holdout right
+after the first ticket lands (step 5); there is nothing to describe before that.
 
 Configure the project's static/unit commands and translate the journeys into the
 runtime scenario inputs required by the shared workflows. Follow the installed
@@ -133,12 +138,29 @@ python factory/consumer.py list
 Show any failures and what remains to configure. Doctor checks the installation
 and available workflows; it does not prove a live agent can sign in or complete a run.
 
-Give the user the exact command for one small issue, using `archon-ship` for
-issue-to-PR or `archon-lifecycle` for the full verification-and-merge sequence.
-For lifecycle, prepare the required scenario/holdout inputs and runtime host first.
-Start with merge approval enabled and discovery publication in preview mode.
+**5. Ask the one question that picks the path: existing codebase, or a PRD?**
 
-**5. Stop there.** Leave scheduling off until the user has watched a lap complete.
+*Existing codebase.* The user files issues. Give them the exact command for one
+small issue, using `archon-ship` for issue-to-PR or `archon-lifecycle` for the
+full verification-and-merge sequence. For lifecycle, prepare the scenario/holdout
+inputs and runtime host first. Start with merge approval enabled and discovery
+publication in preview mode.
+
+*A PRD.* The factory creates the backlog from it:
+
+```bash
+python factory/consumer.py run archon-backlog --input prd=<path to the PRD> --input publication=approve
+```
+
+The shared workflow slices the document into ordered issues the way an engineering
+lead would, the first one making the product runnable end to end (start command,
+health check, build-identity endpoint, tests, CI). Re-running it never duplicates
+an issue. Then ship the first issue with `archon-ship` and merge it with
+`archon-merge-queue`: there is nothing to verify at runtime yet. Once it runs,
+write the journeys and holdout against it, wire the runtime host, and every later
+issue goes through `archon-lifecycle` with full verification.
+
+**6. Stop there.** Leave scheduling off until the user has watched a lap complete.
 If they already asked you to run that first lap, continue within that scope.
 
 ---
@@ -170,6 +192,7 @@ shared SDLC pack. You can run the workflows individually or use the full composi
 
 | What you want | Shared Archon workflow |
 |---|---|
+| Turn a PRD into an ordered backlog of issues | `archon-backlog` |
 | Check whether an issue is ready and in scope | `archon-triage` |
 | Take an issue through planning, implementation and review to a PR | `archon-ship` |
 | Implement an existing plan or repair a PR | `archon-deliver` |
@@ -273,10 +296,10 @@ revision back. Without them, a merge is only a merge.
 **It does not judge taste.** A green gate never means the product is good. It means
 the layer a machine can check is intact.
 
-**It does not invent a backlog.** A schedule runs the workflow you configured with
-the inputs you supplied; intake only picks up issues people filed. Discovery can
-publish verified findings; that is different from deciding what the product
-should become.
+**It does not invent a backlog.** The backlog comes from you: issues you file, or
+a PRD you wrote that `archon-backlog` slices into issues you approve. Intake only
+picks up what is there. Discovery can publish verified findings; that is different
+from deciding what the product should become.
 
 **It does not maintain a second set of AI workflows.** Factory runs the pinned
 shared SDLC source. Changes to agent behavior belong there.

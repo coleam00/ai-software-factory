@@ -31,25 +31,11 @@ Replace the placeholders before pasting:
 
 ## What you start with
 
-The factory installs into a GitHub repo that already holds a working application:
-something that starts, answers a health check, has at least a few tests and a CI
-check, and does something a person could describe as a journey. That is the input.
-The repo does not need any factory in it yet (`init` is idempotent and upgrades an
-older install), and the app can be tiny.
-
-The factory does not build a product from nothing. The journeys it verifies describe
-what the app does today, and a journey for behavior that does not exist yet keeps
-every merge red. So if all you have is a PRD, build the walking skeleton first, on
-your laptop, with the same agent:
-
-**💬 Prompt to your agent**
-```text
-Read <path to my PRD>. Create a new private GitHub repo <you>/<app> and build the smallest working version of this product in it: the core path a user takes, a GET /health endpoint that returns 200, a GET /build-id endpoint that returns the FACTORY_RUNTIME_CANDIDATE environment variable when set (else the git commit), a unit test suite, and a GitHub Actions workflow that runs the tests on every pull request. Keep runtime dependencies minimal. Push it and confirm the CI check is green.
-```
-
-Everything else in the PRD becomes issues later, once the factory is running.
-`MISSION.md` (step 7) is the PRD compressed to what an agent must obey: what the
-product is, and the list of things it must never become.
+A GitHub repo that holds either a working application or only a PRD. Step 7's
+install asks which and follows the README's path for each: with an application,
+you file issues; with a PRD, the factory slices it into the issues itself and the
+first one makes the product runnable. Runtime verification (step 8) is wired once
+something runs, so on the PRD path it comes after the first ticket lands.
 
 ---
 
