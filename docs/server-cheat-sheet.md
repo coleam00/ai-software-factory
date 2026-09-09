@@ -243,8 +243,9 @@ From here, filing an issue is the only input.
 ## 12. Running it
 
 Ask your agent for anything else: status, the last few ticks, a run's record with
-the provider and model of every node, approving a held merge, resuming a run that
-paused on a pending GitHub check, pausing new launches, stopping the timer. It
+the provider and model of every node, approving a held merge, re-driving a PR the
+merge queue held (its reason is a comment on the PR), resuming a run that paused on
+a pending GitHub check, pausing new launches, stopping the timer. It
 knows the factory's commands from the README. Two you will use:
 
 **💬 Prompt to your agent**

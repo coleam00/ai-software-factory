@@ -159,9 +159,12 @@ The shared workflow slices the document into ordered issues the way an engineeri
 lead would, the first one making the product runnable end to end (start command,
 health check, build-identity endpoint, tests, CI). Re-running it never duplicates
 an issue. Then ship the first issue with `archon-ship` and merge it with
-`archon-merge-queue`: there is nothing to verify at runtime yet. Once it runs,
-write the journeys and holdout against it, wire the runtime host, and every later
-issue goes through `archon-lifecycle` with full verification.
+`archon-merge-queue`: there is nothing to verify at runtime yet. If the queue holds
+the PR, the reason is a comment on it starting `<!-- archon-merge-hold -->`; re-run
+`archon-deliver` adopting the delivery run (`--adopt <run id>`) and the review turns
+that hold into a finding it fixes. Once the product runs, write the journeys and
+holdout against it, wire the runtime host, and every later issue goes through
+`archon-lifecycle` with full verification.
 
 **6. Stop there.** Leave scheduling off until the user has watched a lap complete.
 If they already asked you to run that first lap, continue within that scope.
