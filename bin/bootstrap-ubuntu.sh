@@ -94,7 +94,10 @@ Next, the two logins only you can do:
   gh auth setup-git
   codex login --device-auth      # Codex: short code, approve on your laptop
   # or Claude Code, on your laptop:  claude setup-token
-  #   then here:  echo 'export CLAUDE_CODE_OAUTH_TOKEN=<token>' >> ~/.bashrc && source ~/.bashrc
+  #   then here, in a mode-600 file every shell and the timer service source:
+  #     echo 'export CLAUDE_CODE_OAUTH_TOKEN=<token>' >> ~/.factory-env && chmod 600 ~/.factory-env
+  #     echo 'source ~/.factory-env; export IS_SANDBOX=1' >> ~/.profile && source ~/.profile
+  #   (IS_SANDBOX=1 is what lets Claude Code run unattended as root)
 Then, in your repo:
   git clone https://github.com/coleam00/ai-software-factory ~/ai-software-factory
   python3 ~/ai-software-factory/bin/factory.py init

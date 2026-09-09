@@ -1,0 +1,35 @@
+# The factory timer as a systemd service: one whole shared workflow per tick,
+# serially, surviving logouts and reboots. Copy, fill in the three <...> values,
+# then:  cp factory/factory-timer.service.example /etc/systemd/system/factory-timer.service
+#        systemctl daemon-reload && systemctl enable --now factory-timer
+# Stop launching new ticks with `systemctl disable --now factory-timer`, or
+# `python3 factory/consumer.py halt` (writes .factory/STOP; the loop exits).
+#
+# Configure .factory/schedule.json first and watch one lap complete by hand.
+# The service needs exactly what that manual run had, and systemd gives a root
+# service none of it by default:
+#   - HOME: git's credential helper (gh) and Archon's ~/.archon are found through it.
+#   - PATH: bun, uv and claude live under the user's home, not /usr/bin.
+#   - IS_SANDBOX=1: Claude Code refuses to run unattended as root without it.
+#   - The provider login: keep the Claude Code token in a mode-600 file the
+#     ExecStart sources; never write it into this unit or into the repository.
+
+[Unit]
+Description=AI software factory timer: one shared workflow run per tick
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=<absolute path to the application repo>
+Environment=HOME=<home directory of the user that ran the manual lap, e.g. /root>
+Environment=PATH=<that home>/.bun/bin:<that home>/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=IS_SANDBOX=1
+Environment=FACTORY_INTERVAL_SECONDS=600
+ExecStart=/bin/bash -lc 'source "$HOME/.factory-env" && exec bash .factory/loop.sh'
+Restart=on-failure
+RestartSec=600
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

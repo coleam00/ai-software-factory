@@ -242,6 +242,23 @@ Watch one issue become a PR, verify the running app, and approve its merge befor
 starting a persistent loop or OS timer. The service needs the same tool paths and
 authentication as the successful manual run. Installation does not start it for you.
 
+**As a systemd service.** `init` installs `factory/factory-timer.service.example`;
+fill in the three placeholders and enable it. Three things the manual run had that a
+root service does not get on its own, and the example sets each of them:
+
+- `HOME`: git's credential helper (`gh`) and Archon's `~/.archon` are found through it.
+- `PATH`: `bun`, `uv` and `claude` live under the user's home, not `/usr/bin`.
+- `IS_SANDBOX=1`: Claude Code refuses to run unattended as root without it.
+
+Keep the Claude Code token in a mode-600 file the service sources (the example
+uses `~/.factory-env`), never in the unit or the repository. Each tick is one whole
+shared workflow; the loop waits `FACTORY_INTERVAL_SECONDS` after a tick ends before
+launching the next, so ticks never overlap. Stop it with `systemctl disable --now
+factory-timer` or `python factory/consumer.py halt`.
+
+If a run pauses on a pending GitHub check, `python factory/consumer.py resume
+<run-id>` continues it once the check concludes; the CLI does not resume it for you.
+
 Deployment is project-specific: the setup agent wires the service (systemd, a
 reverse proxy, DNS) and gives the lifecycle its `deploy`, `health` and `identity`
 commands. With those set, a confirmed merge runs the shared `archon-deploy`
@@ -281,6 +298,7 @@ template/                    what init copies into your repo
   factory/consumer.py        invokes shared Archon workflows and shows their state
   factory/pack.json          shared source revision and required workflows
   factory/RUNTIME_HOST.md    app startup and runtime scenario configuration
+  factory/factory-timer.service.example   the timer as a systemd service
   harness/                   project checks and END-TO-END.md
 docs/first-hour.md            what to do after setup
 docs/incidents.md             historical failures and lessons
