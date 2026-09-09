@@ -90,7 +90,7 @@ printf '  %-8s %s\n' git "$(git --version | cut -d' ' -f3)" \
 cat <<'EOF'
 
 Next, the two logins only you can do:
-  gh auth login --hostname github.com --git-protocol https --web
+  gh auth login --hostname github.com --git-protocol https --web -s workflow
   gh auth setup-git
   codex login --device-auth      # Codex: short code, approve on your laptop
   # or Claude Code, on your laptop:  claude setup-token

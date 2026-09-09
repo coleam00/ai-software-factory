@@ -109,12 +109,14 @@ source ~/.profile
 
 **⌨️ Command you run yourself**
 ```bash
-gh auth login --hostname github.com --git-protocol https --web
+gh auth login --hostname github.com --git-protocol https --web -s workflow
 gh auth setup-git
 gh auth status
 ```
 
 `gh auth setup-git` is the command people miss: it is what lets git itself push.
+`-s workflow` is the scope people miss: without it the factory cannot push a change
+that touches `.github/workflows/`, and the first ticket from a PRD always does.
 
 ### 6b. Your coding agent
 

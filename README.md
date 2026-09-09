@@ -37,8 +37,9 @@ Leave scheduling off until we have watched one issue go through the factory.
 That is the install. It clones this, runs the installer, then walks you through
 the three files nobody can write for you.
 
-**You need:** git, Python 3.10+, [`gh`](https://cli.github.com) authenticated (and
-`gh auth setup-git`, so git itself can push), a GitHub remote, a coding agent,
+**You need:** git, Python 3.10+, [`gh`](https://cli.github.com) authenticated with the
+`workflow` scope (`gh auth login -s workflow`, then `gh auth setup-git` so git itself
+can push, including CI workflow files), a GitHub remote, a coding agent,
 [`bun`](https://bun.sh) and [`uv`](https://docs.astral.sh/uv/).
 Your agent can help install the missing tools. The installer brings its own pinned
 Archon source, including the shared workflows; you do not need to check out Archon
@@ -120,8 +121,10 @@ these scenarios are meant to be hidden.
 Journeys describe what the product **does today**, never what it should do. A
 journey for behaviour that does not exist yet leaves the gate red before the first
 lap, and nothing can merge, including the change that would make it pass. When the
-repo holds only a PRD, write `MISSION.md` now and the journeys and holdout right
-after the first ticket lands (step 5); there is nothing to describe before that.
+repo holds only a PRD, write `MISSION.md` and the harness commands now (the
+interview decides the stack, so the declared gate has something to run) and the
+journeys and holdout right after the first ticket lands (step 5); there is nothing
+to describe before that.
 
 Configure the project's static/unit commands and translate the journeys into the
 runtime scenario inputs required by the shared workflows. Follow the installed
