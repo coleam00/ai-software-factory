@@ -29,6 +29,28 @@ Replace the placeholders before pasting:
 | `<port>` | the app's local port behind the proxy | `8080` |
 | `<agent>` | the coding agent the factory runs on | `Claude Code` or `Codex` |
 
+## What you start with
+
+The factory installs into a GitHub repo that already holds a working application:
+something that starts, answers a health check, has at least a few tests and a CI
+check, and does something a person could describe as a journey. That is the input.
+The repo does not need any factory in it yet (`init` is idempotent and upgrades an
+older install), and the app can be tiny.
+
+The factory does not build a product from nothing. The journeys it verifies describe
+what the app does today, and a journey for behavior that does not exist yet keeps
+every merge red. So if all you have is a PRD, build the walking skeleton first, on
+your laptop, with the same agent:
+
+**💬 Prompt to your agent**
+```text
+Read <path to my PRD>. Create a new private GitHub repo <you>/<app> and build the smallest working version of this product in it: the core path a user takes, a GET /health endpoint that returns 200, a GET /build-id endpoint that returns the FACTORY_RUNTIME_CANDIDATE environment variable when set (else the git commit), a unit test suite, and a GitHub Actions workflow that runs the tests on every pull request. Keep runtime dependencies minimal. Push it and confirm the CI check is green.
+```
+
+Everything else in the PRD becomes issues later, once the factory is running.
+`MISSION.md` (step 7) is the PRD compressed to what an agent must obey: what the
+product is, and the list of things it must never become.
+
 ---
 
 ## 1. Connect your agent to your host
