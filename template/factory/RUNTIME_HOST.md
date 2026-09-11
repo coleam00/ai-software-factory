@@ -69,6 +69,48 @@ environments, node_modules and bytecode caches are refused in included paths.
 An included directory containing these fails explicitly. Do not list the whole
 checkout. Other private evaluator filenames must also be excluded by the operator.
 
+### The candidate root must track the delivered revision
+
+`roots.candidate` is a real directory holding the exact bytes to verify, and the
+host never updates it for you. A root left pointing at a fixed copy of `main`
+verifies that copy on every run, forever: the app boots, the assertions pass and
+the report says `verified`, while the pull request under review was never
+executed. The merge gate is what catches it, by comparing the configured source
+digest against the delivered revision and holding on a target mismatch. Nothing
+fails earlier, so wire this correctly the first time.
+
+A symlink does not solve it — linked source paths are refused. Re-materialise the
+root from the delivering checkout instead, in each scenario's `setup` command,
+which runs before `start`:
+
+```bash
+#!/usr/bin/env bash
+# /root/private/refresh-candidate.sh -- operator-owned, mode 700.
+# Run from the checkout being delivered; the shared workflow's setup step is
+# already there.
+set -euo pipefail
+SRC="$(git rev-parse --show-toplevel)"
+REV="$(git rev-parse HEAD)"
+rm -rf /root/candidate && mkdir -p /root/candidate
+git -C "$SRC" archive "$REV" | tar -x -C /root/candidate
+find /root/candidate -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null || true
+echo "candidate root synced to $REV from $SRC" >&2
+```
+
+`git archive` is what keeps the copy clean: it writes only committed bytes, with
+no `.git` directory and none of the ignored files the include rules refuse.
+
+Then chain it ahead of the host call in the scenario's `environment.setup`:
+
+```json
+"setup": "/root/private/refresh-candidate.sh && python factory/runtime_host.py setup --slot baseline --connection-file /private/connection.json"
+```
+
+Verify it once, deliberately: start a slot, and confirm the reported
+`source_digest` changes when the delivered revision changes. A digest that never
+moves between runs means the root is frozen and every later `verified` is about
+the wrong tree.
+
 `setup` is optional and runs inside the new snapshot. `command` is required.
 Both accept argv arrays only, with literal `{python}`, `{source}`, `{state}` and
 `{port}` substitution. Only Python/Node executables are supported; shell commands,

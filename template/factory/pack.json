@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/coleam00/Archon",
-  "integration_revision_required": "29f6a73daee6edb6eb9d150118e4d040ee9c7bed",
+  "integration_revision_required": "6060391f89bcde098378498d13c436f7eeffe6b3",
   "description": "Shared workflow integration candidate with deterministic deployment and lifecycle backlog intake. No new forge or scheduling engine features.",
   "source_directory": ".archon/workflows/sdlc",
   "entries": {

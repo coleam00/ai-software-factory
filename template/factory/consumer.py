@@ -63,7 +63,17 @@ def verify_source(settings: dict) -> Path:
         raise ValueError(f"Source SHA mismatch: expected {revision}, found {actual}")
     dirty = checked(["git", "status", "--porcelain", "--untracked-files=all"], source)
     if dirty.strip():
-        raise ValueError("Pinned source has changes; restore it or install a new revision")
+        # Name the paths and the way back. The usual cause is a dependency install
+        # inside the pinned tree, which looks harmless and stops every run.
+        changed = [line[3:].strip() for line in dirty.strip().splitlines() if line[3:].strip()]
+        shown = ", ".join(changed[:5])
+        if len(changed) > 5:
+            shown += f", and {len(changed) - 5} more"
+        raise ValueError(
+            f"Pinned source has changes ({shown}). The pinned tree is verified byte for byte. "
+            f"Restore it with: rm -rf {source} && python3 bin/factory.py init from your repo. "
+            f"To change engine behavior, move the pin in factory/pack.json instead of editing the tree"
+        )
     # Include ignored files under authoring roots: an ignored workflow can shadow a
     # committed name just as an untracked one can. Runtime dependencies stay ignored.
     tracked = set(checked(["git", "ls-files"], source).splitlines())
