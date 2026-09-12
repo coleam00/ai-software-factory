@@ -4,6 +4,27 @@ The factory on a server that never sleeps, driven from your laptop's coding agen
 Everything below is a prompt you paste to the agent, except the two logins in step
 6, which only a person can complete.
 
+> ### 💡 The short way: hand this page to your coding agent
+>
+> You do not have to work through the steps yourself. Give your agent the URL and
+> let it drive the whole setup:
+>
+> ```text
+> Set up my AI software factory on a server, following this guide end to end:
+> https://github.com/coleam00/ai-software-factory/blob/main/docs/server-cheat-sheet.md
+>
+> Read it first, then work through it as your own task list. Ask me for the
+> placeholder values you need before you start, stop at step 6 so I can do the two
+> browser logins myself, and carry what you learn -- the key path, the server's id
+> and IP -- into every later step. Tell me when a step needs a decision from me.
+> ```
+>
+> It will ask which host and repo you are using, create and lock down the server,
+> install the toolchain, hand you the two logins, install the factory, wire runtime
+> verification, and stop before scheduling so you can watch one issue go through.
+> The steps below are that same setup one prompt at a time, for when you would
+> rather drive it yourself or something needs a closer look.
+
 **How to read it.** Every box is labelled: **💬 Prompt to your agent** is text you paste
 into the agent; **⌨️ Command you run yourself** is typed by you in a terminal;
 **📄 Reference only** is shown so you know what the agent wrote. If you hand this whole
