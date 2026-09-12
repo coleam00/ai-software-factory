@@ -8,7 +8,9 @@
 #   gh                            from GitHub's apt repo. Ubuntu's own gh is too old: its
 #                                 `gh pr edit --add-label` uses a retired GraphQL field and
 #                                 the factory's open-pr step fails on it.
-#   caddy                         the reverse proxy the deploy step puts the app behind
+#   caddy                         the reverse proxy the deploy step puts the app behind,
+#                                 from Caddy's own apt repo: Ubuntu's package is years
+#                                 behind and step 10 depends on its ACME behaviour.
 #   bun                           builds and runs Archon, the workflow engine
 #   uv                            every factory script node runs under it
 #   claude                        Claude Code, the coding agent (swap for your own)
@@ -33,9 +35,20 @@ fi
 
 say() { printf '\n==> %s\n' "$*"; }
 
-say "apt: git, python3, curl, unzip, caddy"
+say "apt: git, python3, curl, unzip"
 apt-get update -qq
-apt-get install -y -qq git python3 curl wget unzip ca-certificates gnupg caddy >/dev/null
+apt-get install -y -qq git python3 curl wget unzip ca-certificates gnupg debian-keyring debian-archive-keyring apt-transport-https >/dev/null
+
+say "caddy from its own apt repo (Ubuntu ships a build years behind)"
+if ! command -v caddy >/dev/null 2>&1 || ! [ -f /etc/apt/sources.list.d/caddy-stable.list ]; then
+  curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key \
+    | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  chmod go+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt \
+    > /etc/apt/sources.list.d/caddy-stable.list
+  apt-get update -qq
+  apt-get install -y -qq caddy >/dev/null
+fi
 
 say "gh from GitHub's apt repo (Ubuntu's is too old for the factory)"
 if ! command -v gh >/dev/null 2>&1 || ! [ -f /etc/apt/sources.list.d/github-cli.list ]; then
@@ -81,12 +94,17 @@ git config --global init.defaultBranch main >/dev/null 2>&1 || true
 
 export PATH="$HOME/.bun/bin:$HOME/.local/bin:$PATH"
 say "installed"
+# The two coding agents are the most fragile installs and the ones whose version
+# decides whether a model is even reachable, so report them rather than leaving
+# the first failure to surface a workflow run later.
 printf '  %-8s %s\n' git "$(git --version | cut -d' ' -f3)" \
   python3 "$(python3 --version | cut -d' ' -f2)" \
   gh "$(gh --version | head -1 | cut -d' ' -f3)" \
   caddy "$(caddy version | cut -d' ' -f1)" \
   bun "$(bun --version)" \
-  uv "$(uv --version | cut -d' ' -f2)"
+  uv "$(uv --version | cut -d' ' -f2)" \
+  codex "$(codex --version 2>/dev/null | cut -d' ' -f2 || echo 'NOT INSTALLED')" \
+  claude "$(claude --version 2>/dev/null | cut -d' ' -f1 || echo 'NOT INSTALLED')"
 cat <<'EOF'
 
 Next, the two logins only you can do:

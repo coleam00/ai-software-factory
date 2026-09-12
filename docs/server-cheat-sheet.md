@@ -4,6 +4,27 @@ The factory on a server that never sleeps, driven from your laptop's coding agen
 Everything below is a prompt you paste to the agent, except the two logins in step
 6, which only a person can complete.
 
+> ### 💡 The short way: hand this page to your coding agent
+>
+> You do not have to work through the steps yourself. Give your agent the URL and
+> let it drive the whole setup:
+>
+> ```text
+> Set up my AI software factory on a server, following this guide end to end:
+> https://github.com/coleam00/ai-software-factory/blob/main/docs/server-cheat-sheet.md
+>
+> Read it first, then work through it as your own task list. Ask me for the
+> placeholder values you need before you start, stop at step 6 so I can do the two
+> browser logins myself, and carry what you learn -- the key path, the server's id
+> and IP -- into every later step. Tell me when a step needs a decision from me.
+> ```
+>
+> It will ask which host and repo you are using, create and lock down the server,
+> install the toolchain, hand you the two logins, install the factory, wire runtime
+> verification, and stop before scheduling so you can watch one issue go through.
+> The steps below are that same setup one prompt at a time, for when you would
+> rather drive it yourself or something needs a closer look.
+
 **How to read it.** Every box is labelled: **💬 Prompt to your agent** is text you paste
 into the agent; **⌨️ Command you run yourself** is typed by you in a terminal;
 **📄 Reference only** is shown so you know what the agent wrote. If you hand this whole
@@ -78,6 +99,25 @@ creation, it is a prompt; otherwise use the panel and note the id and IP.
 Create a new VPS on my <host> account: Ubuntu, the smallest plan with 8 GB of RAM, with the SSH key "<key-name>" attached. Tell me its id and IP when it is ready.
 ```
 
+**Reusing a server that already exists?** Then the key was never attached at
+creation, and most host APIs cannot add one afterwards — the call may report
+success and change nothing. Put it on yourself, through the panel's browser
+terminal or `ssh-copy-id`, and append it with `printf`, never `echo`:
+
+**⌨️ Command you run yourself**
+```bash
+printf '\n%s\n' "$(cat ~/.ssh/<key-name>.pub)" >> ~/.ssh/authorized_keys
+ssh-keygen -lf ~/.ssh/authorized_keys
+```
+
+A provider-managed `authorized_keys` line often arrives with no trailing
+newline. `echo <key> >> authorized_keys` then glues your key onto the end of
+that line, where everything after the `#` is a comment: sshd never sees it, and
+you get `Permission denied (publickey)` with the key plainly there in the file.
+The leading `\n` in `printf` closes the previous line first. `ssh-keygen -lf`
+lists only the keys sshd will actually parse, so your fingerprint showing up in
+that list is the proof — reading the file is not.
+
 ## 4. Lock it down, then give yourself an undo
 
 **💬 Prompt to your agent**
@@ -151,7 +191,7 @@ Then `exit`. That is the last time you type on the server.
 
 **💬 Prompt to your agent**
 ```text
-SSH into my server as root@<vps-ip> with the key ~/.ssh/<key-name>. Clone my repo <you>/<app> into ~/<app> with gh, then set up my AI software factory in it using https://github.com/coleam00/ai-software-factory: read its README and follow the "Instructions for the agent" section, running every command on the server over SSH. Configure Archon for <agent> (Claude Code: Sonnet for small and medium, Opus for large. Codex: GPT-6 Astra on every tier, using the codex CLI I logged in with). Help me write the mission, the journeys and the holdout for this project. When it is installed, run the doctor and list the workflows.
+SSH into my server as root@<vps-ip> with the key ~/.ssh/<key-name>. Clone my repo <you>/<app> into ~/<app> with gh, then set up my AI software factory in it using https://github.com/coleam00/ai-software-factory: read its README and follow the "Instructions for the agent" section, running every command on the server over SSH. Configure Archon for <agent> (Claude Code: Sonnet for small and medium, Opus for large. Codex: GPT-6 Astra on every tier). Help me write the mission, the journeys and the holdout for this project. When it is installed, run the doctor and list the workflows.
 ```
 
 The doctor prints the pinned Archon revision and every shared workflow it can run.
@@ -173,14 +213,17 @@ tiers:
 
 **📄 Reference only, the agent writes this**
 ```yaml
-# Codex. The engine's bundled Codex SDK is older than the newest models, so it
-# points at the CLI you logged in with.
+# Codex. The pinned Archon revision bundles a Codex SDK that vendors its own
+# codex binary, and that vendored binary is what every node runs on -- not the
+# CLI you logged in with in step 6. The two share your login, so one sign-in
+# still covers both. Do not add codexBinaryPath here: the factory runs Archon
+# from source, and the binary override is only read in compiled builds, so it
+# would be accepted and then silently ignored.
 defaultAssistant: codex
 assistants:
   codex:
     model: gpt-6-astra
     modelReasoningEffort: medium
-    codexBinaryPath: /root/.bun/bin/codex
 tiers:
   small:  { provider: codex, model: gpt-6-astra, effort: medium }
   medium: { provider: codex, model: gpt-6-astra, effort: medium }
@@ -195,8 +238,22 @@ starts a fresh copy of the candidate on a private port. This is what makes
 
 **💬 Prompt to your agent**
 ```text
-On the server, follow ~/<app>/factory/RUNTIME_HOST.md. Write the runtime host configuration and the scenario JSON for my journeys, plus a separate holdout scenario, under /root/private (outside the repo, mode 700). Run the runtime host as a systemd service with a private connection file, and prove one start, identity and teardown cycle against a copy of main. The app must answer /build-id with the host's candidate string.
+On the server, follow ~/<app>/factory/RUNTIME_HOST.md. Write the runtime host configuration and the scenario JSON for my journeys, plus a separate holdout scenario, under /root/private (outside the repo, mode 700). Run the runtime host as a systemd service with a private connection file. The candidate root must be re-materialised from the delivering checkout at the start of every run, so put that refresh in each scenario's setup command -- do not leave the root pointing at a fixed copy of main. Prove one start, identity and teardown cycle, and prove a deliberate mutation fails. The app must answer /build-id with the host's candidate string.
 ```
+
+**The candidate root is the one thing here that fails quietly.** Leave it as a
+fixed copy of `main` and every lifecycle run verifies that stale tree instead of
+the pull request. Nothing looks wrong: the app boots, every assertion passes,
+and the report says `verified`. What catches it is the digest comparison at
+merge — the configured source digest will not match the delivered revision, and
+the gate holds with a target mismatch rather than merging code nobody tested.
+The root has to be refreshed from the delivering checkout before each start, and
+it cannot be a symlink; the host refuses linked source paths.
+`factory/RUNTIME_HOST.md` carries the script.
+
+Prove the mutation too, not just the clean start. A runtime host that cannot
+fail is not a gate, and a deliberate defect from `harness/mutations/defects.json`
+is how you find that out in a minute rather than after a bad merge.
 
 ## 9. Watch one issue go through before any timer
 
@@ -246,9 +303,10 @@ From here, filing an issue is the only input.
 
 Ask your agent for anything else: status, the last few ticks, a run's record with
 the provider and model of every node, approving a held merge, re-driving a PR the
-merge queue held (its reason is a comment on the PR), resuming a run that paused on
-a pending GitHub check, pausing new launches, stopping the timer. It
-knows the factory's commands from the README. Two you will use:
+merge queue held (its reason is a comment on the PR), re-driving a PR held at
+runtime qualification, resuming a run that paused on a pending GitHub check,
+pausing new launches, stopping the timer. It knows the factory's commands from
+the README. Two you will use:
 
 **💬 Prompt to your agent**
 ```text
@@ -259,3 +317,28 @@ On the server, show me the factory's status: the timer's last three ticks from t
 ```text
 On the server, stop the factory timer and make sure no run is still active. Leave the app running.
 ```
+
+### When something refuses
+
+**A pull request is open but nothing merges.** Re-running the lifecycle on the
+issue will not help — triage correctly declines to deliver work that an open PR
+already contains. Re-drive the pull request instead:
+
+**💬 Prompt to your agent**
+```text
+On the server, PR <n> on <you>/<app> is held. Read the hold reason -- a runtime qualification hold names an evidence file in the run's artifacts, a merge queue hold is a comment on the PR starting <!-- archon-merge-hold -->. Fix the cause, then re-drive that PR with archon-deliver adopting the delivery run rather than starting a new lifecycle on the issue.
+```
+
+**`Factory refused: Pinned source has changes`.** The pinned Archon checkout is
+verified byte for byte, so anything that edits it — including an innocent
+`bun install` — stops every run until the tree is pristine again. Restore it:
+
+**⌨️ Command you run yourself**
+```bash
+rm -rf ~/.cache/factory/archon/<revision>
+cd ~/<app> && python3 ~/ai-software-factory/bin/factory.py init
+```
+
+Nothing in your project is lost; `init` preserves project configuration and
+reinstalls the pinned source. If you genuinely need different engine behaviour,
+change the pin, do not edit the pinned tree.
