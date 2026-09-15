@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 HOME = Path(__file__).resolve().parent.parent
@@ -18,6 +19,8 @@ PERSONAL = {"factory/config.py", "harness/harness.config.json", "harness/runtime
 RETIRED = [".archon/workflows/factory", "factory/nodeio.py", ".factory/notify.sh"] + [
     f".claude/skills/factory-{name}" for name in
     ("setup", "triage", "plan", "implement", "review", "judge", "fix", "e2e", "holdout")]
+AGENTS_POINTER = (b"See [factory workflow policy](factory/WORKFLOW_POLICY.md) for "
+                  b"factory-specific shared-workflow requirements.\n")
 
 
 def within(root: Path, path: Path) -> Path:
@@ -49,6 +52,33 @@ def retired_files(root: Path) -> list[Path]:
         elif path.is_file():
             result.append(path)
     return result
+
+
+def install_agents_pointer(root: Path, dry: bool) -> None:
+    path = within(root, root / "AGENTS.md")
+    previous = path.read_bytes() if path.exists() else b""
+    if AGENTS_POINTER.rstrip() in previous.splitlines():
+        return
+    print("install AGENTS.md factory policy pointer")
+    if not dry:
+        separator = b"" if not previous or previous.endswith((b"\n", b"\r")) else b"\n"
+        gap = b"" if not previous or previous.endswith((b"\n\n", b"\r\n\r\n")) else b"\n"
+        fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp",
+                                               dir=path.parent)
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                fd = -1
+                handle.write(previous + separator + gap + AGENTS_POINTER)
+                handle.flush()
+                os.fsync(handle.fileno())
+            if path.exists():
+                shutil.copystat(path, temporary)
+            os.replace(temporary, path)
+        finally:
+            if fd != -1:
+                os.close(fd)
+            temporary.unlink(missing_ok=True)
 
 
 def sync(root: Path, dry: bool = False) -> None:
@@ -85,6 +115,7 @@ def sync(root: Path, dry: bool = False) -> None:
         if not dry:
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)
+    install_agents_pointer(root, dry)
     ignore = within(root, root / ".gitignore")
     previous = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
     additions = [line for line in (TEMPLATE / "gitignore-additions.txt").read_text().splitlines()

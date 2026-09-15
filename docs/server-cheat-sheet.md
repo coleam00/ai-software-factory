@@ -78,6 +78,9 @@ Then a read-only sanity check before trusting it with anything:
 What do I have on my <host> account right now? Subscriptions, domains, and any servers.
 ```
 
+This limits what the agent is being asked to do; it is not a provider-enforced
+security sandbox. Connect it with credentials whose permissions fit the task.
+
 ## 2. Generate a key and put the public half on the account
 
 **💬 Prompt to your agent**
@@ -293,7 +296,7 @@ nothing. The unit ships with the install.
 
 **💬 Prompt to your agent**
 ```text
-On the server, schedule the factory in ~/<app> as a systemd service from factory/factory-timer.service.example: one shared lifecycle run per tick, ten minutes apart, backlog intake on (empty target, publish=true), merge mode auto, discovery publication preview, and the deploy, health and /build-id commands for the <app> service. Enable it and follow its journal.
+On the server, schedule the factory in ~/<app> as a systemd service from factory/factory-timer.service.example: one shared lifecycle run per tick, ten minutes apart, backlog intake on (empty target, publish=true), merge mode auto, hold-comment publication explicitly on (publish_holds=true), discovery publication preview, and the deploy, health and /build-id commands for the <app> service. Enable it and follow its journal. Hold-comment publication does not authorize the merge; merge_mode remains the separate authorization input.
 ```
 
 From here, filing an issue is the only input.
@@ -325,7 +328,7 @@ already contains. Re-drive the pull request instead:
 
 **💬 Prompt to your agent**
 ```text
-On the server, PR <n> on <you>/<app> is held. Read the hold reason -- a runtime qualification hold names an evidence file in the run's artifacts, a merge queue hold is a comment on the PR starting <!-- archon-merge-hold -->. Fix the cause, then re-drive that PR with archon-deliver adopting the delivery run rather than starting a new lifecycle on the issue.
+On the server, PR <n> on <you>/<app> is held. Read the hold reason -- a runtime qualification hold names an evidence file in the run's artifacts; when publish_holds=true in approve or auto mode, a published merge queue hold is a comment on the PR starting <!-- archon-merge-hold -->. Fix the cause, then re-drive that PR with archon-deliver adopting the delivery run rather than starting a new lifecycle on the issue.
 ```
 
 **`Factory refused: Pinned source has changes`.** The pinned Archon checkout is

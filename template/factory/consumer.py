@@ -217,6 +217,19 @@ def refuse(action: str) -> int:
     return 2
 
 
+def with_default_inputs(name: str, args: list[str], options: list[str]) -> list[str]:
+    supplied = set()
+    for index, arg in enumerate(options):
+        if arg == "--input" and index + 1 < len(options):
+            supplied.add(options[index + 1].split("=", 1)[0])
+        elif arg.startswith("--input="):
+            supplied.add(arg.removeprefix("--input=").split("=", 1)[0])
+    defaults = MANIFEST.get("default_inputs", {}).get(name, {})
+    injected = [item for key, value in defaults.items() if key not in supplied
+                for item in ("--input", f"{key}={value}")]
+    return [args[0], *injected, *args[1:]]
+
+
 def invoke(root: Path, action: str, args: list[str]) -> int:
     args = list(args)
     runtime_config = None
@@ -302,8 +315,10 @@ def invoke(root: Path, action: str, args: list[str]) -> int:
             raise ValueError(f"Shared workflow '{name}' is absent from the pinned SDLC source; no fallback")
         validate(settings, source, name)
         options = args[:args.index("--")] if "--" in args else args
-        if "--resume" not in options:
+        resuming = any(arg.split("=", 1)[0] == "--resume" for arg in options)
+        if not resuming:
             native += ["--workflow-source", str(source)]
+            args = with_default_inputs(name, args, options)
     native += args
     if action == "status":
         print(f"Factory source={source} revision={settings['revision']} local_STOP={stop.exists()}", file=sys.stderr)

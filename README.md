@@ -46,7 +46,7 @@ Archon source, including the shared workflows; you do not need to check out Arch
 or merge its PRs yourself.
 
 **Current status:** the default pins exact Archon revision
-`4eb8bbbdae7723205bb4bc84c9e373dd27902fd6`, whose SDLC pack supports grounded
+`a02b9ab6bc59f4aff6cae8bfca4723b3eadadb28`, whose SDLC pack supports grounded
 intake, reviewed delivery, scoped validation reuse, independent runtime and holdout
 verification, bounded repair, discovery handling, merge queues and deterministic
 deployment. Native live acceptance remains separate from installation readiness.
@@ -82,6 +82,10 @@ on a server, run the installation and configuration there over SSH.
 The installer writes the factory and project templates and installs the pinned
 Archon source. It preserves project configuration on upgrades. It does not configure
 provider authentication, change model tiers or start a schedule.
+It also adds one pointer to `factory/WORKFLOW_POLICY.md` in the project's native
+`AGENTS.md` without replacing existing guidance. That policy supplies the
+factory-specific bootstrap, runtime, review and state-label requirements that the
+general-purpose shared workflows intentionally do not assume.
 
 **2. Configure Archon.**
 
@@ -171,7 +175,8 @@ then every ticket, the first included, goes through `archon-lifecycle` with the
 journeys and holdout from step 3. There is no special first-ticket path: the
 lifecycle verifies the skeleton against the journeys before merging it, which is
 also the first proof the journeys are right. If the merge queue holds a PR, the
-reason is a comment on it starting `<!-- archon-merge-hold -->`; re-run
+reason is retained in the run. If hold publication was explicitly enabled, it is
+also a comment starting `<!-- archon-merge-hold -->`; re-run
 `archon-deliver` adopting the delivery run (`--adopt <run id>`) and the review turns
 that hold into a finding it fixes.
 
@@ -232,6 +237,9 @@ The source revision lives in [`pack.json`](template/factory/pack.json). Once the
 workflow PRs merge upstream, updating that pin moves new installs to the merged
 version. Existing installations update by pulling this repo and rerunning `init`.
 Workflow improvements belong in Archon's SDLC pack.
+Neutral standalone Archon users do not need `MISSION.md`,
+`factory/WORKFLOW_POLICY.md` or any other factory file; those are guidance and
+inputs supplied by this consumer.
 
 ---
 
@@ -260,9 +268,50 @@ After the first successful lap, ask your agent to configure
 
 The scheduler never selects work itself. Backlog intake lives in the shared
 lifecycle: with an empty `target` and `publish=true`, each run takes the oldest
-open issue nobody has touched (no `archon-*` label, no open PR naming it), and a
-run that finds nothing completes with nothing to do. A fixed `target` repeats
-that same target every tick.
+open issue with none of the factory's configured state labels and no open PR naming
+it; a run that finds nothing completes with nothing to do. The consumer supplies
+the factory state-label mapping to triage, ship and lifecycle. An explicit
+`--input state_labels={}` or scheduled `"state_labels": {}` disables that default.
+A fixed `target` repeats that same target every tick.
+
+Publication remains opt-in. A supervised schedule can label intake while leaving
+merge approval gated and discoveries read-only:
+
+```json
+{
+  "workflow": "archon-lifecycle",
+  "inputs": {
+    "target": "",
+    "publish": "true",
+    "scenario": "/private/runtime.json",
+    "holdout": "/private/holdout.json",
+    "merge_mode": "approve",
+    "merge_method": "squash",
+    "discovery_publication": "preview"
+  }
+}
+```
+
+To opt into evidence-backed hold comments, use the publication inputs together:
+
+```json
+{
+  "workflow": "archon-lifecycle",
+  "inputs": {
+    "target": "",
+    "publish": "true",
+    "scenario": "/private/runtime.json",
+    "holdout": "/private/holdout.json",
+    "merge_mode": "approve",
+    "merge_method": "squash",
+    "publish_holds": "true",
+    "discovery_publication": "preview"
+  }
+}
+```
+
+`publish_holds` does not authorize merging, has no effect when `merge_mode` is
+`preview`, and is deliberately absent from the default example.
 
 ---
 
@@ -336,6 +385,7 @@ bin/factory.py                install and CLI entry point
 template/                    what init copies into your repo
   factory/consumer.py        invokes shared Archon workflows and shows their state
   factory/pack.json          shared source revision and required workflows
+  factory/WORKFLOW_POLICY.md factory requirements read through native AGENTS.md
   factory/RUNTIME_HOST.md    app startup and runtime scenario configuration
   factory/factory-timer.service.example   the timer as a systemd service
   harness/                   project checks and END-TO-END.md

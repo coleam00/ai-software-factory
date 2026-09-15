@@ -13,7 +13,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from install import HOME, TEMPLATE, sync, install_source, configure
+from install import (AGENTS_POINTER, HOME, TEMPLATE, configure, install_agents_pointer,
+                     install_source, sync)
 import consumer
 
 
@@ -116,6 +117,61 @@ class Fixture(unittest.TestCase):
 
 
 class ConsumerTests(Fixture):
+    def test_factory_state_labels_default_only_for_declaring_workflows(self):
+        expected = consumer.MANIFEST["default_inputs"]["archon-triage"]["state_labels"]
+        for workflow in ("archon-triage", "archon-ship", "archon-lifecycle"):
+            with self.subTest(workflow=workflow):
+                result = self.command("run", workflow, "--json")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                argv = json.loads(result.stdout)["argv"]
+                self.assertEqual(argv.count("--input"), 1)
+                self.assertEqual(argv.count("state_labels=" + expected), 1)
+                self.assertFalse(any(arg.startswith(("publish=", "publish_holds="))
+                                     for arg in argv))
+        result = self.command("run", "archon-backlog", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any(arg.startswith("state_labels=") for arg in json.loads(result.stdout)["argv"]))
+
+    def test_explicit_state_labels_override_defaults_in_both_flag_forms(self):
+        for input_args in (("--input", "state_labels={}"),
+                           ("--input=state_labels={}",)):
+            with self.subTest(input_args=input_args):
+                result = self.command("run", "archon-ship", *input_args, "--json")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                argv = json.loads(result.stdout)["argv"]
+                values = [argv[index + 1] for index, arg in enumerate(argv[:-1])
+                          if arg == "--input"]
+                values += [arg.removeprefix("--input=") for arg in argv
+                           if arg.startswith("--input=")]
+                self.assertEqual(values, ["state_labels={}"])
+
+    def test_defaults_do_not_enter_messages_or_native_continuations(self):
+        result = self.command("run", "archon-ship", "--", "--input", "state_labels={}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = json.loads(result.stdout)["argv"]
+        self.assertEqual(argv[argv.index("--") + 1:], ["--input", "state_labels={}"])
+        self.assertIn("state_labels=" + consumer.MANIFEST["default_inputs"]["archon-ship"]["state_labels"], argv)
+        result = self.command("run", "archon-ship", "--resume", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = json.loads(result.stdout)["argv"]
+        self.assertFalse(any(arg.startswith("state_labels=") for arg in argv))
+        self.assertNotIn("--workflow-source", argv)
+
+    def test_scheduled_defaults_and_explicit_empty_mapping(self):
+        schedule = self.app / ".factory/schedule.json"
+        schedule.write_text(json.dumps({"workflow": "archon-lifecycle", "inputs": {}}))
+        result = self.command("tick")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = consumer.MANIFEST["default_inputs"]["archon-lifecycle"]["state_labels"]
+        self.assertIn("state_labels=" + expected, json.loads(result.stdout)["argv"])
+        schedule.write_text(json.dumps({"workflow": "archon-lifecycle",
+                                        "inputs": {"state_labels": {}}}))
+        result = self.command("tick")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = json.loads(result.stdout)["argv"]
+        self.assertEqual(argv.count("state_labels={}"), 1)
+        self.assertNotIn("state_labels=" + expected, argv)
+
     def test_runtime_host_detach_and_resume_refused_before_native_launch(self):
         for args in [("--detach",), ("--detach=true",), ("-d",), ("--resume",)]:
             result = self.command("run", "archon-ship", "--runtime-host", "missing.json", *args)
@@ -356,7 +412,124 @@ class ConsumerTests(Fixture):
         self.assertEqual(argv[argv.index("--workflow-source") + 1], str(self.source))
 
 
+class SourceConformanceTests(unittest.TestCase):
+    @patch.object(sys, "dont_write_bytecode", True)
+    def test_supplied_pinned_source_accepts_factory_state_labels(self):
+        supplied = os.environ.get("FACTORY_ARCHON_CONFORMANCE_SOURCE")
+        if not supplied:
+            self.skipTest("set FACTORY_ARCHON_CONFORMANCE_SOURCE to a complete pinned checkout")
+        source = Path(supplied).resolve()
+        revision = consumer.MANIFEST["integration_revision_required"]
+        self.assertEqual(consumer.checked(["git", "rev-parse", "HEAD"], source).strip(), revision)
+        consumer.verify_source({"source": str(source), "revision": revision})
+
+        defaults = consumer.MANIFEST["default_inputs"]
+        workflows = ("archon-triage", "archon-ship", "archon-lifecycle")
+        self.assertEqual(set(defaults), set(workflows))
+        mappings = [json.loads(defaults[name]["state_labels"]) for name in workflows]
+        self.assertTrue(all(mapping == mappings[0] for mapping in mappings))
+
+        triage = load("pinned_validate_contract", source / consumer.MANIFEST["source_directory"] /
+                       "triage/scripts/validate-contract.py")
+        lifecycle = load("pinned_select_target", source / consumer.MANIFEST["source_directory"] /
+                          "lifecycle/scripts/select-target.py")
+        self.assertEqual(set(mappings[0]), set(triage.STATE_LABEL_METADATA))
+        self.assertEqual(set(mappings[0]), lifecycle.STATES)
+        for mapping in mappings:
+            self.assertEqual(triage.parse_state_labels(json.dumps(mapping)), mapping)
+            with patch.dict(os.environ, {"INPUTS_STATE_LABELS": json.dumps(mapping)}):
+                labels, complete = lifecycle.state_labels()
+            self.assertTrue(complete)
+            self.assertEqual(labels, {label.casefold() for label in mapping.values()})
+
+        directory = source / consumer.MANIFEST["source_directory"]
+        for name, folder in (("archon-triage", "triage"), ("archon-ship", "ship"),
+                             ("archon-lifecycle", "lifecycle")):
+            lines = (directory / folder / f"{name}.yaml").read_text(encoding="utf-8").splitlines()
+            start = lines.index("inputs:") + 1
+            input_lines = next((lines[start:index] for index in range(start, len(lines))
+                                if lines[index] and not lines[index].startswith(" ")), lines[start:])
+            declared = {line[2:-1] for line in input_lines
+                        if line.startswith("  ") and not line.startswith("    ") and line.endswith(":" )}
+            self.assertIn("state_labels", declared)
+
+        policy_labels = {}
+        for line in (TEMPLATE / "factory/WORKFLOW_POLICY.md").read_text(encoding="utf-8").splitlines():
+            if line.startswith("| `"):
+                state, label = [cell.strip().strip("`") for cell in line.strip("|").split("|")]
+                policy_labels[state] = label
+        self.assertEqual(policy_labels, mappings[0])
+        consumer.verify_source({"source": str(source), "revision": revision})
+
+
 class InstallTests(Fixture):
+    def test_agents_pointer_preserves_existing_bytes_and_is_idempotent(self):
+        agents = self.app / "AGENTS.md"
+        original = b"# Existing guidance\r\n\r\nKeep this byte-for-byte."
+        agents.write_bytes(original)
+        preserved_time = 946684800_000_000_000
+        os.utime(agents, ns=(preserved_time, preserved_time))
+        with contextlib.redirect_stdout(io.StringIO()):
+            sync(self.app)
+        installed = agents.read_bytes()
+        self.assertTrue(installed.startswith(original))
+        self.assertEqual(installed.count(b"factory/WORKFLOW_POLICY.md"), 1)
+        self.assertEqual(agents.stat().st_mtime_ns, preserved_time)
+        with contextlib.redirect_stdout(io.StringIO()):
+            sync(self.app)
+        self.assertEqual(agents.read_bytes(), installed)
+        self.assertTrue((self.app / "factory/WORKFLOW_POLICY.md").is_file())
+
+    def test_agents_pointer_failed_temp_write_preserves_original_and_cleans_temp(self):
+        agents = self.app / "AGENTS.md"
+        original = b"# Existing guidance\n"
+        agents.write_bytes(original)
+        with patch("install.os.fsync", side_effect=OSError("interrupted write")), \
+             self.assertRaisesRegex(OSError, "interrupted write"):
+            install_agents_pointer(self.app, False)
+        self.assertEqual(agents.read_bytes(), original)
+        self.assertEqual(list(self.app.glob(".AGENTS.md.*.tmp")), [])
+
+    def test_agents_pointer_failed_replace_preserves_original_and_cleans_temp(self):
+        agents = self.app / "AGENTS.md"
+        original = b"# Existing guidance\n"
+        agents.write_bytes(original)
+        with patch("install.os.replace", side_effect=OSError("interrupted replace")), \
+             self.assertRaisesRegex(OSError, "interrupted replace"):
+            install_agents_pointer(self.app, False)
+        self.assertEqual(agents.read_bytes(), original)
+        self.assertEqual(list(self.app.glob(".AGENTS.md.*.tmp")), [])
+
+    def test_agents_pointer_honors_dry_run_and_creates_missing_file(self):
+        agents = self.app / "AGENTS.md"
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            sync(self.app, True)
+        self.assertFalse(agents.exists())
+        self.assertIn("AGENTS.md factory policy pointer", output.getvalue())
+        with contextlib.redirect_stdout(io.StringIO()):
+            sync(self.app)
+        self.assertEqual(agents.read_bytes(), AGENTS_POINTER)
+
+    def test_agents_pointer_refuses_escaping_symlink(self):
+        agents = self.app / "AGENTS.md"
+        outside = self.base / "outside-agents.md"
+        outside.write_text("outside")
+        try:
+            agents.symlink_to(outside)
+        except OSError:
+            real_resolve = Path.resolve
+
+            def escaping_resolve(path, *args, **kwargs):
+                return outside if path == agents else real_resolve(path, *args, **kwargs)
+            with patch.object(Path, "resolve", escaping_resolve), \
+                 self.assertRaisesRegex(ValueError, "outside application"):
+                install_agents_pointer(self.app, False)
+            self.assertEqual(outside.read_text(), "outside")
+            return
+        with self.assertRaisesRegex(ValueError, "outside application"):
+            install_agents_pointer(self.app, False)
+        self.assertEqual(outside.read_text(), "outside")
+
     def test_upgrade_preserves_personal_files_and_backs_up_execution_surfaces(self):
         originals = {"factory/config.py": b"AUTONOMY=4\r\n", "harness/harness.config.json": b'{"agent":{"cmd":"do not run"}}',
                      "harness/END-TO-END.md": b"custom journey\r\n", ".factory/holdout/HOLDOUT.md": b"private scenario\n",

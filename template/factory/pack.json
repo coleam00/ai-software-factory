@@ -1,8 +1,19 @@
 {
   "repository": "https://github.com/coleam00/Archon",
-  "integration_revision_required": "4eb8bbbdae7723205bb4bc84c9e373dd27902fd6",
+  "integration_revision_required": "24796870605b0fd576734b79a8d5c781f2b1c1e1",
   "description": "Pinned workflow-only SDLC source with grounded intake, reviewed delivery, scoped validation reuse, independent runtime and holdout verification, bounded repair, discovery handling, merge queues, and deterministic deployment. Factory remains a thin consumer; workflow gates own decisions and scheduling remains external.",
   "source_directory": ".archon/workflows/sdlc",
+  "default_inputs": {
+    "archon-triage": {
+      "state_labels": "{\"READY\":\"archon-ready\",\"DESIGN_FIRST\":\"archon-design-first\",\"NEEDS_CONTRACT_WORK\":\"archon-needs-contract\",\"BLOCKED\":\"archon-blocked\",\"NO_ACTION\":\"archon-close\"}"
+    },
+    "archon-ship": {
+      "state_labels": "{\"READY\":\"archon-ready\",\"DESIGN_FIRST\":\"archon-design-first\",\"NEEDS_CONTRACT_WORK\":\"archon-needs-contract\",\"BLOCKED\":\"archon-blocked\",\"NO_ACTION\":\"archon-close\"}"
+    },
+    "archon-lifecycle": {
+      "state_labels": "{\"READY\":\"archon-ready\",\"DESIGN_FIRST\":\"archon-design-first\",\"NEEDS_CONTRACT_WORK\":\"archon-needs-contract\",\"BLOCKED\":\"archon-blocked\",\"NO_ACTION\":\"archon-close\"}"
+    }
+  },
   "entries": {
     "archon-backlog": "Slice a PRD into an ordered backlog of issues",
     "archon-triage": "Assess one request against current repository evidence",

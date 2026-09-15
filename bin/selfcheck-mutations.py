@@ -11,8 +11,11 @@ DEFECTS = [
      "ConsumerTests.test_missing_shared_workflow_fails_closed"),
     ("source SHA unchecked", "if actual != revision:", "if False:",
      "ConsumerTests.test_sha_dirty_and_ignored_authoring_drift_refused"),
-    ("legacy gate succeeds", "    return 2\n\n\ndef invoke", "    return 0\n\n\ndef invoke",
+    ("legacy gate succeeds", "    return 2\n\n\ndef with_default_inputs",
+     "    return 0\n\n\ndef with_default_inputs",
      "ConsumerTests.test_legacy_dial_and_receipts_cannot_merge"),
+    ("state label defaults skipped", "    defaults = MANIFEST.get(\"default_inputs\", {}).get(name, {})",
+     "    defaults = {}", "ConsumerTests.test_factory_state_labels_default_only_for_declaring_workflows"),
 ]
 
 def main():
