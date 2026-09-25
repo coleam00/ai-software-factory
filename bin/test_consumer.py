@@ -27,14 +27,31 @@ def load(name, path):
 
 
 FAKE_CLI = r'''
-import json, os, re, sys
+import json, os, re, subprocess, sys
 from pathlib import Path
 args = sys.argv[1:]
 source = Path(__file__).resolve().parents[3]
 with open(os.environ["FACTORY_TEST_TRACE"], "a", encoding="utf-8") as f:
     f.write(json.dumps(args) + "\n")
+if args[:2] == ["version", "--json"]:
+    revision = subprocess.run(["git", "-C", str(source), "rev-parse", "HEAD"],
+                              check=True, capture_output=True, text=True).stdout.strip()
+    print(json.dumps({"name": "archon", "version": "fixture", "revision": revision,
+                      "contracts": {"node_failed.data.error_class": {
+                          "version": 1, "values": ["fatal", "transient", "unknown"]}}}))
+    raise SystemExit(0)
+if args == ["--help"]:
+    print("--json --verbose")
+    raise SystemExit(0)
 if "--help" in args:
-    print("workflow " + args[1] + " --workflow-source --input --adopt --detach --json --events --comment --reason")
+    command = args[1]
+    owned = {
+        "run": "--workflow-source --input --adopt --detach",
+        "get": "--events",
+        "approve": "--comment",
+        "reject": "--reason",
+    }.get(command, "")
+    print("workflow " + command + " " + owned)
     raise SystemExit(0)
 if args[:2] == ["workflow", "list"]:
     names = [p.stem for p in (source / ".archon/workflows/sdlc").rglob("*.yaml")]
@@ -64,7 +81,7 @@ class Fixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="factory consumer ")
         self.addCleanup(self.temp.cleanup)
-        self.base = Path(self.temp.name)
+        self.base = Path(self.temp.name).resolve()
         self.app = self.base / "application with spaces"
         self.app.mkdir()
         self.git(self.app, "init", "-q")
@@ -373,9 +390,27 @@ class ConsumerTests(Fixture):
 
     def test_capability_probe_refuses_unsupported_cli(self):
         with patch.object(consumer, "checked", return_value="no capabilities"), \
+             patch.object(consumer, "validate_engine_contract"), \
              patch.object(consumer, "verify_source", return_value=self.source):
             with self.assertRaisesRegex(ValueError, "missing workflow"):
                 consumer.doctor(self.settings)
+
+    def test_doctor_resolves_global_and_command_owned_help(self):
+        self.assertEqual(consumer.doctor(self.settings)["revision"], self.revision)
+        calls = self.calls()
+        self.assertIn(["--help"], calls)
+        self.assertIn(["workflow", "get", "--help"], calls)
+
+    def test_doctor_refuses_wrong_revision_or_failure_contract(self):
+        expected = consumer.MANIFEST["contracts"]
+        with patch.object(consumer, "checked", return_value=json.dumps({
+                "revision": "0" * 40, "contracts": expected})):
+            with self.assertRaisesRegex(ValueError, "revision declaration mismatch"):
+                consumer.validate_engine_contract(self.settings, self.source)
+        with patch.object(consumer, "checked", return_value=json.dumps({
+                "revision": self.revision, "contracts": {}})):
+            with self.assertRaisesRegex(ValueError, "contract declaration mismatch"):
+                consumer.validate_engine_contract(self.settings, self.source)
 
     def test_source_index_refuses_missing_command_include_and_conflict(self):
         path = next(self.source.rglob("archon-ship.yaml"))

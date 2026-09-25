@@ -173,17 +173,41 @@ def validate(settings: dict, source: Path, name: str) -> None:
         raise ValueError(f"Workflow/command validation failed for {name}: {data}")
 
 
+def validate_engine_contract(settings: dict, source: Path) -> None:
+    raw = checked([*cli(settings, source), "version", "--json"], source)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Pinned CLI version contract is not valid JSON") from exc
+    if not isinstance(data, dict):
+        raise ValueError("Pinned CLI version contract must be a JSON object")
+    if data.get("revision") != settings["revision"]:
+        raise ValueError(
+            "Pinned CLI revision declaration mismatch: "
+            f"expected {settings['revision']}, found {data.get('revision')!r}"
+        )
+    declared = data.get("contracts")
+    if declared != MANIFEST["contracts"]:
+        raise ValueError(
+            "Pinned CLI contract declaration mismatch: "
+            f"expected {MANIFEST['contracts']}, found {declared!r}"
+        )
+
+
 def doctor(settings: dict) -> dict:
     source = verify_source(settings)
-    # Global flags such as --json are documented once, in the top-level workflow
-    # help, and not repeated under every subcommand (`workflow status --help` lists
-    # only --events and --all, yet `status --json` works). A flag counts as
-    # documented when either help names it; the subcommand itself must still exist.
+    validate_engine_contract(settings, source)
+    # Global flags such as --verbose live in the root help, while --json may appear
+    # only in examples and --events is owned by the workflow subcommand. A flag
+    # counts as documented at any of those native help levels; the subcommand
+    # itself must still exist.
+    global_help = checked([*cli(settings, source), "--help"], source)
     shared_help = checked([*cli(settings, source), "workflow", "--help"], source)
     for command, flags in MANIFEST["capabilities"].items():
         help_text = checked([*cli(settings, source), "workflow", command, "--help"], source)
         if f"workflow {command}" not in help_text or any(
-                flag not in help_text and flag not in shared_help for flag in flags):
+                flag not in help_text and flag not in shared_help and flag not in global_help
+                for flag in flags):
             raise ValueError(f"Pinned CLI missing workflow {command} capability: {flags}")
     discovered = discover(settings, source)
     missing = sorted(set(MANIFEST["entries"]) - discovered.keys())

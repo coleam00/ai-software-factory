@@ -46,10 +46,14 @@ Archon source, including the shared workflows; you do not need to check out Arch
 or merge its PRs yourself.
 
 **Current status:** the default pins exact Archon revision
-`a02b9ab6bc59f4aff6cae8bfca4723b3eadadb28`, whose SDLC pack supports grounded
+`4a46cec7c66fde903dd096203405734836db90c2`, whose SDLC pack supports grounded
 intake, reviewed delivery, scoped validation reuse, independent runtime and holdout
 verification, bounded repair, discovery handling, merge queues and deterministic
-deployment. Native live acceptance remains separate from installation readiness.
+deployment. This compatibility revision is published in the project fork while its
+small engine-contract backport is tracked in [Archon PR 3496](https://github.com/coleam00/Archon/pull/3496).
+`factory doctor` verifies both
+the full revision and the declared `node_failed.data.error_class` contract before a
+run can start. Native live acceptance remains separate from installation readiness.
 
 ---
 
@@ -251,7 +255,7 @@ Run these from the application repo after installation:
 python factory/consumer.py doctor
 python factory/consumer.py list
 python factory/consumer.py run archon-ship --input target=https://github.com/OWNER/REPO/issues/1 --detach --json
-python factory/consumer.py get <run-id> --json --events
+python factory/consumer.py get <run-id> --json --verbose --events
 python factory/consumer.py status --all --json
 python factory/consumer.py approve <run-id> --comment "Approved"
 python factory/consumer.py cancel <run-id>

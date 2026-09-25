@@ -2,16 +2,19 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "template/factory"))
+import runtime_resource
 from runtime_host import RuntimeHost, request
 
 
@@ -31,7 +34,7 @@ class ResourceTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="resource test ")
         self.addCleanup(self.temp.cleanup)
-        self.base = Path(self.temp.name)
+        self.base = Path(self.temp.name).resolve()
         self.repo = self.base / "delivery"
         (self.repo / "factory").mkdir(parents=True)
         for name in ("runtime_resource.py", "runtime_host.py", "runtime_process.py"):
@@ -71,11 +74,17 @@ class ResourceTests(unittest.TestCase):
         return path
 
     def start(self, connection, slot):
-        connection_file = self.base / "connection.json"
-        connection_file.write_text(json.dumps(connection))
-        result = subprocess.run([sys.executable, str(self.repo / "factory/runtime_resource.py"),
-                                 "start", "--slot", slot, "--root", "candidate",
-                                 "--connection-file", str(connection_file)], cwd=self.repo,
+        command = [sys.executable, str(self.repo / "factory/runtime_resource.py"),
+                   "start", "--slot", slot, "--root", "candidate"]
+        environment = None
+        if connection is not None:
+            connection_file = self.base / "connection.json"
+            connection_file.write_text(json.dumps(connection))
+            command.extend(["--connection-file", str(connection_file)])
+        else:
+            environment = os.environ.copy()
+            environment.update(self.host.environment())
+        result = subprocess.run(command, cwd=self.repo, env=environment,
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
@@ -104,6 +113,23 @@ class ResourceTests(unittest.TestCase):
             self.assertNotEqual(first, item["source_revision"])
             self.assertNotEqual(first_item["input_digest"], item["input_digest"])
             self.assertNotEqual(first_item["resource_digest"], item["resource_digest"])
+
+    def test_foreground_environment_preserves_clean_checkout_validation(self):
+        revision = self.git("rev-parse", "HEAD")
+        with RuntimeHost(self.config()) as self.host:
+            self.assertEqual(self.prepare(revision).returncode, 0)
+            item = self.start(None, "foreground")
+            self.assertEqual(item["source_revision"], revision)
+
+            (self.repo / "app.py").write_text(APP.replace("VALUE", "dirty"), encoding="utf-8")
+            command = [sys.executable, str(self.repo / "factory/runtime_resource.py"),
+                       "start", "--slot", "dirty", "--root", "candidate"]
+            environment = os.environ.copy()
+            environment.update(self.host.environment())
+            refused = subprocess.run(command, cwd=self.repo, env=environment,
+                                     capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("Runtime resource operation refused", refused.stderr)
 
     def test_stale_checkout_and_unowned_destination_are_refused(self):
         revision = self.git("rev-parse", "HEAD")
@@ -155,6 +181,36 @@ class ResourceTests(unittest.TestCase):
                 self.assertEqual((self.resource / ".factory-resource.json").read_bytes(),
                                  original_marker)
                 self.assertEqual((self.resource / "app.py").read_bytes(), original_app)
+
+    def test_failed_promotion_restores_previous_owned_resource(self):
+        first = self.git("rev-parse", "HEAD")
+        with mock.patch.object(runtime_resource, "delivery", return_value=(self.repo, first)):
+            runtime_resource.prepare(self.resource, self.config(), first)
+        original_marker = (self.resource / runtime_resource.MARKER).read_bytes()
+        original_app = (self.resource / "app.py").read_bytes()
+
+        (self.repo / "app.py").write_text(APP.replace("VALUE", "second"), encoding="utf-8")
+        self.git("add", "app.py")
+        self.git("commit", "-m", "second candidate")
+        second = self.git("rev-parse", "HEAD")
+        original_replace = Path.replace
+
+        def fail_new_resource_promotion(source, target):
+            source = Path(source)
+            if (Path(target) == self.resource
+                    and source.name.startswith(".factory-resource-")
+                    and not source.name.startswith(".factory-resource-backup-")):
+                raise OSError("simulated promotion failure")
+            return original_replace(source, target)
+
+        with (mock.patch.object(runtime_resource, "delivery", return_value=(self.repo, second)),
+              mock.patch.object(Path, "replace", fail_new_resource_promotion),
+              self.assertRaisesRegex(OSError, "simulated promotion failure")):
+            runtime_resource.prepare(self.resource, self.config(), second)
+
+        self.assertEqual((self.resource / runtime_resource.MARKER).read_bytes(), original_marker)
+        self.assertEqual((self.resource / "app.py").read_bytes(), original_app)
+        self.assertEqual(list(self.base.glob(".factory-resource-*")), [])
 
     def test_absolute_helper_from_an_old_checkout_is_refused_in_delivering_cwd(self):
         old_repo = self.base / "old-delivery"

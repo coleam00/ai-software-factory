@@ -31,6 +31,7 @@ class NoRedirect(HTTPRedirectHandler):
 
 HTTP = build_opener(ProxyHandler({}), NoRedirect())
 def safe_path(root, relative):
+    root = root.resolve()
     if (not isinstance(relative, str) or not relative or Path(relative).anchor
             or Path(relative).drive):
         raise ValueError("source paths must be relative")
@@ -48,6 +49,7 @@ def safe_path(root, relative):
 
 
 def source_files(root, includes):
+    root = root.resolve()
     files = {}
     for rel in includes:
         path = safe_path(root, rel)
@@ -128,7 +130,9 @@ class Environments:
                 self.bindings[name] = True
             self.roots[name] = path
         self.stopping = stopping
-        self.base = Path(tempfile.mkdtemp(prefix="factory-runtime-"))
+        # macOS exposes /var through /private/var. Keep the containment root in the
+        # same canonical form as safe_path() uses for its children.
+        self.base = Path(tempfile.mkdtemp(prefix="factory-runtime-")).resolve()
         self.active = {}
         self.used_ports = set()
 
@@ -145,6 +149,63 @@ class Environments:
         for slot in list(self.active):
             self.teardown(slot)
         remove_tree(self.base)
+
+    def execution(self, source, state):
+        """Build one trusted launch context for an existing snapshot and state."""
+        for _ in range(100):
+            with socket.socket() as lease:
+                lease.bind(("127.0.0.1", 0))
+                port = lease.getsockname()[1]
+            if port not in self.used_ports:
+                self.used_ports.add(port)
+                break
+        else:
+            raise ValueError("cannot allocate a fresh target")
+        variables = {"source": str(source), "state": str(state), "port": str(port),
+                     "python": sys.executable}
+        env = {k: v for k, v in os.environ.items() if k.upper() in
+               {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG"}}
+        env.update({"HOME": str(state), "USERPROFILE": str(state), "TMP": str(state),
+                    "TEMP": str(state), "TMPDIR": str(state), "PYTHONDONTWRITEBYTECODE": "1",
+                    "FACTORY_RUNTIME_STATE": str(state), "FACTORY_RUNTIME_PORT": str(port)})
+        for key, value in self.config.get("env", {}).items():
+            if not isinstance(value, str) or key.startswith("FACTORY_RUNTIME_"):
+                raise ValueError("invalid environment configuration")
+            for var, replacement in variables.items():
+                value = value.replace("{" + var + "}", replacement)
+            env[key] = value
+        timeout = float(self.config.get("timeout_s", 30))
+        if not 0 < timeout <= 300:
+            raise ValueError("timeout_s must be between 0 and 300")
+        return variables, env, timeout, port
+
+    def launch(self, item, actual, variables, env, timeout, port):
+        """Launch the operator-configured command and bind it to this attempt."""
+        source = item["source"]
+        argv = command(self.config["command"], variables)
+        identity = "factory-v1:" + hashlib.sha256(json.dumps(
+            {"source": actual, "argv": argv, "env": env}, sort_keys=True).encode()).hexdigest()
+        env["FACTORY_RUNTIME_CANDIDATE"] = identity
+        proc = ProcessTree(argv, source, env)
+        item["processes"].append(proc)
+        item.update(candidate=identity, digest=actual, proc=proc, shape=self.config["shape"],
+                    target=f"http://127.0.0.1:{port}")
+        if self.config["shape"] == "http":
+            deadline = time.monotonic() + timeout
+            while True:
+                if self.stopping.is_set() or proc.proc.poll() is not None:
+                    raise ValueError("app stopped before readiness")
+                try:
+                    self.probe(item)
+                    break
+                except (URLError, OSError, ValueError):
+                    if time.monotonic() >= deadline:
+                        raise ValueError("app readiness/identity refused") from None
+                    self.stopping.wait(.05)
+        else:
+            self.wait_exit(proc, timeout)
+            item["exit_code"] = proc.proc.returncode
+            proc.close()  # includes descendants of finite commands
 
     def start(self, request):
         slot = request.get("slot")
@@ -199,31 +260,7 @@ class Environments:
                 if not find or find == replace or body.count(find) != 1:
                     raise ValueError("mutation requires a unique changing anchor")
                 target.write_bytes(body.replace(find, replace, 1))
-            for _ in range(100):
-                with socket.socket() as lease:
-                    lease.bind(("127.0.0.1", 0))
-                    port = lease.getsockname()[1]
-                if port not in self.used_ports:
-                    self.used_ports.add(port)
-                    break
-            else:
-                raise ValueError("cannot allocate a fresh target")
-            variables = {"source": str(source), "state": str(state), "port": str(port),
-                         "python": sys.executable}
-            env = {k: v for k, v in os.environ.items() if k.upper() in
-                   {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG"}}
-            env.update({"HOME": str(state), "USERPROFILE": str(state), "TMP": str(state),
-                        "TEMP": str(state), "TMPDIR": str(state), "PYTHONDONTWRITEBYTECODE": "1",
-                        "FACTORY_RUNTIME_STATE": str(state), "FACTORY_RUNTIME_PORT": str(port)})
-            for key, value in cfg.get("env", {}).items():
-                if not isinstance(value, str) or key.startswith("FACTORY_RUNTIME_"):
-                    raise ValueError("invalid environment configuration")
-                for var, replacement in variables.items():
-                    value = value.replace("{" + var + "}", replacement)
-                env[key] = value
-            timeout = float(cfg.get("timeout_s", 30))
-            if not 0 < timeout <= 300:
-                raise ValueError("timeout_s must be between 0 and 300")
+            variables, env, timeout, port = self.execution(source, state)
             if cfg.get("setup"):
                 setup = ProcessTree(command(cfg["setup"], variables), source, env)
                 item["processes"].append(setup)
@@ -233,35 +270,44 @@ class Environments:
                 setup.close()
                 item["processes"].remove(setup)
             actual = tree_digest(source)
-            argv = command(cfg["command"], variables)
-            identity = "factory-v1:" + hashlib.sha256(json.dumps(
-                {"source": actual, "argv": argv, "env": env}, sort_keys=True).encode()).hexdigest()
-            env["FACTORY_RUNTIME_CANDIDATE"] = identity
             for path in source.rglob("*"):
                 if path.is_file():
                     path.chmod(stat.S_IREAD)
-            proc = ProcessTree(argv, source, env)
-            item["processes"].append(proc)
-            item.update(candidate=identity, digest=actual, proc=proc, shape=cfg["shape"],
-                        target=f"http://127.0.0.1:{port}", original=before, binding=binding)
-            if cfg["shape"] == "http":
-                deadline = time.monotonic() + timeout
-                while True:
-                    if self.stopping.is_set() or proc.proc.poll() is not None:
-                        raise ValueError("app stopped before readiness")
-                    try:
-                        self.probe(item)
-                        break
-                    except (URLError, OSError, ValueError):
-                        if time.monotonic() >= deadline:
-                            raise ValueError("app readiness/identity refused") from None
-                        self.stopping.wait(.05)
-            else:
-                self.wait_exit(proc, timeout)
-                item["exit_code"] = proc.proc.returncode
-                proc.close()  # includes descendants of finite commands
+            item.update(original=before, binding=binding)
+            self.launch(item, actual, variables, env, timeout, port)
             return self.identity(slot)
         except BaseException:
+            self.teardown(slot)
+            raise
+
+    def restart(self, request):
+        """Restart an HTTP process while preserving its frozen snapshot and state."""
+        if not isinstance(request, dict) or set(request) != {"slot"}:
+            raise ValueError("restart accepts only a slot")
+        slot = request["slot"]
+        if not isinstance(slot, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", slot):
+            raise ValueError("invalid slot")
+        item = self.active.get(slot)
+        if not item or item["shape"] != "http":
+            raise ValueError("restart requires an active HTTP slot")
+        try:
+            # Refuse to relaunch a dead, redirected, or changed candidate as if it
+            # were a valid persistence test.
+            self.identity(slot)
+            previous = item["proc"]
+            previous.close()
+            item["processes"].remove(previous)
+            if tree_digest(item["source"]) != item["digest"]:
+                raise ValueError("candidate changed during process shutdown")
+            state = item["directory"] / "state"
+            if state.is_symlink() or not state.is_dir() or state.resolve() != state:
+                raise ValueError("owned state directory changed")
+            variables, env, timeout, port = self.execution(item["source"], state)
+            self.launch(item, item["digest"], variables, env, timeout, port)
+            return self.identity(slot)
+        except BaseException:
+            # The prior process cannot remain authoritative after shutdown. A
+            # failed replacement therefore removes the complete slot.
             self.teardown(slot)
             raise
 
@@ -330,6 +376,8 @@ def serve(config):
                 if self.path in {"/setup", "/start"}:
                     # setup is a cleanup boundary; start performs provisioning atomically.
                     result = manager.teardown(data["slot"]) if self.path == "/setup" else manager.start(data)
+                elif self.path == "/restart":
+                    result = manager.restart(data)
                 elif self.path == "/teardown":
                     result = manager.teardown(data["slot"])
                 elif self.path == "/identity":
@@ -422,7 +470,7 @@ def main(argv=None):
     manual = sub.add_parser("serve", help="foreground owner; credentials go to a private connection file")
     manual.add_argument("--config", required=True)
     manual.add_argument("--connection-file", required=True, type=Path)
-    for action in ("setup", "start", "teardown", "identity", "describe"):
+    for action in ("setup", "start", "restart", "teardown", "identity", "describe"):
         node = sub.add_parser(action)
         node.add_argument("--slot", required=True)
         node.add_argument("--connection-file", type=Path)

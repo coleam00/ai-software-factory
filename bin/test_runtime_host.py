@@ -24,10 +24,12 @@ state = Path(os.environ['FACTORY_RUNTIME_STATE'])
 (state / 'pid').write_text(str(os.getpid()))
 child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'])
 (state / 'child').write_text(str(child.pid))
+if (state / 'fail-next').exists() and os.environ.get('FAILURE_REPORT'):
+    Path(os.environ['FAILURE_REPORT']).write_text(json.dumps([os.getpid(), child.pid]))
 if os.environ.get('FAIL'):
     raise SystemExit(7)
 db = sqlite3.connect(state / 'app.db')
-db.execute('create table hits (value integer)')
+db.execute('create table if not exists hits (value integer)')
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
     def do_GET(self):
@@ -35,6 +37,7 @@ class Handler(BaseHTTPRequestHandler):
             value = 'wrong' if (state / 'wrong').exists() else os.environ['FACTORY_RUNTIME_CANDIDATE']
         elif self.path == '/hits':
             db.execute('insert into hits values (1)')
+            db.commit()
             value = str(db.execute('select count(*) from hits').fetchone()[0])
         else: value = 'healthy baseline'
         self.send_response(200)
@@ -79,7 +82,7 @@ class RuntimeTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="runtime test ")
         self.addCleanup(self.temp.cleanup)
-        self.base = Path(self.temp.name)
+        self.base = Path(self.temp.name).resolve()
         self.root = self.base / "application"
         self.root.mkdir()
         (self.root / "app.py").write_text(TARGET)
@@ -162,6 +165,52 @@ class RuntimeTests(unittest.TestCase):
             pids = self.pids(item)
         self.assert_clean(item, pids)
         self.assertEqual(listener.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR), 0)
+
+    def test_http_restart_preserves_snapshot_state_and_replaces_process_identity(self):
+        with self.host() as host:
+            first = self.start(host)
+            old_pids = self.pids(first)
+            self.assertEqual(self.get(first, "/hits"), "1")
+            self.assertEqual(self.get(first, "/hits"), "2")
+            restarted = request("restart", {"slot": "case"}, host.connection)
+            self.assertTrue(settled(lambda: not any(alive(pid) for pid in old_pids)))
+            self.assertEqual(restarted["snapshot"], first["snapshot"])
+            self.assertEqual(restarted["state"], first["state"])
+            self.assertEqual(restarted["source_digest"], first["source_digest"])
+            self.assertEqual(restarted["input_digest"], first["input_digest"])
+            self.assertNotEqual(restarted["target"], first["target"])
+            self.assertNotEqual(restarted["candidate"], first["candidate"])
+            self.assertEqual(self.get(restarted, "/identity"), restarted["candidate"])
+            self.assertEqual(self.get(restarted, "/hits"), "3")
+            self.assertTrue(all(alive(pid) for pid in self.pids(restarted)))
+
+    def test_failed_or_malformed_restart_cleans_processes_and_slot(self):
+        # The flag is read only during process boot, leaving the current app
+        # healthy while restart first validates its ownership and identity.
+        original = self.root.joinpath("app.py").read_text()
+        self.root.joinpath("app.py").write_text(original.replace(
+            "if os.environ.get('FAIL'):",
+            "if (state / 'fail-next').exists() or os.environ.get('FAIL'):"))
+        failure_report = self.base / "failed-restart-pids.json"
+        self.cfg["env"] = {"FAILURE_REPORT": str(failure_report)}
+        with self.host() as host:
+            item = self.start(host)
+            old_pids = self.pids(item)
+            (Path(item["state"]) / "fail-next").touch()
+            with self.assertRaises(HTTPError):
+                request("restart", {"slot": "case"}, host.connection)
+            self.assert_clean(item, old_pids)
+            failed_pids = json.loads(failure_report.read_text())
+            self.assertTrue(settled(lambda: not any(alive(pid) for pid in failed_pids)))
+            with self.assertRaises(HTTPError):
+                request("identity", {"slot": "case"}, host.connection)
+
+        with self.host() as host:
+            item = self.start(host)
+            pids = self.pids(item)
+            with self.assertRaises(HTTPError):
+                request("restart", {"slot": "case", "command": ["codex"]}, host.connection)
+            self.assert_clean(item, pids)
 
     def test_stale_source_and_snapshot_changes_refused(self):
         with self.host() as host:
@@ -282,11 +331,16 @@ class RuntimeTests(unittest.TestCase):
             cli("setup")
             item = json.loads(cli("start", "--root", "candidate"))
             pids = self.pids(item)
-            self.assertEqual(json.loads(cli("describe"))["target"], item["target"])
-            self.assertEqual(cli("identity").strip(), item["candidate"])
+            restarted = json.loads(cli("restart"))
+            self.assertTrue(settled(lambda: not any(alive(pid) for pid in pids)))
+            self.assertEqual(restarted["snapshot"], item["snapshot"])
+            self.assertEqual(restarted["state"], item["state"])
+            pids = self.pids(restarted)
+            self.assertEqual(json.loads(cli("describe"))["target"], restarted["target"])
+            self.assertEqual(cli("identity").strip(), restarted["candidate"])
             cli("teardown")
             cli("teardown")
-            self.assert_clean(item, pids)
+            self.assert_clean(restarted, pids)
         finally:
             parent.kill()
             parent.wait(timeout=15)
