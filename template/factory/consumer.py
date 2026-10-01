@@ -213,7 +213,7 @@ RETIRED = {
 
 def refuse(action: str) -> int:
     print(f"Retired factory operation '{action}'. " + RETIRED.get(action,
-          "Use factory run <shared-workflow> or native status/get/cancel/resume."), file=sys.stderr)
+          "Use factory run <shared-workflow> or native status/runs/get/cancel/resume."), file=sys.stderr)
     return 2
 
 
@@ -274,7 +274,7 @@ def invoke(root: Path, action: str, args: list[str]) -> int:
         return invoke(root, "run", args)
     if action in RETIRED:
         return refuse(action)
-    if action not in {"run", "list", "get", "status", "approve", "reject", "respond",
+    if action not in {"run", "list", "get", "status", "runs", "approve", "reject", "respond",
                       "cancel", "resume", "doctor", "halt", "unhalt"}:
         return refuse(action)
     stop = shared_root(root) / ".factory/STOP"
@@ -321,7 +321,8 @@ def invoke(root: Path, action: str, args: list[str]) -> int:
             args = with_default_inputs(name, args, options)
     native += args
     if action == "status":
-        print(f"Factory source={source} revision={settings['revision']} local_STOP={stop.exists()}", file=sys.stderr)
+        print(f"Factory source={source} revision={settings['revision']} local_STOP={stop.exists()} "
+              "(active workflows only; use factory runs for history)", file=sys.stderr)
     # Native output, exit code, inputs, identity and gates pass through unchanged.
     # No subprocess deadline or retry can guess whether a native run is alive.
     if runtime_config:
@@ -340,7 +341,9 @@ def main(argv: list[str] | None = None) -> int:
               "factory run <shared-workflow> --runtime-host <config.json> [foreground native arguments]\n"
               "Runtime host: fresh ordinary apps; detach/resume unsupported. Manual: python factory/runtime_host.py serve --help\n"
               "factory tick (one scheduled shared workflow, foreground)\n"
-              "factory list | doctor | status | get <run-id>\n"
+              "factory list | doctor | get <run-id>\n"
+              "factory status [native arguments] (active workflows only)\n"
+              "factory runs [--status <status> | --open] [--all] [--limit <n>] [--json] (run history)\n"
               "factory approve | reject | respond | cancel | resume <run-id>\n"
               "factory halt | unhalt (local launch brake only)")
         return 0

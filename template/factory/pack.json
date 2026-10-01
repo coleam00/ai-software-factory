@@ -47,6 +47,13 @@
     "status": [
       "--json"
     ],
+    "runs": [
+      "--json",
+      "--all",
+      "--status",
+      "--limit",
+      "--open"
+    ],
     "approve": [
       "--comment"
     ],

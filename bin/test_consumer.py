@@ -34,7 +34,11 @@ source = Path(__file__).resolve().parents[3]
 with open(os.environ["FACTORY_TEST_TRACE"], "a", encoding="utf-8") as f:
     f.write(json.dumps(args) + "\n")
 if "--help" in args:
-    print("workflow " + args[1] + " --workflow-source --input --adopt --detach --json --events --comment --reason")
+    flags = " --workflow-source --input --adopt --detach --json --events --comment --reason"
+    if args[1] == "runs":
+        flags += " --all --status --limit --open"
+        flags = flags.replace(os.environ.get("FACTORY_TEST_MISSING_RUNS_FLAG", "__none__"), "")
+    print("workflow " + args[1] + flags)
     raise SystemExit(0)
 if args[:2] == ["workflow", "list"]:
     names = [p.stem for p in (source / ".archon/workflows/sdlc").rglob("*.yaml")]
@@ -46,6 +50,10 @@ elif args[:2] == ["validate", "workflows"]:
     print(json.dumps({"results": [{"workflowName": name, "valid": valid}], "summary": {"errors": 0 if valid else 1}}))
     raise SystemExit(0 if valid else 1)
 else:
+    if "FACTORY_TEST_STDOUT" in os.environ:
+        sys.stdout.write(os.environ["FACTORY_TEST_STDOUT"])
+        sys.stderr.write(os.environ.get("FACTORY_TEST_STDERR", ""))
+        raise SystemExit(int(os.environ.get("FACTORY_TEST_EXIT", "0")))
     if os.environ.get("FACTORY_RUNTIME_URL"):
         from urllib.request import Request, urlopen
         req = Request(os.environ["FACTORY_RUNTIME_URL"] + "/start",
@@ -288,7 +296,8 @@ class ConsumerTests(Fixture):
         self.assertEqual(receipt.read_text(), '{"verdict":"approve","autonomy":4}')
 
     def test_native_controls_keep_args_and_exit(self):
-        for action, args in [("get", ["run-123", "--events"]), ("status", ["--all"]),
+        for action, args in [("get", ["run-123", "--verbose", "--events"]), ("status", ["--all"]),
+                             ("runs", ["--all", "--status", "completed", "--limit", "3"]),
                              ("approve", ["run-123", "--comment", "accepted scope"]),
                              ("reject", ["run-123", "--reason", "changed head"]),
                              ("respond", ["run-123", "revise", "keep this text"]),
@@ -303,6 +312,72 @@ class ConsumerTests(Fixture):
                 self.assertEqual(payload["argv"][4:4 + len(args)], args)
                 self.assertNotIn("--workflow-source", payload["argv"])
         self.assertFalse((self.app / ".factory/runs").exists())
+
+    def test_runs_forwards_filters_scope_and_limit_without_launching(self):
+        for args in (["--status", "completed", "--limit", "3", "--json"],
+                     ["--all", "--status=failed", "--limit=1", "--json"],
+                     ["--open", "--limit", "5", "--json"], []):
+            with self.subTest(args=args):
+                result = self.command("runs", *args)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout)["argv"],
+                                 ["workflow", "runs", "--cwd", str(self.app), *args])
+        self.assertTrue(all(row[:2] == ["workflow", "runs"] for row in self.calls()))
+        self.assertEqual(len(self.calls()), 4)
+
+    def test_runs_preserves_native_output_errors_and_exit_codes(self):
+        for stdout, stderr, code in (
+                ('{\n  "runs": [], "scopeFallback": true\n}\n', "", 0),
+                ('{"ok":false,"error":"invalid status"}\n', "", 0),
+                ("Recent runs: future-status\n", "native diagnostic\n", 23),
+                ("", "native database unavailable\n", 7)):
+            with self.subTest(code=code, stdout=stdout):
+                result = self.command("runs", "--json", env={
+                    "FACTORY_TEST_STDOUT": stdout, "FACTORY_TEST_STDERR": stderr,
+                    "FACTORY_TEST_EXIT": str(code)})
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertEqual(result.stdout, stdout)
+                self.assertEqual(result.stderr, stderr)
+
+    def test_terminal_history_stays_read_only_while_halted(self):
+        self.assertEqual(self.command("halt").returncode, 0)
+        (self.app / ".factory/tick.lock").write_bytes(b"another tick owns this\n")
+        (self.app / ".factory/schedule.json").write_bytes(b"do not select a stage\n")
+        before = {p.relative_to(self.app): p.read_bytes() for p in self.app.rglob("*")
+                  if p.is_file() and ".git" not in p.relative_to(self.app).parts}
+        for status in ("completed", "failed"):
+            row = {"id": "run-123", "workflow_name": "archon-lifecycle",
+                   "status": status, "outcome": None}
+            history = json.dumps({"runs": [row], "total": 1, "scopeFallback": False}) + "\n"
+            result = self.command("runs", "--status", status, "--json",
+                                  env={"FACTORY_TEST_STDOUT": history})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, history)
+            detail = json.dumps({**row, "transcript_path": None}) + "\n"
+            result = self.command("get", "run-123", "--json",
+                                  env={"FACTORY_TEST_STDOUT": detail})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, detail)
+        empty = '{"runs":[],"scopeFallback":false}\n'
+        for action, args in (("status", ["--json"]), ("runs", ["--open", "--json"])):
+            result = self.command(action, *args, env={"FACTORY_TEST_STDOUT": empty})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, empty)
+        after = {p.relative_to(self.app): p.read_bytes() for p in self.app.rglob("*")
+                 if p.is_file() and ".git" not in p.relative_to(self.app).parts}
+        self.assertEqual(after, before)
+        self.assertEqual([row[:2] for row in self.calls()], [
+            ["workflow", "runs"], ["workflow", "get"],
+            ["workflow", "runs"], ["workflow", "get"],
+            ["workflow", "status"], ["workflow", "runs"]])
+
+    def test_doctor_requires_native_history_capabilities(self):
+        for flag in ("--all", "--status", "--limit", "--open"):
+            with self.subTest(flag=flag):
+                result = self.command("doctor", env={"FACTORY_TEST_MISSING_RUNS_FLAG": flag})
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn("missing workflow runs capability", result.stderr)
+        self.assertEqual(self.command("doctor").returncode, 0)
 
     def test_native_failed_and_unknown_are_not_reinterpreted(self):
         for status in ("running", "failed", "paused", "future-status"):

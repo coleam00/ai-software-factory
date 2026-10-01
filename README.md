@@ -251,15 +251,34 @@ Run these from the application repo after installation:
 python factory/consumer.py doctor
 python factory/consumer.py list
 python factory/consumer.py run archon-ship --input target=https://github.com/OWNER/REPO/issues/1 --detach --json
-python factory/consumer.py get <run-id> --json --events
+python factory/consumer.py get <run-id> --json --verbose --events
 python factory/consumer.py status --all --json
+python factory/consumer.py runs --status completed --json
+python factory/consumer.py runs --status failed --limit 50 --json
+python factory/consumer.py runs --open --json
 python factory/consumer.py approve <run-id> --comment "Approved"
 python factory/consumer.py cancel <run-id>
 python factory/consumer.py halt
 ```
 
 `halt` blocks new launches and continuations. Cancel an active run explicitly;
-`unhalt` allows launches again. Runtime-host runs stay in the foreground.
+`unhalt` allows launches again. Status, run history and run details remain available
+while halted. Runtime-host runs stay in the foreground.
+
+`status` shows active executions only; `--all` broadens project scope, not run
+statuses. `runs` shows recent history across all statuses, including completed and
+failed runs (20 rows by default; increase `--limit` to inspect older runs). Native
+filters, output and exit codes pass through unchanged. Both commands use the current
+project by default; `--all` lists across projects. An unregistered checkout falls
+back to all projects; check native JSON's `scopeFallback` before treating results
+as project-scoped. For JSON errors, inspect `ok: false` as well as the exit code.
+
+At the pinned revision, `runs --open` is a failed-only inbox: it excludes runs that
+another run has adopted, and excludes completed runs even if delivery was held.
+`--open` and `--status` are mutually exclusive. Empty active status or an empty
+inbox does not establish delivery. A completed run with a null outcome remains
+unknown; use `get <run-id> --json --verbose --events` and current PR/evidence records to inspect
+what happened, including failures before a PR was created.
 
 After the first successful lap, ask your agent to configure
 `.factory/schedule.json` with a shared workflow and its inputs.
@@ -273,6 +292,11 @@ it; a run that finds nothing completes with nothing to do. The consumer supplies
 the factory state-label mapping to triage, ship and lifecycle. An explicit
 `--input state_labels={}` or scheduled `"state_labels": {}` disables that default.
 A fixed `target` repeats that same target every tick.
+The timer does not inspect run history or resume/adopt prior runs. Automatic intake
+still excludes state-labelled issues and issues named by an open PR; a failure before
+either can leave an issue eligible on the next tick. Preserve retained commits and
+failing checks, then choose an explicitly authorized shared verification or delivery
+operation; history access does not perform recovery or authorize a merge.
 
 Publication remains opt-in. A supervised schedule can label intake while leaving
 merge approval gated and discoveries read-only:
