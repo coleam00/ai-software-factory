@@ -2,5 +2,6 @@
   "static": "",
   "unit": "",
   "unit_count_pattern": "",
-  "description": "Ordinary project checks only. Configure real commands. Runtime environment and scenarios are separate inputs."
+  "required_checks": "",
+  "description": "Ordinary project checks only. Configure real commands. Runtime environment and scenarios are separate inputs. required_checks names the CI checks a merge needs (comma-separated, or \"none\"); the merge queue reads it where GitHub cannot report branch protection, as on free private repositories."
 }

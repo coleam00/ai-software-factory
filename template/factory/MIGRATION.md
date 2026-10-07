@@ -11,10 +11,13 @@ runtime/discovery/merge workflows individually when needed. Runtime scenarios
 are project inputs. Scenario and holdout data must refer to fresh environments
 running the actual candidate, not a previously deployed revision.
 
-Factory may schedule whole workflows through tick and .factory/loop.sh. It does
-not need native trigger admission or any of the experimental forge APIs. Agents
-use gh inside workflows and follow GitHub protection. Do not infer merged state
-from a queued merge request or successful local tests.
+Scheduling is Archon's: `factory schedule install` writes an Archon trigger binding
+(`.factory/trigger.json`) and the host timer runs `factory schedule fire`, which calls
+`archon trigger fire` and `archon workflow wake`. Archon admits each start on a
+per-repository resource, queues an overlapping one, and resumes durable waits.
+`factory tick` and `.factory/loop.sh` are retired; delete an installed `loop.sh`
+and any `factory-timer` service that runs it. Agents use gh inside workflows. Do not
+infer merged state from a queued merge request or successful local tests.
 
 Upgrade preserves customized project files and backs up retired generated files.
 Do not run the old stage scheduler alongside the new consumer. No application
