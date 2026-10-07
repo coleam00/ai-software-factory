@@ -16,7 +16,9 @@ PERSONAL = {"factory/config.py", "harness/harness.config.json", "harness/runtime
             "harness/END-TO-END.md", "harness/mutations/defects.json", "MISSION.md",
             "FACTORY.md", "FACTORY_RULES.md", ".factory/holdout/HOLDOUT.md",
             ".factory/locks/floor.json"}
-RETIRED = [".archon/workflows/factory", "factory/nodeio.py", ".factory/notify.sh"] + [
+RETIRED = [".archon/workflows/factory", "factory/nodeio.py", ".factory/notify.sh",
+           # Scheduling moved to Archon native triggers (factory schedule).
+           ".factory/loop.sh", "factory/factory-timer.service.example"] + [
     f".claude/skills/factory-{name}" for name in
     ("setup", "triage", "plan", "implement", "review", "judge", "fix", "e2e", "holdout")]
 AGENTS_POINTER = (b"See [factory workflow policy](factory/WORKFLOW_POLICY.md) for "

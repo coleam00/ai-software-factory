@@ -609,6 +609,10 @@ class InstallTests(Fixture):
         custom = self.app / ".claude/skills/factory-e2e/SKILL.md"
         custom.parent.mkdir(parents=True)
         custom.write_bytes(b"custom original\r\n")
+        # The pre-trigger scheduler is retired on upgrade, with a backup.
+        old_loop = self.app / ".factory/loop.sh"
+        old_loop.parent.mkdir(parents=True, exist_ok=True)
+        old_loop.write_bytes(b"python factory/consumer.py tick\n")
         provider = self.base / "home/.archon/config.yaml"
         provider.parent.mkdir(parents=True)
         provider.write_bytes(b"defaultAssistant: custom\r\nprivate: preserved\n")
@@ -621,6 +625,9 @@ class InstallTests(Fixture):
             self.assertEqual((self.app / rel).read_bytes(), data, rel)
         self.assertFalse(custom.exists())
         self.assertEqual((self.app / ".factory/retired/.claude/skills/factory-e2e/SKILL.md").read_bytes(), b"custom original\r\n")
+        self.assertFalse(old_loop.exists())
+        self.assertEqual((self.app / ".factory/retired/.factory/loop.sh").read_bytes(),
+                         b"python factory/consumer.py tick\n")
         with contextlib.redirect_stdout(io.StringIO()) as out:
             sync(self.app)
         self.assertNotIn("install ", out.getvalue())
