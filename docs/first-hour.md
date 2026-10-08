@@ -21,4 +21,4 @@ The installer selects the shared Archon source revision automatically.
 The current integration still needs live end-to-end validation. Installation checks
 alone do not prove a successful factory run.
 
-For an older installation, read the [migration guide](../template/factory/MIGRATION.md).
+To upgrade an installation, see [`factory/MIGRATION.md`](../template/factory/MIGRATION.md).

@@ -155,8 +155,8 @@ optionally applies ONE uniquely anchored configured mutation, runs setup, freeze
 and hashes source, allocates a new target/state, starts the configured command and
 waits for readiness. `--expected-source <sha256>` optionally rejects stale input
 bytes. A second start is always fresh, whether baseline, holdout or malformed-report
-retry. A bound root also requires `--expected-revision`; legacy unbound ordinary
-roots retain `--expected-source` but make no delivered-revision claim. The shared
+retry. A bound root also requires `--expected-revision`; an unbound ordinary
+root keeps `--expected-source` but makes no delivered-revision claim. The shared
 composition decides when to issue it; there is no Python suite loop. Concurrent
 cases must use distinct slots. This owner serializes requests.
 
@@ -301,7 +301,7 @@ This consumes the actual shared runtime return: `verified`, `verdict`, `candidat
 missing/inconsistent/mismatched/inconclusive results remain INCONCLUSIVE. Shared
 agent attribution and assertion evidence remain in native suite artifacts. The
 caller must supply the trusted native return; JSON alone is not a signed receipt.
-No model exit code or synthetic `[PASS]` becomes mutation evidence. Legacy `score`
+No model exit code or synthetic `[PASS]` becomes mutation evidence. The `score` command
 remains limited to supplied ordinary check logs.
 
 Repository checks: `python bin/test_runtime_resource.py`, `python bin/test_runtime_host.py`, `python bin/test_consumer.py`,

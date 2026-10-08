@@ -1,4 +1,4 @@
-"""Install the consumer and preserve customized files during migration."""
+"""Install the factory into an application and preserve the user's own files."""
 from __future__ import annotations
 import json
 import os
@@ -12,15 +12,10 @@ TEMPLATE = HOME / "template"
 sys.path.insert(0, str(TEMPLATE / "factory"))
 import consumer
 
-PERSONAL = {"factory/config.py", "harness/harness.config.json", "harness/runtime.inputs.json",
+# Files the user writes for their project. Installed once, never overwritten.
+PERSONAL = {"harness/harness.config.json", "harness/runtime.inputs.json",
             "harness/END-TO-END.md", "harness/mutations/defects.json", "MISSION.md",
-            "FACTORY.md", "FACTORY_RULES.md", ".factory/holdout/HOLDOUT.md",
-            ".factory/locks/floor.json"}
-RETIRED = [".archon/workflows/factory", "factory/nodeio.py", ".factory/notify.sh",
-           # Scheduling moved to Archon native triggers (factory schedule).
-           ".factory/loop.sh", "factory/factory-timer.service.example"] + [
-    f".claude/skills/factory-{name}" for name in
-    ("setup", "triage", "plan", "implement", "review", "judge", "fix", "e2e", "holdout")]
+            "FACTORY.md", "FACTORY_RULES.md", ".factory/holdout/HOLDOUT.md"}
 AGENTS_POINTER = (b"See [factory workflow policy](factory/WORKFLOW_POLICY.md) for "
                   b"factory-specific shared-workflow requirements.\n")
 
@@ -33,7 +28,7 @@ def within(root: Path, path: Path) -> Path:
 
 def backup(root: Path, path: Path, dry: bool) -> None:
     within(root, path)
-    dest = within(root, root / ".factory/retired" / path.relative_to(root))
+    dest = within(root, root / ".factory/backup" / path.relative_to(root))
     original = dest
     n = 1
     while dest.exists():
@@ -43,17 +38,6 @@ def backup(root: Path, path: Path, dry: bool) -> None:
     if not dry:
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, dest)
-
-
-def retired_files(root: Path) -> list[Path]:
-    result = []
-    for rel in RETIRED:
-        path = within(root, root / rel)
-        if path.is_dir():
-            result.extend(p for p in path.rglob("*") if p.is_file())
-        elif path.is_file():
-            result.append(path)
-    return result
 
 
 def install_agents_pointer(root: Path, dry: bool) -> None:
@@ -85,23 +69,8 @@ def install_agents_pointer(root: Path, dry: bool) -> None:
 
 def sync(root: Path, dry: bool = False) -> None:
     root = root.resolve()
-    retired = retired_files(root)
-    # Report references before removing generated execution surfaces. Originals are
-    # all preserved, including custom prompts whose ownership cannot be proved.
-    for directory, folders, files in os.walk(root, followlinks=False):
-        folders[:] = [name for name in folders if name not in
-                      {".git", "node_modules", ".venv", "retired", "__pycache__"}]
-        for filename in files:
-            path = Path(directory) / filename
-            if path.suffix not in {".md", ".py", ".json", ".sh"}:
-                continue
-            text = path.read_text(encoding="utf-8", errors="replace")
-            if any(rel in text for rel in RETIRED):
-                print(f"migration reference: {path.relative_to(root)}")
-    for path in retired:
-        backup(root, path, dry)
-        if not dry:
-            path.unlink()
+    # An installed file the user changed is backed up before the new version
+    # replaces it; personal files are never overwritten.
     for src in sorted(TEMPLATE.rglob("*")):
         if not src.is_file() or "__pycache__" in src.parts or src.suffix in {".pyc", ".pyo"}:
             continue
@@ -125,8 +94,7 @@ def sync(root: Path, dry: bool = False) -> None:
     if additions and not dry:
         with ignore.open("a", encoding="utf-8") as fh:
             fh.write("\n" + "\n".join(additions) + "\n")
-    print("User config and scenarios preserved. Legacy config.py is not imported.")
-    print("Remove old cron/Task Scheduler entries and stop old loop processes explicitly.")
+    print("Your project files are preserved; changed factory files are backed up in .factory/backup.")
 
 
 def install_source(repository: str, revision: str, cache: Path, bun: str) -> dict:

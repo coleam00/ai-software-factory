@@ -423,5 +423,4 @@ docs/server-cheat-sheet.md    every prompt for a server install, in order
 docs/incidents.md             historical failures and lessons
 ```
 
-Upgrading an older factory? See the [migration guide](template/factory/MIGRATION.md)
-for retired commands and configuration.
+To upgrade an installed factory, see [`factory/MIGRATION.md`](template/factory/MIGRATION.md).

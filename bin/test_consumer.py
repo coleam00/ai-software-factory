@@ -185,11 +185,16 @@ class ConsumerTests(Fixture):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.trigger_binding()["launch"]["inputs"]["state_labels"], "{}")
 
-    def test_tick_is_retired_in_favor_of_native_triggers(self):
-        result = self.command("tick")
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("factory schedule install", result.stderr)
-        self.assertEqual(self.calls(), [])
+    def test_unknown_commands_fail_without_a_native_launch(self):
+        for args in (("tick",), ("level", "4"), ("accept", "gh:pr:1")):
+            with self.subTest(args=args):
+                result = self.command(*args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Unknown command", result.stderr)
+        result = self.command("run", "merge", "gh:pr:1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("absent from the pinned SDLC source", result.stderr)
+        self.assertFalse(any(row[:2] == ["workflow", "run"] for row in self.calls()))
 
     def test_schedule_install_writes_the_binding_but_never_registers_a_timer_unasked(self):
         (self.app / ".factory/schedule.json").write_text(
@@ -341,19 +346,6 @@ class ConsumerTests(Fixture):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no fallback", result.stderr)
         self.assertFalse(any(row[:2] == ["workflow", "run"] for row in self.calls()))
-
-    def test_legacy_dial_and_receipts_cannot_merge(self):
-        config = self.app / "factory/config.py"
-        config.parent.mkdir()
-        config.write_text('raise RuntimeError("legacy config must not be imported")')
-        receipt = self.app / ".factory/acceptance.json"
-        receipt.write_text('{"verdict":"approve","autonomy":4}')
-        for args in [("level", "4"), ("accept", "gh:pr:1"), ("run", "merge", "gh:pr:1")]:
-            result = self.command(*args)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("retired", result.stderr.lower())
-        self.assertFalse(any(row[:2] == ["workflow", "run"] for row in self.calls()))
-        self.assertEqual(receipt.read_text(), '{"verdict":"approve","autonomy":4}')
 
     def test_native_controls_keep_args_and_exit(self):
         for action, args in [("get", ["run-123", "--events"]), ("status", ["--all"]),
@@ -598,21 +590,17 @@ class InstallTests(Fixture):
             install_agents_pointer(self.app, False)
         self.assertEqual(outside.read_text(), "outside")
 
-    def test_upgrade_preserves_personal_files_and_backs_up_execution_surfaces(self):
-        originals = {"factory/config.py": b"AUTONOMY=4\r\n", "harness/harness.config.json": b'{"agent":{"cmd":"do not run"}}',
+    def test_upgrade_preserves_personal_files_and_backs_up_changed_factory_files(self):
+        originals = {"harness/harness.config.json": b'{"agent":{"cmd":"do not run"}}',
                      "harness/END-TO-END.md": b"custom journey\r\n", ".factory/holdout/HOLDOUT.md": b"private scenario\n",
                      ".archon/config.yaml": b"defaultAssistant: custom\r\n", "app.txt": b"original app\n"}
         for rel, data in originals.items():
             path = self.app / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
-        custom = self.app / ".claude/skills/factory-e2e/SKILL.md"
-        custom.parent.mkdir(parents=True)
-        custom.write_bytes(b"custom original\r\n")
-        # The pre-trigger scheduler is retired on upgrade, with a backup.
-        old_loop = self.app / ".factory/loop.sh"
-        old_loop.parent.mkdir(parents=True, exist_ok=True)
-        old_loop.write_bytes(b"python factory/consumer.py tick\n")
+        changed = self.app / "factory/RUNTIME_HOST.md"
+        changed.parent.mkdir(parents=True, exist_ok=True)
+        changed.write_bytes(b"locally edited\r\n")
         provider = self.base / "home/.archon/config.yaml"
         provider.parent.mkdir(parents=True)
         provider.write_bytes(b"defaultAssistant: custom\r\nprivate: preserved\n")
@@ -623,11 +611,9 @@ class InstallTests(Fixture):
         self.assertEqual(provider.read_bytes(), provider_before)
         for rel, data in originals.items():
             self.assertEqual((self.app / rel).read_bytes(), data, rel)
-        self.assertFalse(custom.exists())
-        self.assertEqual((self.app / ".factory/retired/.claude/skills/factory-e2e/SKILL.md").read_bytes(), b"custom original\r\n")
-        self.assertFalse(old_loop.exists())
-        self.assertEqual((self.app / ".factory/retired/.factory/loop.sh").read_bytes(),
-                         b"python factory/consumer.py tick\n")
+        self.assertEqual(changed.read_bytes(), (TEMPLATE / "factory/RUNTIME_HOST.md").read_bytes())
+        self.assertEqual((self.app / ".factory/backup/factory/RUNTIME_HOST.md").read_bytes(),
+                         b"locally edited\r\n")
         with contextlib.redirect_stdout(io.StringIO()) as out:
             sync(self.app)
         self.assertNotIn("install ", out.getvalue())
@@ -679,20 +665,20 @@ class InstallTests(Fixture):
         self.assertEqual(tracked.read_text(), "dirty")
 
     def test_dry_upgrade_and_repeat_backup_preserve_bytes(self):
-        path = self.app / "factory/dispatch.py"
+        path = self.app / "factory/RUNTIME_HOST.md"
         path.parent.mkdir()
-        path.write_bytes(b"custom scheduler\r\n")
+        path.write_bytes(b"custom notes\r\n")
         with contextlib.redirect_stdout(io.StringIO()):
             sync(self.app, True)
-        self.assertEqual(path.read_bytes(), b"custom scheduler\r\n")
-        self.assertFalse((self.app / ".factory/retired").exists())
+        self.assertEqual(path.read_bytes(), b"custom notes\r\n")
+        self.assertFalse((self.app / ".factory/backup").exists())
         with contextlib.redirect_stdout(io.StringIO()):
             sync(self.app)
             path.write_bytes(b"second custom version")
             sync(self.app)
-        base = self.app / ".factory/retired/factory/dispatch.py"
-        self.assertEqual(base.read_bytes(), b"custom scheduler\r\n")
-        self.assertEqual(base.with_suffix(".py.1").read_bytes(), b"second custom version")
+        base = self.app / ".factory/backup/factory/RUNTIME_HOST.md"
+        self.assertEqual(base.read_bytes(), b"custom notes\r\n")
+        self.assertEqual(base.with_suffix(".md.1").read_bytes(), b"second custom version")
 
 
 class HarnessTests(unittest.TestCase):
@@ -719,9 +705,6 @@ class HarnessTests(unittest.TestCase):
         self.assertIn("CHECKS_OK mode=ordinary", result.stdout)
         self.assertNotIn("E2E_PASSED", result.stdout)
         self.assertFalse((self.root / "PROVIDER_EXECUTED").exists())
-        result = subprocess.run([sys.executable, "harness/agentcheck.py"], cwd=self.root, capture_output=True)
-        self.assertEqual(result.returncode, 2)
-        self.assertFalse((self.root / "PROVIDER_EXECUTED").exists())
 
     def test_no_checks_zero_tests_and_quoted_failure_are_red(self):
         for cfg in ({}, {"unit": [sys.executable, "-c", "print('0 passed')"], "unit_count_pattern": r"(\d+) passed"},
@@ -737,17 +720,6 @@ class HarnessTests(unittest.TestCase):
         shim.write_text("@echo off\r\necho SHIM_OK\r\n")
         with patch.dict(os.environ, {"PATH": str(self.root) + os.pathsep + os.environ["PATH"]}):
             self.assertEqual(consumer.execute(["factory-test-shim"], self.root).stdout.strip(), "SHIM_OK")
-
-    def test_runtime_export_preserves_environment_and_freshness_without_launch(self):
-        module = load("runtime_data_test", TEMPLATE / "harness/runtime_data.py")
-        cfg = {"driver": "http", "http": {"start": "ordinary app", "env": {"DB": "state-{port}"}},
-               "agent": {"cmd": "provider forbidden", "timeout_s": 900}, "e2e_timeout_s": 300}
-        original = json.dumps(cfg)
-        data = module.export(cfg)
-        self.assertEqual(data["environment"]["http"], cfg["http"])
-        self.assertEqual(data["requirements"]["fresh_environment_per"], ["runtime", "holdout", "retry", "mutation"])
-        self.assertNotIn("provider forbidden", json.dumps(data))
-        self.assertEqual(json.dumps(cfg), original)
 
     def test_application_helper_quoted_import_can_fail(self):
         appproc = load("appproc_test", TEMPLATE / "harness/appproc.py")

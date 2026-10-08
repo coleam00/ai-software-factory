@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 *.pyo
 .factory/consumer.json
-.factory/retired/
+.factory/backup/
 .factory/STOP
 harness/.results/
 .factory/holdout/.results/

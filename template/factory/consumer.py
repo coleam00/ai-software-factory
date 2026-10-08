@@ -201,28 +201,6 @@ def doctor(settings: dict) -> dict:
             "provider_configuration": "native configuration preserved; authentication not live-tested"}
 
 
-RETIRED = {
-    "accept": "Use factory approve/respond <run-id> for an actual declared Archon gate.",
-    "level": "The autonomy dial is retired and cannot authorize work or merges.",
-    "arm": "Use factory schedule install --apply; see the README.",
-    "tick": "Scheduling moved to Archon native triggers: factory schedule install, then factory schedule fire.",
-    "disarm": "Remove the old factory cron/Task Scheduler entries explicitly. Use cancel <run-id> for native runs.",
-    "merge": "Use a shared queue workflow when present in the integration source; its gate owns merge authorization.",
-    "deploy": "Move deployment into a shared release workflow with an explicit gate.",
-    "fix": "Use factory run archon-deliver --adopt <run-id> --input work=<findings file>.",
-    "implement": "Use factory run archon-ship --input target=<request>.",
-    "triage": "Use factory run archon-triage --input target=<request>.",
-    "validate": "Use factory run archon-validate with the producer's declared inputs.",
-    "regress": "Use a shared regression workflow when present in the pinned source.",
-}
-
-
-def refuse(action: str) -> int:
-    print(f"Retired factory operation '{action}'. " + RETIRED.get(action,
-          "Use factory run <shared-workflow> or native status/get/cancel/resume."), file=sys.stderr)
-    return 2
-
-
 def harness_inputs(root: Path, name: str) -> dict:
     # A project's merge policy is a fact the merge gate reads, not something an
     # agent decides. GitHub cannot report required checks on plans without branch
@@ -278,11 +256,9 @@ def invoke(root: Path, action: str, args: list[str]) -> int:
             raise ValueError("--runtime-host requires a configuration path")
     if action == "schedule":
         return schedule(root, args)
-    if action in RETIRED:
-        return refuse(action)
     if action not in {"run", "list", "get", "status", "approve", "reject", "respond",
                       "cancel", "resume", "doctor", "halt", "unhalt"}:
-        return refuse(action)
+        raise ValueError(f"Unknown command '{action}'. Run factory --help for the commands.")
     stop = shared_root(root) / ".factory/STOP"
     if action in {"halt", "unhalt"}:
         if args:
@@ -315,8 +291,6 @@ def invoke(root: Path, action: str, args: list[str]) -> int:
         if not args:
             raise ValueError("Usage: factory run <shared-workflow> [native options and message]")
         name = args[0]
-        if name in RETIRED:
-            return refuse(name)
         if name not in discover(settings, source):
             raise ValueError(f"Shared workflow '{name}' is absent from the pinned SDLC source; no fallback")
         validate(settings, source, name)
@@ -373,7 +347,7 @@ def trigger_config(root: Path, settings: dict, source: Path, interval: int) -> d
         raise ValueError("A trigger cannot wrap the runtime host. Run it as its own service "
                          "(python factory/runtime_host.py serve --config <runtime.json> "
                          "--connection-file <connection.json>) and drop runtime_host from schedule.json")
-    if workflow in RETIRED or workflow not in discover(settings, source):
+    if workflow not in discover(settings, source):
         raise ValueError(f"Shared workflow '{workflow}' is absent from the pinned SDLC source")
     for key in inputs:
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
