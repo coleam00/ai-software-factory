@@ -46,10 +46,12 @@ Archon source, including the shared workflows; you do not need to check out Arch
 or merge its PRs yourself.
 
 **Current status:** the default pins exact Archon revision
-`24796870605b0fd576734b79a8d5c781f2b1c1e1`, whose SDLC pack supports grounded
-intake, reviewed delivery, scoped validation reuse, independent runtime and holdout
-verification, bounded repair, discovery handling, merge queues and deterministic
-deployment. Native live acceptance remains separate from installation readiness.
+`d68a3580cdc1e351166b9fedb5e2922ce99684f9` on the `factory/sdlc-on-dev` branch (Archon
+dev plus the SDLC pack's factory workflows). Its pack supports dependency-aware intake,
+reviewed delivery, scoped validation reuse, runtime and optional holdout verification,
+bounded repair, discovery handling, a merge queue that reads required checks by script,
+deterministic deployment, and scheduling through Archon native triggers. The pin and
+`pack.json` must name the same revision.
 
 ---
 
