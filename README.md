@@ -84,8 +84,9 @@ on a server, run the installation and configuration there over SSH.
 The installer writes the factory and project templates and installs the pinned
 Archon source. It preserves project configuration on upgrades. It does not configure
 provider authentication, change model tiers or start a schedule.
-It also adds one pointer to `factory/WORKFLOW_POLICY.md` in the project's native
-`AGENTS.md` without replacing existing guidance. That policy supplies the
+It also adds one pointer to `factory/WORKFLOW_POLICY.md` in the project's root
+`engineering.md`, the conventions file the shared workflows read, without replacing
+existing guidance. That policy supplies the
 factory-specific bootstrap, runtime, review and state-label requirements that the
 general-purpose shared workflows intentionally do not assume.
 
@@ -415,7 +416,7 @@ bin/factory.py                install and CLI entry point
 template/                    what init copies into your repo
   factory/consumer.py        invokes shared Archon workflows and shows their state
   factory/pack.json          shared source revision and required workflows
-  factory/WORKFLOW_POLICY.md factory requirements read through native AGENTS.md
+  factory/WORKFLOW_POLICY.md factory requirements read through engineering.md
   factory/RUNTIME_HOST.md    app startup and runtime scenario configuration
   harness/                   project checks and END-TO-END.md
 docs/first-hour.md            what to do after setup
