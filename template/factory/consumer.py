@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -13,6 +14,10 @@ HERE = Path(__file__).resolve().parent
 MANIFEST = json.loads((HERE / "pack.json").read_text(encoding="utf-8"))
 SETTINGS = ".factory/consumer.json"
 ENTRY = "packages/cli/src/cli.ts"
+SCHEDULE = ".factory/schedule.json"
+TRIGGER = ".factory/trigger.json"
+# The shared workflows that carry a merge gate and accept a declared required-check policy.
+MERGING_WORKFLOWS = {"archon-lifecycle", "archon-merge-queue"}
 
 
 def execute(argv: list[str], cwd: Path, *, capture: bool = True,
@@ -196,35 +201,32 @@ def doctor(settings: dict) -> dict:
             "provider_configuration": "native configuration preserved; authentication not live-tested"}
 
 
-RETIRED = {
-    "accept": "Use factory approve/respond <run-id> for an actual declared Archon gate.",
-    "level": "The autonomy dial is retired and cannot authorize work or merges.",
-    "arm": "Use an OS timer to invoke factory tick; see the README.",
-    "disarm": "Remove the old factory cron/Task Scheduler entries explicitly. Use cancel <run-id> for native runs.",
-    "merge": "Use a shared queue workflow when present in the integration source; its gate owns merge authorization.",
-    "deploy": "Move deployment into a shared release workflow with an explicit gate.",
-    "fix": "Use factory run archon-deliver --adopt <run-id> --input work=<findings file>.",
-    "implement": "Use factory run archon-ship --input target=<request>.",
-    "triage": "Use factory run archon-triage --input target=<request>.",
-    "validate": "Use factory run archon-validate with the producer's declared inputs.",
-    "regress": "Use a shared regression workflow when present in the pinned source.",
-}
+def harness_inputs(root: Path, name: str) -> dict:
+    # A project's merge policy is a fact the merge gate reads, not something an
+    # agent decides. GitHub cannot report required checks on plans without branch
+    # protection, so the project declares them once in its harness configuration.
+    if name not in MERGING_WORKFLOWS:
+        return {}
+    try:
+        config = json.loads((root / "harness/harness.config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    value = config.get("required_checks") if isinstance(config, dict) else None
+    return {"required_checks": value} if isinstance(value, str) and value.strip() else {}
 
 
-def refuse(action: str) -> int:
-    print(f"Retired factory operation '{action}'. " + RETIRED.get(action,
-          "Use factory run <shared-workflow> or native status/get/cancel/resume."), file=sys.stderr)
-    return 2
+def workflow_defaults(root: Path, name: str) -> dict:
+    return {**MANIFEST.get("default_inputs", {}).get(name, {}), **harness_inputs(root, name)}
 
 
-def with_default_inputs(name: str, args: list[str], options: list[str]) -> list[str]:
+def with_default_inputs(name: str, args: list[str], options: list[str], root: Path) -> list[str]:
     supplied = set()
     for index, arg in enumerate(options):
         if arg == "--input" and index + 1 < len(options):
             supplied.add(options[index + 1].split("=", 1)[0])
         elif arg.startswith("--input="):
             supplied.add(arg.removeprefix("--input=").split("=", 1)[0])
-    defaults = MANIFEST.get("default_inputs", {}).get(name, {})
+    defaults = workflow_defaults(root, name)
     injected = [item for key, value in defaults.items() if key not in supplied
                 for item in ("--input", f"{key}={value}")]
     return [args[0], *injected, *args[1:]]
@@ -252,31 +254,11 @@ def invoke(root: Path, action: str, args: list[str]) -> int:
             args.pop(index)
         if not runtime_config:
             raise ValueError("--runtime-host requires a configuration path")
-    if action == "tick":
-        if args:
-            raise ValueError("tick takes no arguments; configure .factory/schedule.json")
-        schedule = json.loads((shared_root(root) / ".factory/schedule.json").read_text(encoding="utf-8"))
-        workflow = schedule.get("workflow", "archon-lifecycle")
-        inputs = schedule.get("inputs")
-        if not isinstance(workflow, str) or not isinstance(inputs, dict):
-            raise ValueError("schedule.json requires a shared workflow and inputs object")
-        args = [workflow]
-        for key, value in inputs.items():
-            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
-                raise ValueError("Invalid scheduled workflow input name")
-            args += ["--input", key + "=" + (value if isinstance(value, str) else json.dumps(value))]
-        if "runtime_host" in schedule:
-            host = schedule["runtime_host"]
-            if not isinstance(host, str) or not host:
-                raise ValueError("runtime_host must be a non-empty configuration path")
-            args += ["--runtime-host", host]
-        # Scheduling submits exactly one shared workflow, never individual stages.
-        return invoke(root, "run", args)
-    if action in RETIRED:
-        return refuse(action)
+    if action == "schedule":
+        return schedule(root, args)
     if action not in {"run", "list", "get", "status", "approve", "reject", "respond",
                       "cancel", "resume", "doctor", "halt", "unhalt"}:
-        return refuse(action)
+        raise ValueError(f"Unknown command '{action}'. Run factory --help for the commands.")
     stop = shared_root(root) / ".factory/STOP"
     if action in {"halt", "unhalt"}:
         if args:
@@ -309,8 +291,6 @@ def invoke(root: Path, action: str, args: list[str]) -> int:
         if not args:
             raise ValueError("Usage: factory run <shared-workflow> [native options and message]")
         name = args[0]
-        if name in RETIRED:
-            return refuse(name)
         if name not in discover(settings, source):
             raise ValueError(f"Shared workflow '{name}' is absent from the pinned SDLC source; no fallback")
         validate(settings, source, name)
@@ -318,7 +298,7 @@ def invoke(root: Path, action: str, args: list[str]) -> int:
         resuming = any(arg.split("=", 1)[0] == "--resume" for arg in options)
         if not resuming:
             native += ["--workflow-source", str(source)]
-            args = with_default_inputs(name, args, options)
+            args = with_default_inputs(name, args, options, root)
     native += args
     if action == "status":
         print(f"Factory source={source} revision={settings['revision']} local_STOP={stop.exists()}", file=sys.stderr)
@@ -333,13 +313,163 @@ def invoke(root: Path, action: str, args: list[str]) -> int:
                    capture=False, timeout=None).returncode
 
 
+def repository_slug(root: Path) -> str:
+    remote = checked(["git", "remote", "get-url", "origin"], root).strip()
+    match = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?/?$", remote)
+    if not match:
+        raise ValueError("The origin remote does not name one owner/repo")
+    return match[1]
+
+
+def whoami(settings: dict, source: Path, root: Path) -> str:
+    # The CLI prints log records before its JSON answer; read the last object.
+    raw = checked([*cli(settings, source), "trigger", "whoami"], root)
+    for start in reversed([m.start() for m in re.finditer(r"^\{", raw, re.M)]):
+        try:
+            data = json.loads(raw[start:])
+        except ValueError:
+            continue
+        if isinstance(data, dict) and isinstance(data.get("runAsUserId"), str):
+            return data["runAsUserId"]
+    raise ValueError("archon trigger whoami returned no runAsUserId")
+
+
+def trigger_config(root: Path, settings: dict, source: Path, interval: int) -> dict:
+    """An Archon trigger binding for the scheduled shared workflow. Archon owns admission,
+    the durable queue and overlap; this only names what to start."""
+    schedule_file = shared_root(root) / SCHEDULE
+    schedule_data = json.loads(schedule_file.read_text(encoding="utf-8"))
+    workflow = schedule_data.get("workflow", "archon-lifecycle")
+    inputs = schedule_data.get("inputs")
+    if not isinstance(workflow, str) or not isinstance(inputs, dict):
+        raise ValueError("schedule.json requires a shared workflow and inputs object")
+    if "runtime_host" in schedule_data:
+        raise ValueError("A trigger cannot wrap the runtime host. Run it as its own service "
+                         "(python factory/runtime_host.py serve --config <runtime.json> "
+                         "--connection-file <connection.json>) and drop runtime_host from schedule.json")
+    if workflow not in discover(settings, source):
+        raise ValueError(f"Shared workflow '{workflow}' is absent from the pinned SDLC source")
+    for key in inputs:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            raise ValueError("Invalid scheduled workflow input name")
+    values = {**workflow_defaults(root, workflow),
+              **{k: v if isinstance(v, str) else json.dumps(v) for k, v in inputs.items()}}
+    slug = repository_slug(root)
+    return {
+        "version": 1,
+        "sourceInstanceId": "factory-" + slug.replace("/", "-"),
+        "binding": {
+            "bindingId": "factory-" + workflow,
+            "bindingRevision": None,
+            "hostId": "factory-" + re.sub(r"[^A-Za-z0-9-]", "-", platform.node() or "host"),
+            "runAsUserId": whoami(settings, source, root),
+            # One resource per repository and workflow: laps queue, never overlap.
+            "resource": f"github:{slug}:{workflow}",
+            "overlap": "queue",
+            "launch": {"cwd": str(root), "workflowName": workflow, "inputs": values,
+                       "isolation": {"kind": "default"}},
+        },
+        "schedule": {"intervalSeconds": interval, "runAtLoad": False},
+    }
+
+
+def timer_commands(root: Path, interval: int) -> dict:
+    """What the host scheduler runs. Archon installs launchd jobs itself; elsewhere the
+    host scheduler calls `factory schedule fire`, which honors the local STOP brake."""
+    fire = [sys.executable, str(root / "factory/consumer.py"), "schedule", "fire"]
+    name = "ArchonFactory-" + re.sub(r"[^A-Za-z0-9-]", "-", root.name)
+    if sys.platform == "win32":
+        action = f'cmd /c cd /d "{root}" && "{fire[0]}" factory\\consumer.py schedule fire'
+        minutes = max(1, interval // 60)
+        return {"install": [["schtasks", "/Create", "/TN", name, "/SC", "MINUTE", "/MO", str(minutes),
+                             "/TR", action, "/F"]],
+                "remove": [["schtasks", "/Delete", "/TN", name, "/F"]]}
+    if sys.platform == "darwin":
+        return {"install": [], "remove": []}  # Archon installs its own launchd jobs.
+    unit = name.lower()
+    # The timer gets what a manual run had: the same tool PATH, credentials from a
+    # mode-600 file outside the repository, and IS_SANDBOX for Claude Code as root.
+    return {"systemd": {
+        f"{unit}.service": "[Unit]\nDescription=Archon factory trigger\n\n[Service]\nType=oneshot\n"
+                           f"WorkingDirectory={root}\nEnvironment=PATH={os.environ.get('PATH', '')}\n"
+                           "Environment=IS_SANDBOX=1\nEnvironmentFile=-%h/.factory-env\n"
+                           f"ExecStart={' '.join(fire)}\n",
+        f"{unit}.timer": f"[Unit]\nDescription=Archon factory trigger\n\n[Timer]\nOnBootSec=2min\n"
+                         f"OnUnitInactiveSec={interval}s\n\n[Install]\nWantedBy=timers.target\n"},
+        "install": [["systemctl", "--user", "daemon-reload"],
+                    ["systemctl", "--user", "enable", "--now", f"{unit}.timer"]],
+        "remove": [["systemctl", "--user", "disable", "--now", f"{unit}.timer"]]}
+
+
+def schedule(root: Path, args: list[str]) -> int:
+    action = args[0] if args else ""
+    flags = args[1:]
+    apply = "--apply" in flags
+    interval = 300
+    if "--interval" in flags:
+        interval = int(flags[flags.index("--interval") + 1])
+        if interval < 60:
+            raise ValueError("--interval must be at least 60 seconds")
+    settings = read_settings(root)
+    source = verify_source(settings)
+    config_path = shared_root(root) / TRIGGER
+    stop = shared_root(root) / ".factory/STOP"
+    native = cli(settings, source)
+    if action == "install":
+        config = trigger_config(root, settings, source, interval)
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+        plan = timer_commands(root, interval)
+        print(f"Wrote {config_path} (Archon trigger binding for {config['binding']['launch']['workflowName']}).")
+        if sys.platform == "darwin":
+            plan = {"install": [[*native, "trigger", "schedule", "install", "--config", str(config_path)],
+                                [*native, "workflow", "wake", "schedule", "install", "--interval", "60"]]}
+        if "systemd" in plan:
+            unit_dir = Path.home() / ".config/systemd/user"
+            for file_name, body in plan["systemd"].items():
+                print(f"--- {unit_dir / file_name}\n{body}")
+                if apply:
+                    unit_dir.mkdir(parents=True, exist_ok=True)
+                    (unit_dir / file_name).write_text(body, encoding="utf-8")
+        for command in plan["install"]:
+            print(("Running: " if apply else "Run to enable: ") + subprocess.list2cmdline(command))
+            if apply:
+                checked(command, root)
+        return 0
+    if action == "fire":
+        if stop.exists():
+            print("Local STOP is set; no trigger fired. Use unhalt to resume.", file=sys.stderr)
+            return 0
+        if not config_path.is_file():
+            raise ValueError("No trigger binding. Run factory schedule install first")
+        fired = execute([*native, "trigger", "fire", "--config", str(config_path)], root,
+                        capture=False, timeout=None).returncode
+        # Resume due durable waits (CI pauses, usage-limit resumes) in the same tick.
+        woken = execute([*native, "workflow", "wake"], root, capture=False, timeout=None).returncode
+        return fired or woken
+    if action == "remove":
+        plan = timer_commands(root, interval)
+        if sys.platform == "darwin" and config_path.is_file():
+            plan = {"remove": [[*native, "trigger", "schedule", "remove", "--config", str(config_path)]]}
+        for command in plan["remove"]:
+            print(("Running: " if apply else "Run to disable: ") + subprocess.list2cmdline(command))
+            if apply:
+                execute(command, root)
+        if apply:
+            config_path.unlink(missing_ok=True)
+        return 0
+    if action == "status":
+        return execute([*native, "trigger", "list"], root, capture=False, timeout=None).returncode
+    raise ValueError("Usage: factory schedule install|fire|remove|status [--interval <seconds>] [--apply]")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in {"--help", "-h"}:
         print("factory run <shared-workflow> [native arguments]\n"
               "factory run <shared-workflow> --runtime-host <config.json> [foreground native arguments]\n"
               "Runtime host: fresh ordinary apps; detach/resume unsupported. Manual: python factory/runtime_host.py serve --help\n"
-              "factory tick (one scheduled shared workflow, foreground)\n"
+              "factory schedule install [--interval <seconds>] [--apply] | fire | remove [--apply] | status\n"
               "factory list | doctor | status | get <run-id>\n"
               "factory approve | reject | respond | cancel | resume <run-id>\n"
               "factory halt | unhalt (local launch brake only)")

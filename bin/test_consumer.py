@@ -45,6 +45,11 @@ elif args[:2] == ["validate", "workflows"]:
     valid = bool(files) and (files[0].parent / "commands/check.md").is_file()
     print(json.dumps({"results": [{"workflowName": name, "valid": valid}], "summary": {"errors": 0 if valid else 1}}))
     raise SystemExit(0 if valid else 1)
+elif args[:2] == ["trigger", "whoami"]:
+    print('{"level":30,"msg":"db.sqlite_schema_initialized"}')
+    print(json.dumps({"runAsUserId": "user-123", "cliIdentity": "fixture"}, indent=2))
+elif args[:1] == ["trigger"] or args[:2] == ["workflow", "wake"]:
+    print("{}")
 else:
     if os.environ.get("FACTORY_RUNTIME_URL"):
         from urllib.request import Request, urlopen
@@ -73,6 +78,7 @@ class Fixture(unittest.TestCase):
         (self.app / "app.txt").write_text("original app\n")
         self.git(self.app, "add", ".")
         self.git(self.app, "commit", "-qm", "fixture")
+        self.git(self.app, "remote", "add", "origin", "https://github.com/owner/repo.git")
         self.origin = self.base / "complete producer source"
         self.origin.mkdir()
         self.git(self.origin, "init", "-q")
@@ -157,20 +163,94 @@ class ConsumerTests(Fixture):
         self.assertFalse(any(arg.startswith("state_labels=") for arg in argv))
         self.assertNotIn("--workflow-source", argv)
 
+    def trigger_binding(self):
+        return json.loads((self.app / ".factory/trigger.json").read_text())["binding"]
+
     def test_scheduled_defaults_and_explicit_empty_mapping(self):
         schedule = self.app / ".factory/schedule.json"
         schedule.write_text(json.dumps({"workflow": "archon-lifecycle", "inputs": {}}))
-        result = self.command("tick")
+        result = self.command("schedule", "install")
         self.assertEqual(result.returncode, 0, result.stderr)
         expected = consumer.MANIFEST["default_inputs"]["archon-lifecycle"]["state_labels"]
-        self.assertIn("state_labels=" + expected, json.loads(result.stdout)["argv"])
+        binding = self.trigger_binding()
+        self.assertEqual(binding["launch"]["inputs"]["state_labels"], expected)
+        self.assertEqual(binding["launch"]["workflowName"], "archon-lifecycle")
+        self.assertEqual(binding["launch"]["cwd"], str(self.app))
+        self.assertEqual(binding["runAsUserId"], "user-123")
+        self.assertEqual(binding["resource"], "github:owner/repo:archon-lifecycle")
+        self.assertEqual(binding["overlap"], "queue")
         schedule.write_text(json.dumps({"workflow": "archon-lifecycle",
                                         "inputs": {"state_labels": {}}}))
-        result = self.command("tick")
+        result = self.command("schedule", "install")
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.trigger_binding()["launch"]["inputs"]["state_labels"], "{}")
+
+    def test_unknown_commands_fail_without_a_native_launch(self):
+        for args in (("tick",), ("level", "4"), ("accept", "gh:pr:1")):
+            with self.subTest(args=args):
+                result = self.command(*args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Unknown command", result.stderr)
+        result = self.command("run", "merge", "gh:pr:1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("absent from the pinned SDLC source", result.stderr)
+        self.assertFalse(any(row[:2] == ["workflow", "run"] for row in self.calls()))
+
+    def test_schedule_install_writes_the_binding_but_never_registers_a_timer_unasked(self):
+        (self.app / ".factory/schedule.json").write_text(
+            json.dumps({"workflow": "archon-lifecycle", "inputs": {}}))
+        result = self.command("schedule", "install", "--interval", "600")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Run to enable:", result.stdout)
+        config = json.loads((self.app / ".factory/trigger.json").read_text())
+        self.assertEqual(config["schedule"]["intervalSeconds"], 600)
+        # Only reads reach the native CLI: discovery and whoami, never a timer or a fire.
+        commands = [row[:2] for row in self.calls()]
+        self.assertIn(["trigger", "whoami"], commands)
+        self.assertNotIn(["trigger", "fire"], commands)
+        self.assertNotIn(["trigger", "schedule"], commands)
+
+    def test_schedule_fire_fires_then_wakes_and_honors_stop(self):
+        (self.app / ".factory/schedule.json").write_text(
+            json.dumps({"workflow": "archon-lifecycle", "inputs": {}}))
+        self.assertEqual(self.command("schedule", "install").returncode, 0)
+        before = len(self.calls())
+        result = self.command("schedule", "fire")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        fired = self.calls()[before:]
+        self.assertEqual(fired[0][:3], ["trigger", "fire", "--config"])
+        self.assertEqual(Path(fired[0][3]), self.app / ".factory/trigger.json")
+        self.assertEqual(fired[1][:2], ["workflow", "wake"])
+        self.assertEqual(self.command("halt").returncode, 0)
+        before = len(self.calls())
+        result = self.command("schedule", "fire")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Local STOP is set", result.stderr)
+        self.assertEqual(self.calls()[before:], [])
+
+    def test_declared_required_checks_reach_merging_workflows_only(self):
+        harness = self.app / "harness/harness.config.json"
+        harness.parent.mkdir(parents=True, exist_ok=True)
+        harness.write_text(json.dumps({"unit": "", "required_checks": "tests"}))
+        for workflow in ("archon-lifecycle", "archon-merge-queue"):
+            with self.subTest(workflow=workflow):
+                result = self.command("run", workflow, "--json")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout)["argv"].count("required_checks=tests"), 1)
+        result = self.command("run", "archon-ship", "--json")
+        self.assertFalse(any(arg.startswith("required_checks=")
+                             for arg in json.loads(result.stdout)["argv"]))
+        result = self.command("run", "archon-lifecycle", "--input", "required_checks=none", "--json")
         argv = json.loads(result.stdout)["argv"]
-        self.assertEqual(argv.count("state_labels={}"), 1)
-        self.assertNotIn("state_labels=" + expected, argv)
+        self.assertEqual([a for a in argv if a.startswith("required_checks=")], ["required_checks=none"])
+        (self.app / ".factory/schedule.json").write_text(
+            json.dumps({"workflow": "archon-lifecycle", "inputs": {}}))
+        self.assertEqual(self.command("schedule", "install").returncode, 0)
+        self.assertEqual(self.trigger_binding()["launch"]["inputs"]["required_checks"], "tests")
+        harness.write_text(json.dumps({"unit": "", "required_checks": ""}))
+        result = self.command("run", "archon-lifecycle", "--json")
+        self.assertFalse(any(arg.startswith("required_checks=")
+                             for arg in json.loads(result.stdout)["argv"]))
 
     def test_runtime_host_detach_and_resume_refused_before_native_launch(self):
         for args in [("--detach",), ("--detach=true",), ("-d",), ("--resume",)]:
@@ -198,26 +278,19 @@ class ConsumerTests(Fixture):
             self.assertNotIn("--runtime-host", argv)
             item = json.loads(output.read_text())
             self.assertFalse(Path(item["snapshot"]).parent.exists())
-        schedule = self.app / ".factory/schedule.json"
-        schedule.write_text(json.dumps({"workflow": "archon-ship", "inputs": {},
-                                        "runtime_host": str(config)}))
-        result = self.command("tick", env={"FACTORY_TEST_HOST_RESULT": str(output)})
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertNotIn("--runtime-host", json.loads(result.stdout)["argv"])
-        item = json.loads(output.read_text())
-        self.assertFalse(Path(item["snapshot"]).parent.exists())
-        self.assertEqual(len([row for row in self.calls() if row[:2] == ["workflow", "run"]]), 3)
+        self.assertEqual(len([row for row in self.calls() if row[:2] == ["workflow", "run"]]), 2)
 
-    def test_scheduled_falsey_runtime_hosts_refuse_before_native_launch(self):
+    def test_scheduled_runtime_host_refused_because_a_trigger_cannot_wrap_it(self):
         schedule = self.app / ".factory/schedule.json"
-        for host in ("", None, False, 0, [], {}):
+        for host in ("runtime.json", "", None, False, 0, [], {}):
             with self.subTest(runtime_host=host):
                 schedule.write_text(json.dumps({"workflow": "archon-ship", "inputs": {},
                                                 "runtime_host": host}))
-                result = self.command("tick")
+                result = self.command("schedule", "install")
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("runtime_host must be a non-empty configuration path", result.stderr)
+                self.assertIn("runtime_host.py serve", result.stderr)
                 self.assertEqual(self.calls(), [])
+                self.assertFalse((self.app / ".factory/trigger.json").exists())
 
     def test_pinned_run_ignores_local_conflict_and_provider_override(self):
         local = self.app / ".archon/workflows/archon-merge-queue.yaml"
@@ -258,11 +331,11 @@ class ConsumerTests(Fixture):
         }
         schedule = self.app / ".factory/schedule.json"
         schedule.write_text(json.dumps({"workflow": "archon-lifecycle", "inputs": scheduled_inputs}))
-        scheduled = self.command("tick")
+        scheduled = self.command("schedule", "install")
         self.assertEqual(scheduled.returncode, 0, scheduled.stderr)
-        scheduled_argv = json.loads(scheduled.stdout)["argv"]
+        inputs = self.trigger_binding()["launch"]["inputs"]
         for key, value in scheduled_inputs.items():
-            self.assertEqual(scheduled_argv.count(f"{key}={value}"), 1)
+            self.assertEqual(inputs[key], value)
 
     def test_future_source_workflow_needs_no_alias(self):
         result = self.command("run", "archon-future-queue", "--input", "candidate=pr:1")
@@ -273,19 +346,6 @@ class ConsumerTests(Fixture):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no fallback", result.stderr)
         self.assertFalse(any(row[:2] == ["workflow", "run"] for row in self.calls()))
-
-    def test_legacy_dial_and_receipts_cannot_merge(self):
-        config = self.app / "factory/config.py"
-        config.parent.mkdir()
-        config.write_text('raise RuntimeError("legacy config must not be imported")')
-        receipt = self.app / ".factory/acceptance.json"
-        receipt.write_text('{"verdict":"approve","autonomy":4}')
-        for args in [("level", "4"), ("accept", "gh:pr:1"), ("run", "merge", "gh:pr:1")]:
-            result = self.command(*args)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("retired", result.stderr.lower())
-        self.assertFalse(any(row[:2] == ["workflow", "run"] for row in self.calls()))
-        self.assertEqual(receipt.read_text(), '{"verdict":"approve","autonomy":4}')
 
     def test_native_controls_keep_args_and_exit(self):
         for action, args in [("get", ["run-123", "--events"]), ("status", ["--all"]),
@@ -530,17 +590,17 @@ class InstallTests(Fixture):
             install_agents_pointer(self.app, False)
         self.assertEqual(outside.read_text(), "outside")
 
-    def test_upgrade_preserves_personal_files_and_backs_up_execution_surfaces(self):
-        originals = {"factory/config.py": b"AUTONOMY=4\r\n", "harness/harness.config.json": b'{"agent":{"cmd":"do not run"}}',
+    def test_upgrade_preserves_personal_files_and_backs_up_changed_factory_files(self):
+        originals = {"harness/harness.config.json": b'{"agent":{"cmd":"do not run"}}',
                      "harness/END-TO-END.md": b"custom journey\r\n", ".factory/holdout/HOLDOUT.md": b"private scenario\n",
                      ".archon/config.yaml": b"defaultAssistant: custom\r\n", "app.txt": b"original app\n"}
         for rel, data in originals.items():
             path = self.app / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
-        custom = self.app / ".claude/skills/factory-e2e/SKILL.md"
-        custom.parent.mkdir(parents=True)
-        custom.write_bytes(b"custom original\r\n")
+        changed = self.app / "factory/RUNTIME_HOST.md"
+        changed.parent.mkdir(parents=True, exist_ok=True)
+        changed.write_bytes(b"locally edited\r\n")
         provider = self.base / "home/.archon/config.yaml"
         provider.parent.mkdir(parents=True)
         provider.write_bytes(b"defaultAssistant: custom\r\nprivate: preserved\n")
@@ -551,8 +611,9 @@ class InstallTests(Fixture):
         self.assertEqual(provider.read_bytes(), provider_before)
         for rel, data in originals.items():
             self.assertEqual((self.app / rel).read_bytes(), data, rel)
-        self.assertFalse(custom.exists())
-        self.assertEqual((self.app / ".factory/retired/.claude/skills/factory-e2e/SKILL.md").read_bytes(), b"custom original\r\n")
+        self.assertEqual(changed.read_bytes(), (TEMPLATE / "factory/RUNTIME_HOST.md").read_bytes())
+        self.assertEqual((self.app / ".factory/backup/factory/RUNTIME_HOST.md").read_bytes(),
+                         b"locally edited\r\n")
         with contextlib.redirect_stdout(io.StringIO()) as out:
             sync(self.app)
         self.assertNotIn("install ", out.getvalue())
@@ -604,20 +665,20 @@ class InstallTests(Fixture):
         self.assertEqual(tracked.read_text(), "dirty")
 
     def test_dry_upgrade_and_repeat_backup_preserve_bytes(self):
-        path = self.app / "factory/dispatch.py"
+        path = self.app / "factory/RUNTIME_HOST.md"
         path.parent.mkdir()
-        path.write_bytes(b"custom scheduler\r\n")
+        path.write_bytes(b"custom notes\r\n")
         with contextlib.redirect_stdout(io.StringIO()):
             sync(self.app, True)
-        self.assertEqual(path.read_bytes(), b"custom scheduler\r\n")
-        self.assertFalse((self.app / ".factory/retired").exists())
+        self.assertEqual(path.read_bytes(), b"custom notes\r\n")
+        self.assertFalse((self.app / ".factory/backup").exists())
         with contextlib.redirect_stdout(io.StringIO()):
             sync(self.app)
             path.write_bytes(b"second custom version")
             sync(self.app)
-        base = self.app / ".factory/retired/factory/dispatch.py"
-        self.assertEqual(base.read_bytes(), b"custom scheduler\r\n")
-        self.assertEqual(base.with_suffix(".py.1").read_bytes(), b"second custom version")
+        base = self.app / ".factory/backup/factory/RUNTIME_HOST.md"
+        self.assertEqual(base.read_bytes(), b"custom notes\r\n")
+        self.assertEqual(base.with_suffix(".md.1").read_bytes(), b"second custom version")
 
 
 class HarnessTests(unittest.TestCase):
@@ -644,9 +705,6 @@ class HarnessTests(unittest.TestCase):
         self.assertIn("CHECKS_OK mode=ordinary", result.stdout)
         self.assertNotIn("E2E_PASSED", result.stdout)
         self.assertFalse((self.root / "PROVIDER_EXECUTED").exists())
-        result = subprocess.run([sys.executable, "harness/agentcheck.py"], cwd=self.root, capture_output=True)
-        self.assertEqual(result.returncode, 2)
-        self.assertFalse((self.root / "PROVIDER_EXECUTED").exists())
 
     def test_no_checks_zero_tests_and_quoted_failure_are_red(self):
         for cfg in ({}, {"unit": [sys.executable, "-c", "print('0 passed')"], "unit_count_pattern": r"(\d+) passed"},
@@ -662,17 +720,6 @@ class HarnessTests(unittest.TestCase):
         shim.write_text("@echo off\r\necho SHIM_OK\r\n")
         with patch.dict(os.environ, {"PATH": str(self.root) + os.pathsep + os.environ["PATH"]}):
             self.assertEqual(consumer.execute(["factory-test-shim"], self.root).stdout.strip(), "SHIM_OK")
-
-    def test_runtime_export_preserves_environment_and_freshness_without_launch(self):
-        module = load("runtime_data_test", TEMPLATE / "harness/runtime_data.py")
-        cfg = {"driver": "http", "http": {"start": "ordinary app", "env": {"DB": "state-{port}"}},
-               "agent": {"cmd": "provider forbidden", "timeout_s": 900}, "e2e_timeout_s": 300}
-        original = json.dumps(cfg)
-        data = module.export(cfg)
-        self.assertEqual(data["environment"]["http"], cfg["http"])
-        self.assertEqual(data["requirements"]["fresh_environment_per"], ["runtime", "holdout", "retry", "mutation"])
-        self.assertNotIn("provider forbidden", json.dumps(data))
-        self.assertEqual(json.dumps(cfg), original)
 
     def test_application_helper_quoted_import_can_fail(self):
         appproc = load("appproc_test", TEMPLATE / "harness/appproc.py")

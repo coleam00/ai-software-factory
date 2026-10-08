@@ -7,8 +7,7 @@
   complete because the discipline that makes an unattended agent safe is the same
   everywhere. What is being built, and what must never be built, is not.
 
-  Replace every <angle-bracket>. `factory doctor` reports any that remain, and
-  refuses to raise the dial while they do.
+  Replace every <angle-bracket> before the first lap.
 
   This file is the compression of your spec down to the part an agent has to OBEY.
   When the product changes, this changes in the same commit -- or the factory keeps
@@ -79,8 +78,8 @@ calls it a bug. Changing one requires a human commit.
 3. **The factory cannot modify governance files.** `MISSION.md`, `FACTORY_RULES.md`
    and the conventions file are the constitution. A PR touching any of them is an
    automatic reject.
-4. **The factory cannot modify its own judge.** `harness/`, `.factory/locks/` and
-   `.factory/holdout/` define what "working" means here. Adding an assertion is
+4. **The factory cannot modify its own judge.** `harness/` and `.factory/holdout/`
+   define what "working" means here. Adding an assertion is
    always welcome; removing or loosening one is a human decision, always.
 
 ## Allowed evolutions
@@ -115,11 +114,9 @@ unrelated". It is not optional.
   WORD THIS CAREFULLY, because the obvious wording breaks the factory.
 
   "Open questions the factory must never answer" makes every issue that touches one
-  escalate -- which contradicts FACTORY_RULES §7, where an unspecified PRODUCT value
-  is decided by the plan node, recorded, and held at the merge. Both files are
-  protected, so the factory cannot reconcile them, and a genuine contradiction
-  between two governance statements is itself on the stop list. The contradiction
-  then escalates the very issues the policy was written to unblock.
+  escalate, although an unspecified PRODUCT value is exactly what the plan step
+  decides, records, and holds at the merge for a human. The wording would escalate
+  the very issues this section exists to unblock.
 
   "Open" means I HAVE NOT DECIDED. It does not mean you may not propose.
 -->
@@ -131,14 +128,20 @@ human, so nothing ships on a guess and nothing stops for one.
 - **Q1** <the question, phrased as a decision rather than a topic>
 - **Q2** <...>
 
-**Except these, which do stop the factory** -- they are on the irreversible list
-(`FACTORY_RULES.md` §7.3) rather than open in the ordinary sense:
+**Except these, which do stop the factory** -- they are irreversible (see
+`FACTORY_RULES.md`) rather than open in the ordinary sense:
 
 - <the one about identity, auth, or who may act as whom>
 - <the one about migrating or deleting stored data>
 
-Once answered, an entry moves to `.factory/decisions.md` with its answer and date,
-and stops being asked. **A decision is asked once.**
+Once answered, an entry moves to **Decisions** below with its answer and date, and
+stops being asked. **A decision is asked once.**
+
+## Decisions
+
+<!-- Answered questions, newest first: the question, the answer, the date. -->
+
+- <YYYY-MM-DD> **<the question>** <the answer>
 
 ## What the factory does NOT own -- permanently human
 

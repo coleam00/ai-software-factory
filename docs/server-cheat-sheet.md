@@ -290,13 +290,14 @@ Point <domain> at my VPS on <host>: add an A record for <vps-ip> with a 5 minute
 
 ## 11. Turn the timer on
 
-One shared lifecycle run per tick, serially, with backlog intake: each tick takes
-the oldest open issue nobody has touched, and a tick that finds nothing does
-nothing. The unit ships with the install.
+Archon schedules the factory: a native trigger starts one shared lifecycle run per
+tick, and Archon queues a tick that arrives while a lap is still running. Each lap
+takes the oldest open issue that nobody has touched and whose dependencies are closed.
+A lap that finds nothing does nothing.
 
 **💬 Prompt to your agent**
 ```text
-On the server, schedule the factory in ~/<app> as a systemd service from factory/factory-timer.service.example: one shared lifecycle run per tick, ten minutes apart, backlog intake on (empty target, publish=true), merge mode auto, hold-comment publication explicitly on (publish_holds=true), discovery publication preview, and the deploy, health and /build-id commands for the <app> service. Enable it and follow its journal. Hold-comment publication does not authorize the merge; merge_mode remains the separate authorization input.
+On the server in ~/<app>, write .factory/schedule.json for archon-lifecycle: backlog intake on (empty target, publish=true), merge mode auto, hold-comment publication explicitly on (publish_holds=true), discovery publication preview, and the deploy, health and /build-id commands for the <app> service. Make sure harness/harness.config.json declares required_checks for the CI job. Then run `python factory/consumer.py schedule install --interval 600 --apply`, enable lingering for the user if needed, and follow the timer's journal through one tick. Hold-comment publication does not authorize the merge; merge_mode remains the separate authorization input.
 ```
 
 From here, filing an issue is the only input.

@@ -1,22 +1,27 @@
-# Shared Archon workflow migration
+# Upgrading the factory
 
-Factory submits shared workflows from the source revision in pack.json. All coding
-agents, including browser/runtime checks and discovery/merge decisions, execute
-as Archon command nodes. Project checks and the resource host remain ordinary code.
-No provider subprocess or factory-owned stage dispatcher is permitted.
+Upgrade an installed factory by pulling the factory repository and rerunning
+`python <factory>/bin/factory.py init` from the application repository.
 
-Use archon-lifecycle for issue-to-merge, archon-ship for issue-to-PR, archon-deliver
-for repair on the original PR estate, archon-regress for diagnosis, and the shared
-runtime/discovery/merge workflows individually when needed. Runtime scenarios
-are project inputs. Scenario and holdout data must refer to fresh environments
-running the actual candidate, not a previously deployed revision.
+- `init` installs the files in `template/` and the Archon source pinned in
+  `factory/pack.json`, then validates that source.
+- Files you write for your project are never overwritten: `MISSION.md`,
+  `harness/END-TO-END.md`, `harness/harness.config.json`,
+  `.factory/holdout/HOLDOUT.md`, and the other project files listed in the installer.
+- An installed factory file you changed is copied to `.factory/backup/` before
+  the new version replaces it. Repeated upgrades keep numbered copies.
+- Run `python factory/consumer.py doctor` afterwards. It checks the pinned source
+  and that every shared workflow validates.
 
-Factory may schedule whole workflows through tick and .factory/loop.sh. It does
-not need native trigger admission or any of the experimental forge APIs. Agents
-use gh inside workflows and follow GitHub protection. Do not infer merged state
-from a queued merge request or successful local tests.
+What the factory owns, and what Archon owns:
 
-Upgrade preserves customized project files and backs up retired generated files.
-Do not run the old stage scheduler alongside the new consumer. No application
-upgrade or scheduler installation was performed during this cleanup. The pinned
-candidate and the new lifecycle still need a focused real run before recording.
+- **Archon** owns every workflow and agent: triage, delivery, review,
+  validation, runtime and holdout verification, repair, discoveries, merging,
+  deployment, and scheduling through native triggers.
+- **The factory** owns your project's context files, the installation, and the
+  thin consumer that invokes Archon and shows its state.
+- **Runtime scenarios** are project inputs, and must exercise fresh environments
+  running the actual candidate.
+
+If you scheduled the factory, rerun `python factory/consumer.py schedule install`
+after an upgrade, so the trigger binding picks up any new inputs.

@@ -1,6 +1,6 @@
 # The shipped shell scripts must stay LF in the WORKING TREE, not only in the blob.
 # `factory init` copies them out of the working tree, so on a machine with
-# core.autocrlf=true a Windows checkout would hand every install a CRLF loop.sh --
+# core.autocrlf=true a Windows checkout would hand every install a CRLF shell script --
 # which dies on Linux as `bad interpreter: ^M`, a message that reads as a missing file.
 *.sh text eol=lf
 *.py text eol=lf

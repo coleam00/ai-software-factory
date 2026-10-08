@@ -19,7 +19,7 @@ def audit(root):
             continue
         if path.suffix in {".yaml", ".yml"} or path.name == "SKILL.md":
             errors.append(f"Factory must not ship workflows or prompt skills: {path}")
-    for name in ("harness/agentcheck.py", "harness/mutations/run.py"):
+    for name in ("harness/mutations/run.py",):
         text = (root / name).read_text(encoding="utf-8")
         tree = ast.parse(text)
         for node in ast.walk(tree):
