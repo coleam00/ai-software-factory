@@ -3,5 +3,6 @@
   "unit": "",
   "unit_count_pattern": "",
   "required_checks": "",
-  "description": "Ordinary project checks only. Configure real commands. Runtime environment and scenarios are separate inputs. required_checks names the CI checks a merge needs (comma-separated, or \"none\"); the merge queue reads it where GitHub cannot report branch protection, as on free private repositories."
+  "protected_paths": "MISSION.md,FACTORY.md,FACTORY_RULES.md,harness/**,.factory/**,factory/**",
+  "description": "Ordinary project checks only. Configure real commands. Runtime environment and scenarios are separate inputs. required_checks names the CI checks a merge needs (comma-separated, or \"none\"); the merge queue reads it where GitHub cannot report branch protection, as on free private repositories. protected_paths lists root-anchored path patterns (* within a segment, ** across segments) that only a human may change; the merge queue holds any pull request that touches one."
 }

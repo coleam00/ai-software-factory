@@ -215,18 +215,25 @@ def doctor(settings: dict) -> dict:
             "provider_configuration": "native configuration preserved; authentication not live-tested"}
 
 
+# Merge policy keys a project declares once in harness/harness.config.json.
+MERGE_POLICY_KEYS = ("required_checks", "protected_paths")
+
+
 def harness_inputs(root: Path, name: str) -> dict:
     # A project's merge policy is a fact the merge gate reads, not something an
     # agent decides. GitHub cannot report required checks on plans without branch
-    # protection, so the project declares them once in its harness configuration.
+    # protection, and nothing on GitHub says which files only a human may change,
+    # so the project declares both once in its harness configuration.
     if name not in MERGING_WORKFLOWS:
         return {}
     try:
-        config = json.loads((root / "harness/harness.config.json").read_text(encoding="utf-8"))
+        config = json.loads((root / "harness/harness.config.json").read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return {}
-    value = config.get("required_checks") if isinstance(config, dict) else None
-    return {"required_checks": value} if isinstance(value, str) and value.strip() else {}
+    if not isinstance(config, dict):
+        return {}
+    return {key: config[key] for key in MERGE_POLICY_KEYS
+            if isinstance(config.get(key), str) and config[key].strip()}
 
 
 def workflow_defaults(root: Path, name: str) -> dict:

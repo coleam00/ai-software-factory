@@ -46,12 +46,12 @@ Archon source, including the shared workflows; you do not need to check out Arch
 or merge its PRs yourself.
 
 **Current status:** the default pins exact Archon revision
-`798f9a4c5232dc6b179512cdf6064b59630ebc30` on the `factory/sdlc-on-dev` branch (Archon
+`d7eb6fb8e57eca2fd45193a5631b329cce69057a` on the `factory/sdlc-on-dev` branch (Archon
 dev plus the SDLC pack's factory workflows). Its pack supports dependency-aware intake,
 reviewed delivery, scoped validation reuse, runtime and optional holdout verification,
-bounded repair, discovery handling, a merge queue that reads required checks by script,
+bounded repair, discovery handling, a merge queue that reads required checks and protected paths by script,
 deterministic deployment, closing the worked issue once its pull requests are confirmed
-merged, and scheduling through Archon native triggers. The pin and
+merged, tolerance for byte-order marks in agent-written files, and scheduling through Archon native triggers. The pin and
 `pack.json` must name the same revision.
 
 ---
@@ -298,6 +298,18 @@ the merge queue needs the project to say which CI checks a merge requires. Set
 `"tests"`), or to `"none"`. The factory passes it to `archon-lifecycle` and
 `archon-merge-queue`. Left empty, the merge queue reads GitHub, and on a free private
 repository it holds every PR with a reason that names this setting.
+
+**Protected paths.** Review does not reliably notice an agent editing the files that
+govern it (a reviewed delivery once rewrote `engineering.md` and merged). Set
+`protected_paths` in `harness/harness.config.json` to comma-separated path patterns,
+anchored at the repository root (`*` within one segment, `**` across segments, a
+trailing `/` for a directory). The factory passes it to `archon-lifecycle` and
+`archon-merge-queue`, whose `path-policy` script lists each PR's changed files and
+holds any PR that touches a match, with a comment naming the files and saying a human
+must make that change. New installs protect `MISSION.md`, `FACTORY.md`,
+`FACTORY_RULES.md`, `harness/**`, `.factory/**` and `factory/**`; add the project's
+own governance documents. An existing project's harness configuration is never
+overwritten, so add the key by hand.
 
 The scheduler never selects work itself. Backlog intake lives in the shared
 lifecycle: with an empty `target` and `publish=true`, each run takes the oldest
