@@ -46,11 +46,12 @@ Archon source, including the shared workflows; you do not need to check out Arch
 or merge its PRs yourself.
 
 **Current status:** the default pins exact Archon revision
-`d68a3580cdc1e351166b9fedb5e2922ce99684f9` on the `factory/sdlc-on-dev` branch (Archon
+`18e1f42b3a8ee34235c12699c9e9ba2d6e25bfff` on the `factory/sdlc-on-dev` branch (Archon
 dev plus the SDLC pack's factory workflows). Its pack supports dependency-aware intake,
 reviewed delivery, scoped validation reuse, runtime and optional holdout verification,
 bounded repair, discovery handling, a merge queue that reads required checks by script,
-deterministic deployment, and scheduling through Archon native triggers. The pin and
+deterministic deployment, closing the worked issue once its pull requests are confirmed
+merged, and scheduling through Archon native triggers. The pin and
 `pack.json` must name the same revision.
 
 ---
@@ -84,8 +85,9 @@ on a server, run the installation and configuration there over SSH.
 The installer writes the factory and project templates and installs the pinned
 Archon source. It preserves project configuration on upgrades. It does not configure
 provider authentication, change model tiers or start a schedule.
-It also adds one pointer to `factory/WORKFLOW_POLICY.md` in the project's native
-`AGENTS.md` without replacing existing guidance. That policy supplies the
+It also adds one pointer to `factory/WORKFLOW_POLICY.md` in the project's root
+`engineering.md`, the conventions file the shared workflows read, without replacing
+existing guidance. That policy supplies the
 factory-specific bootstrap, runtime, review and state-label requirements that the
 general-purpose shared workflows intentionally do not assume.
 
@@ -415,7 +417,7 @@ bin/factory.py                install and CLI entry point
 template/                    what init copies into your repo
   factory/consumer.py        invokes shared Archon workflows and shows their state
   factory/pack.json          shared source revision and required workflows
-  factory/WORKFLOW_POLICY.md factory requirements read through native AGENTS.md
+  factory/WORKFLOW_POLICY.md factory requirements read through engineering.md
   factory/RUNTIME_HOST.md    app startup and runtime scenario configuration
   harness/                   project checks and END-TO-END.md
 docs/first-hour.md            what to do after setup

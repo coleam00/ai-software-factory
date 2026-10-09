@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from install import (AGENTS_POINTER, HOME, TEMPLATE, configure, install_agents_pointer,
+from install import (POLICY_POINTER, HOME, TEMPLATE, configure, install_policy_pointer,
                      install_source, sync)
 import consumer
 
@@ -523,8 +523,8 @@ class SourceConformanceTests(unittest.TestCase):
 
 
 class InstallTests(Fixture):
-    def test_agents_pointer_preserves_existing_bytes_and_is_idempotent(self):
-        agents = self.app / "AGENTS.md"
+    def test_policy_pointer_preserves_existing_bytes_and_is_idempotent(self):
+        agents = self.app / "engineering.md"
         original = b"# Existing guidance\r\n\r\nKeep this byte-for-byte."
         agents.write_bytes(original)
         preserved_time = 946684800_000_000_000
@@ -540,39 +540,48 @@ class InstallTests(Fixture):
         self.assertEqual(agents.read_bytes(), installed)
         self.assertTrue((self.app / "factory/WORKFLOW_POLICY.md").is_file())
 
-    def test_agents_pointer_failed_temp_write_preserves_original_and_cleans_temp(self):
-        agents = self.app / "AGENTS.md"
+    def test_policy_pointer_failed_temp_write_preserves_original_and_cleans_temp(self):
+        agents = self.app / "engineering.md"
         original = b"# Existing guidance\n"
         agents.write_bytes(original)
         with patch("install.os.fsync", side_effect=OSError("interrupted write")), \
              self.assertRaisesRegex(OSError, "interrupted write"):
-            install_agents_pointer(self.app, False)
+            install_policy_pointer(self.app, False)
         self.assertEqual(agents.read_bytes(), original)
-        self.assertEqual(list(self.app.glob(".AGENTS.md.*.tmp")), [])
+        self.assertEqual(list(self.app.glob(".engineering.md.*.tmp")), [])
 
-    def test_agents_pointer_failed_replace_preserves_original_and_cleans_temp(self):
-        agents = self.app / "AGENTS.md"
+    def test_policy_pointer_failed_replace_preserves_original_and_cleans_temp(self):
+        agents = self.app / "engineering.md"
         original = b"# Existing guidance\n"
         agents.write_bytes(original)
         with patch("install.os.replace", side_effect=OSError("interrupted replace")), \
              self.assertRaisesRegex(OSError, "interrupted replace"):
-            install_agents_pointer(self.app, False)
+            install_policy_pointer(self.app, False)
         self.assertEqual(agents.read_bytes(), original)
-        self.assertEqual(list(self.app.glob(".AGENTS.md.*.tmp")), [])
+        self.assertEqual(list(self.app.glob(".engineering.md.*.tmp")), [])
 
-    def test_agents_pointer_honors_dry_run_and_creates_missing_file(self):
-        agents = self.app / "AGENTS.md"
+    def test_policy_pointer_honors_dry_run_and_creates_missing_file(self):
+        agents = self.app / "engineering.md"
         with contextlib.redirect_stdout(io.StringIO()) as output:
             sync(self.app, True)
         self.assertFalse(agents.exists())
-        self.assertIn("AGENTS.md factory policy pointer", output.getvalue())
+        self.assertIn("engineering.md factory policy pointer", output.getvalue())
         with contextlib.redirect_stdout(io.StringIO()):
             sync(self.app)
-        self.assertEqual(agents.read_bytes(), AGENTS_POINTER)
+        self.assertEqual(agents.read_bytes(), POLICY_POINTER)
 
-    def test_agents_pointer_refuses_escaping_symlink(self):
+    def test_policy_pointer_goes_to_engineering_md_and_leaves_agents_md_alone(self):
         agents = self.app / "AGENTS.md"
-        outside = self.base / "outside-agents.md"
+        original = b"# Native agent guidance" + bytes([10])
+        agents.write_bytes(original)
+        with contextlib.redirect_stdout(io.StringIO()):
+            sync(self.app)
+        self.assertEqual(agents.read_bytes(), original)
+        self.assertEqual((self.app / "engineering.md").read_bytes(), POLICY_POINTER)
+
+    def test_policy_pointer_refuses_escaping_symlink(self):
+        agents = self.app / "engineering.md"
+        outside = self.base / "outside-engineering.md"
         outside.write_text("outside")
         try:
             agents.symlink_to(outside)
@@ -583,11 +592,11 @@ class InstallTests(Fixture):
                 return outside if path == agents else real_resolve(path, *args, **kwargs)
             with patch.object(Path, "resolve", escaping_resolve), \
                  self.assertRaisesRegex(ValueError, "outside application"):
-                install_agents_pointer(self.app, False)
+                install_policy_pointer(self.app, False)
             self.assertEqual(outside.read_text(), "outside")
             return
         with self.assertRaisesRegex(ValueError, "outside application"):
-            install_agents_pointer(self.app, False)
+            install_policy_pointer(self.app, False)
         self.assertEqual(outside.read_text(), "outside")
 
     def test_upgrade_preserves_personal_files_and_backs_up_changed_factory_files(self):

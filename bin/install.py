@@ -16,7 +16,10 @@ import consumer
 PERSONAL = {"harness/harness.config.json", "harness/runtime.inputs.json",
             "harness/END-TO-END.md", "harness/mutations/defects.json", "MISSION.md",
             "FACTORY.md", "FACTORY_RULES.md", ".factory/holdout/HOLDOUT.md"}
-AGENTS_POINTER = (b"See [factory workflow policy](factory/WORKFLOW_POLICY.md) for "
+# The shared workflows read a root engineering.md for project conventions, so
+# the policy pointer goes there. A pointer an older install left in AGENTS.md
+# is harmless and stays.
+POLICY_POINTER = (b"See [factory workflow policy](factory/WORKFLOW_POLICY.md) for "
                   b"factory-specific shared-workflow requirements.\n")
 
 
@@ -40,12 +43,12 @@ def backup(root: Path, path: Path, dry: bool) -> None:
         shutil.copy2(path, dest)
 
 
-def install_agents_pointer(root: Path, dry: bool) -> None:
-    path = within(root, root / "AGENTS.md")
+def install_policy_pointer(root: Path, dry: bool) -> None:
+    path = within(root, root / "engineering.md")
     previous = path.read_bytes() if path.exists() else b""
-    if AGENTS_POINTER.rstrip() in previous.splitlines():
+    if POLICY_POINTER.rstrip() in previous.splitlines():
         return
-    print("install AGENTS.md factory policy pointer")
+    print("install engineering.md factory policy pointer")
     if not dry:
         separator = b"" if not previous or previous.endswith((b"\n", b"\r")) else b"\n"
         gap = b"" if not previous or previous.endswith((b"\n\n", b"\r\n\r\n")) else b"\n"
@@ -55,7 +58,7 @@ def install_agents_pointer(root: Path, dry: bool) -> None:
         try:
             with os.fdopen(fd, "wb") as handle:
                 fd = -1
-                handle.write(previous + separator + gap + AGENTS_POINTER)
+                handle.write(previous + separator + gap + POLICY_POINTER)
                 handle.flush()
                 os.fsync(handle.fileno())
             if path.exists():
@@ -86,7 +89,7 @@ def sync(root: Path, dry: bool = False) -> None:
         if not dry:
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)
-    install_agents_pointer(root, dry)
+    install_policy_pointer(root, dry)
     ignore = within(root, root / ".gitignore")
     previous = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
     additions = [line for line in (TEMPLATE / "gitignore-additions.txt").read_text().splitlines()
