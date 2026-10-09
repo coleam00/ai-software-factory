@@ -309,6 +309,35 @@ class ConsumerTests(Fixture):
         self.assertFalse(any(arg.startswith("required_checks=")
                              for arg in json.loads(result.stdout)["argv"]))
 
+    def test_declared_protected_paths_reach_merging_workflows_only(self):
+        harness = self.app / "harness/harness.config.json"
+        harness.parent.mkdir(parents=True, exist_ok=True)
+        paths = "MISSION.md,harness/**"
+        # PowerShell's ConvertTo-Json writes a byte-order mark; it must not hide the policy.
+        harness.write_text("﻿" + json.dumps(
+            {"unit": "", "required_checks": "tests", "protected_paths": paths}), encoding="utf-8")
+        for workflow in ("archon-lifecycle", "archon-merge-queue"):
+            with self.subTest(workflow=workflow):
+                result = self.command("run", workflow, "--json")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                argv = json.loads(result.stdout)["argv"]
+                self.assertEqual(argv.count(f"protected_paths={paths}"), 1)
+                self.assertEqual(argv.count("required_checks=tests"), 1)
+        result = self.command("run", "archon-ship", "--json")
+        self.assertFalse(any(arg.startswith("protected_paths=")
+                             for arg in json.loads(result.stdout)["argv"]))
+        result = self.command("run", "archon-lifecycle", "--input", "protected_paths=none", "--json")
+        argv = json.loads(result.stdout)["argv"]
+        self.assertEqual([a for a in argv if a.startswith("protected_paths=")], ["protected_paths=none"])
+        (self.app / ".factory/schedule.json").write_text(
+            json.dumps({"workflow": "archon-lifecycle", "inputs": {}}))
+        self.assertEqual(self.command("schedule", "install").returncode, 0)
+        self.assertEqual(self.trigger_binding()["launch"]["inputs"]["protected_paths"], paths)
+        harness.write_text(json.dumps({"unit": "", "protected_paths": " "}))
+        result = self.command("run", "archon-lifecycle", "--json")
+        self.assertFalse(any(arg.startswith("protected_paths=")
+                             for arg in json.loads(result.stdout)["argv"]))
+
     def test_runtime_host_detach_and_resume_refused_before_native_launch(self):
         for args in [("--detach",), ("--detach=true",), ("-d",), ("--resume",)]:
             result = self.command("run", "archon-ship", "--runtime-host", "missing.json", *args)

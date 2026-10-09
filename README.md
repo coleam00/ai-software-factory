@@ -299,6 +299,18 @@ the merge queue needs the project to say which CI checks a merge requires. Set
 `archon-merge-queue`. Left empty, the merge queue reads GitHub, and on a free private
 repository it holds every PR with a reason that names this setting.
 
+**Protected paths.** Review does not reliably notice an agent editing the files that
+govern it (a reviewed delivery once rewrote `engineering.md` and merged). Set
+`protected_paths` in `harness/harness.config.json` to comma-separated path patterns,
+anchored at the repository root (`*` within one segment, `**` across segments, a
+trailing `/` for a directory). The factory passes it to `archon-lifecycle` and
+`archon-merge-queue`, whose `path-policy` script lists each PR's changed files and
+holds any PR that touches a match, with a comment naming the files and saying a human
+must make that change. New installs protect `MISSION.md`, `FACTORY.md`,
+`FACTORY_RULES.md`, `harness/**`, `.factory/**` and `factory/**`; add the project's
+own governance documents. An existing project's harness configuration is never
+overwritten, so add the key by hand.
+
 The scheduler never selects work itself. Backlog intake lives in the shared
 lifecycle: with an empty `target` and `publish=true`, each run takes the oldest
 open issue with none of the factory's configured state labels and no open PR naming
