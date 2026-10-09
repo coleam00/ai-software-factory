@@ -5,6 +5,8 @@ __pycache__/
 .factory/consumer.json
 .factory/backup/
 .factory/STOP
+.factory/schedule.log
+.factory/schedule-task.xml
 harness/.results/
 .factory/holdout/.results/
 .env

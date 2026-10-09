@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -20,12 +21,25 @@ TRIGGER = ".factory/trigger.json"
 MERGING_WORKFLOWS = {"archon-lifecycle", "archon-merge-queue"}
 
 
+def windowless() -> bool:
+    """True under pythonw (the Windows timer): no console to show child output in."""
+    return sys.platform == "win32" and sys.stdout is None
+
+
 def execute(argv: list[str], cwd: Path, *, capture: bool = True,
-            timeout: int | None = 180, env: dict | None = None) -> subprocess.CompletedProcess:
+            timeout: int | None = 180, env: dict | None = None,
+            output=None) -> subprocess.CompletedProcess:
     # Resolve PATH and PATHEXT once, including Windows .cmd launchers.
     argv = [shutil.which(argv[0]) or argv[0], *argv[1:]]
-    return subprocess.run(argv, cwd=cwd, capture_output=capture, text=True,
-                          encoding="utf-8", errors="replace", timeout=timeout, env=env)
+    flags = {}
+    # A console program started from a windowless parent gets a new console window
+    # unless told not to; captured or logged output does not need one.
+    if sys.platform == "win32" and (capture or output is not None or windowless()):
+        flags["creationflags"] = subprocess.CREATE_NO_WINDOW
+    streams = ({"stdout": output, "stderr": subprocess.STDOUT} if output is not None
+               else {"capture_output": capture})
+    return subprocess.run(argv, cwd=cwd, text=True, encoding="utf-8", errors="replace",
+                          timeout=timeout, env=env, **streams, **flags)
 
 
 def checked(argv: list[str], cwd: Path, timeout: int = 180) -> str:
@@ -363,14 +377,51 @@ def trigger_config(root: Path, settings: dict, source: Path, interval: int) -> d
             "bindingRevision": None,
             "hostId": "factory-" + re.sub(r"[^A-Za-z0-9-]", "-", platform.node() or "host"),
             "runAsUserId": whoami(settings, source, root),
-            # One resource per repository and workflow: laps queue, never overlap.
+            # One resource per repository and workflow, so laps never overlap. A tick
+            # that arrives while a lap runs is skipped; the next tick starts the next lap.
             "resource": f"github:{slug}:{workflow}",
-            "overlap": "queue",
+            "overlap": "skip",
             "launch": {"cwd": str(root), "workflowName": workflow, "inputs": values,
                        "isolation": {"kind": "default"}},
         },
         "schedule": {"intervalSeconds": interval, "runAtLoad": False},
     }
+
+
+def task_xml(python: Path, root: Path, minutes: int) -> str:
+    """A Task Scheduler definition that runs `schedule fire` hidden every N minutes."""
+    def text(value: object) -> str:
+        return (str(value).replace("&", "&amp;").replace("<", "&lt;")
+                .replace(">", "&gt;").replace('"', "&quot;"))
+    start = time.strftime("%Y-%m-%dT%H:%M:%S")
+    return f"""<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>Archon factory trigger for {text(root)}</Description></RegistrationInfo>
+  <Triggers>
+    <TimeTrigger>
+      <Repetition><Interval>PT{minutes}M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition>
+      <StartBoundary>{start}</StartBoundary>
+      <Enabled>true</Enabled>
+    </TimeTrigger>
+  </Triggers>
+  <Principals><Principal id="Author"><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Hidden>true</Hidden>
+    <Enabled>true</Enabled>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{text(python)}</Command>
+      <Arguments>factory\\consumer.py schedule fire</Arguments>
+      <WorkingDirectory>{text(root)}</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
+"""
 
 
 def timer_commands(root: Path, interval: int) -> dict:
@@ -379,10 +430,15 @@ def timer_commands(root: Path, interval: int) -> dict:
     fire = [sys.executable, str(root / "factory/consumer.py"), "schedule", "fire"]
     name = "ArchonFactory-" + re.sub(r"[^A-Za-z0-9-]", "-", root.name)
     if sys.platform == "win32":
-        action = f'cmd /c cd /d "{root}" && "{fire[0]}" factory\\consumer.py schedule fire'
-        minutes = max(1, interval // 60)
-        return {"install": [["schtasks", "/Create", "/TN", name, "/SC", "MINUTE", "/MO", str(minutes),
-                             "/TR", action, "/F"]],
+        # pythonw has no console, so a tick flashes no window; schtasks /TR cannot set a
+        # working directory, so the task is defined in XML. It runs only while the user
+        # is logged on (a rendered runtime check needs the desktop session) and never
+        # starts a second instance while a tick is still running.
+        pythonw = Path(fire[0]).with_name("pythonw.exe")
+        task = shared_root(root) / ".factory/schedule-task.xml"
+        return {"task_xml": {task: task_xml(pythonw if pythonw.exists() else Path(fire[0]),
+                                            root, max(1, interval // 60))},
+                "install": [["schtasks", "/Create", "/TN", name, "/XML", str(task), "/F"]],
                 "remove": [["schtasks", "/Delete", "/TN", name, "/F"]]}
     if sys.platform == "darwin":
         return {"install": [], "remove": []}  # Archon installs its own launchd jobs.
@@ -424,6 +480,11 @@ def schedule(root: Path, args: list[str]) -> int:
         if sys.platform == "darwin":
             plan = {"install": [[*native, "trigger", "schedule", "install", "--config", str(config_path)],
                                 [*native, "workflow", "wake", "schedule", "install", "--interval", "60"]]}
+        for task_file, body in plan.get("task_xml", {}).items():
+            print(f"--- {task_file}\n{body}")
+            if apply:
+                task_file.parent.mkdir(parents=True, exist_ok=True)
+                task_file.write_text(body, encoding="utf-16")
         if "systemd" in plan:
             unit_dir = Path.home() / ".config/systemd/user"
             for file_name, body in plan["systemd"].items():
@@ -442,10 +503,21 @@ def schedule(root: Path, args: list[str]) -> int:
             return 0
         if not config_path.is_file():
             raise ValueError("No trigger binding. Run factory schedule install first")
-        fired = execute([*native, "trigger", "fire", "--config", str(config_path)], root,
-                        capture=False, timeout=None).returncode
-        # Resume due durable waits (CI pauses, usage-limit resumes) in the same tick.
-        woken = execute([*native, "workflow", "wake"], root, capture=False, timeout=None).returncode
+        # A windowless timer tick (pythonw) has no console, so its output goes to a log.
+        log = ((shared_root(root) / ".factory/schedule.log").open("a", encoding="utf-8")
+               if windowless() else None)
+        try:
+            if log:
+                log.write(f"=== schedule fire {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                log.flush()
+            fired = execute([*native, "trigger", "fire", "--config", str(config_path)], root,
+                            capture=False, timeout=None, output=log).returncode
+            # Resume due durable waits (CI pauses, usage-limit resumes) in the same tick.
+            woken = execute([*native, "workflow", "wake"], root, capture=False, timeout=None,
+                            output=log).returncode
+        finally:
+            if log:
+                log.close()
         return fired or woken
     if action == "remove":
         plan = timer_commands(root, interval)

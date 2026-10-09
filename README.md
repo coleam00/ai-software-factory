@@ -280,11 +280,14 @@ scheduled workflow. Each timer tick runs `python factory/consumer.py schedule fi
 which calls `archon trigger fire` and then `archon workflow wake`:
 
 - Archon admits the start on one resource per repository and workflow, so laps never
-  overlap. A tick that arrives while a lap runs is queued, and the next tick drains it.
+  overlap. A tick that arrives while a lap runs is skipped; the next tick starts the next
+  lap, so ticks never pile up behind a long lap.
 - `workflow wake` resumes runs paused on a pending CI check or a provider usage limit.
 
-On macOS Archon installs its own launchd jobs. On Windows the timer is a Task Scheduler
-task, and on Linux a systemd user timer. `halt` makes `schedule fire` start nothing.
+On macOS Archon installs its own launchd jobs. On Windows the timer is a hidden Task
+Scheduler task that runs `pythonw` (no console window) only while you are logged on, and
+writes each tick's output to `.factory/schedule.log`. On Linux it is a systemd user timer.
+`halt` makes `schedule fire` start nothing.
 `schedule install` refuses a `runtime_host` entry, because a trigger cannot wrap the
 runtime host. Run the host as its own service instead (`python factory/runtime_host.py
 serve`) and point the scenarios at its connection file.
