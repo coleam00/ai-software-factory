@@ -5,7 +5,7 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
-from install import sync, install_source, configure
+from install import sync, install_source, configure, default_large_tier
 import consumer
 
 
@@ -33,6 +33,7 @@ def main() -> int:
             settings = install_source(options.source or consumer.MANIFEST["repository"],
                                       revision, options.cache, options.bun)
             configure(root, settings)
+            default_large_tier(root, settings)
         else:
             if options.source:
                 raise ValueError("--source requires --revision; moving source refs are not pins")

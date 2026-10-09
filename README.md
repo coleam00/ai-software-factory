@@ -84,7 +84,11 @@ on a server, run the installation and configuration there over SSH.
 
 The installer writes the factory and project templates and installs the pinned
 Archon source. It preserves project configuration on upgrades. It does not configure
-provider authentication, change model tiers or start a schedule.
+provider authentication or start a schedule. It sets one model tier: when nobody has
+chosen a `large` model (no install, personal or project setting, so Archon would use
+its built-in Claude Opus), it adds `tiers.large` = Claude Sonnet to the project's
+`.archon/config.yaml`. On a measured lap, Opus for implement, the code review lens and
+review corrections doubled the cost. Delete that block, or set your own tier, to change it.
 It also adds one pointer to `factory/WORKFLOW_POLICY.md` in the project's root
 `engineering.md`, the conventions file the shared workflows read, without replacing
 existing guidance. That policy supplies the
