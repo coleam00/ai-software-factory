@@ -125,46 +125,6 @@ def install_source(repository: str, revision: str, cache: Path, bun: str) -> dic
     return settings
 
 
-LARGE_ON_SONNET = """
-# Set by factory init: the large tier (implement, the code review lens, review
-# corrections) runs on Sonnet. Measured on a live lap, Opus there doubled the cost
-# of a lap. Delete this block to use Archon's default, or set your own tier.
-tiers:
-  large: { provider: claude, model: sonnet }
-"""
-
-
-def tier_report(settings: dict, source: Path, root: Path) -> dict:
-    """Archon's own account of each model tier: install, per-user and built-in values."""
-    raw = consumer.checked([*consumer.cli(settings, source), "ai", "tier", "list", "--json"], root)
-    start = raw.find('{\n  "defaultAssistant"')
-    report, _ = json.JSONDecoder().raw_decode(raw[start if start >= 0 else raw.find("{"):])
-    return report
-
-
-def default_large_tier(root: Path, settings: dict) -> None:
-    """Run the large tier on Sonnet, but only where nobody chose a large model.
-
-    A repository tier outranks the install config, so it is written only while
-    `large` is still Archon's built-in Claude default with no install or personal
-    setting, and the project's own .archon/config.yaml has no tiers block.
-    """
-    config = within(root, root / ".archon/config.yaml")
-    existing = config.read_text(encoding="utf-8") if config.exists() else ""
-    if any(line.startswith("tiers:") for line in existing.splitlines()):
-        return
-    large = next((t for t in tier_report(settings, Path(settings["source"]), root).get("tiers", [])
-                  if t.get("tier") == "large"), None)
-    if (not large or large.get("configured") or large.get("user")
-            or (large.get("default") or {}).get("provider") != "claude"):
-        return
-    print("set .archon/config.yaml tiers.large to claude/sonnet (no large tier was configured)")
-    config.parent.mkdir(parents=True, exist_ok=True)
-    separator = "" if not existing or existing.endswith("\n") else "\n"
-    config.write_text(existing + separator + LARGE_ON_SONNET.lstrip("\n" if not existing else ""),
-                      encoding="utf-8")
-
-
 def configure(root: Path, settings: dict) -> None:
     path = within(consumer.shared_root(root), consumer.shared_root(root) / consumer.SETTINGS)
     path.parent.mkdir(parents=True, exist_ok=True)

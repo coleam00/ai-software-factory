@@ -13,8 +13,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from install import (LARGE_ON_SONNET, POLICY_POINTER, HOME, TEMPLATE, configure,
-                     default_large_tier, install_policy_pointer, install_source, sync)
+from install import (POLICY_POINTER, HOME, TEMPLATE, configure, install_policy_pointer,
+                     install_source, sync)
 import consumer
 
 
@@ -579,47 +579,6 @@ class InstallTests(Fixture):
         self.assertEqual(agents.read_bytes(), original)
         self.assertEqual((self.app / "engineering.md").read_bytes(), POLICY_POINTER)
 
-    def large_tier(self, configured=None, user=None, provider="claude"):
-        return {"tiers": [{"tier": "large", "configured": configured, "user": user,
-                           "default": {"provider": provider, "model": "opus"}}]}
-
-    def run_default_large_tier(self, report):
-        with patch("install.tier_report", return_value=report), \
-             contextlib.redirect_stdout(io.StringIO()) as output:
-            default_large_tier(self.app, {"source": str(self.base)})
-        return output.getvalue()
-
-    def test_large_tier_defaults_to_sonnet_only_when_nobody_chose_one(self):
-        config = self.app / ".archon/config.yaml"
-        self.assertIn("claude/sonnet", self.run_default_large_tier(self.large_tier()))
-        self.assertEqual(config.read_text(encoding="utf-8"), LARGE_ON_SONNET.lstrip())
-        # A second init leaves the block alone.
-        self.assertEqual(self.run_default_large_tier(self.large_tier()), "")
-        self.assertEqual(config.read_text(encoding="utf-8").count("tiers:"), 1)
-
-    def test_large_tier_respects_every_existing_choice(self):
-        config = self.app / ".archon/config.yaml"
-        for report in (self.large_tier(configured={"provider": "codex", "model": "x"}),
-                       self.large_tier(user={"provider": "pi", "model": "y"}),
-                       self.large_tier(provider="codex")):
-            self.assertEqual(self.run_default_large_tier(report), "")
-            self.assertFalse(config.exists())
-        config.parent.mkdir(parents=True)
-        config.write_text("assistant: claude\ntiers:\n  small: { provider: claude, model: haiku }\n",
-                          encoding="utf-8")
-        with patch("install.tier_report", side_effect=AssertionError("must not ask")):
-            default_large_tier(self.app, {"source": str(self.base)})
-        self.assertNotIn("sonnet", config.read_text(encoding="utf-8"))
-
-    def test_large_tier_appends_below_an_existing_project_config(self):
-        config = self.app / ".archon/config.yaml"
-        config.parent.mkdir(parents=True)
-        config.write_text("assistant: claude", encoding="utf-8")
-        self.run_default_large_tier(self.large_tier())
-        text = config.read_text(encoding="utf-8")
-        self.assertTrue(text.startswith("assistant: claude"))
-        self.assertIn("  large: { provider: claude, model: sonnet }", text)
-
     def test_policy_pointer_refuses_escaping_symlink(self):
         agents = self.app / "engineering.md"
         outside = self.base / "outside-engineering.md"
@@ -686,10 +645,8 @@ class InstallTests(Fixture):
              patch.object(factory, "sync") as sync_mock, \
              patch.object(factory, "install_source", return_value=settings) as install_mock, \
              patch.object(factory, "configure") as configure_mock, \
-             patch.object(factory, "default_large_tier") as tier_mock, \
              contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(factory.main(), 0)
-        tier_mock.assert_called_once_with(self.app, settings)
         sync_mock.assert_called_once_with(self.app)
         install_mock.assert_called_once_with(
             consumer.MANIFEST["repository"], consumer.MANIFEST["integration_revision_required"],
