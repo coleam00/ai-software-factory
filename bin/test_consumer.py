@@ -178,7 +178,7 @@ class ConsumerTests(Fixture):
         self.assertEqual(binding["launch"]["cwd"], str(self.app))
         self.assertEqual(binding["runAsUserId"], "user-123")
         self.assertEqual(binding["resource"], "github:owner/repo:archon-lifecycle")
-        self.assertEqual(binding["overlap"], "queue")
+        self.assertEqual(binding["overlap"], "skip")
         schedule.write_text(json.dumps({"workflow": "archon-lifecycle",
                                         "inputs": {"state_labels": {}}}))
         result = self.command("schedule", "install")
@@ -227,6 +227,63 @@ class ConsumerTests(Fixture):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Local STOP is set", result.stderr)
         self.assertEqual(self.calls()[before:], [])
+
+    def test_windows_timer_is_a_hidden_logged_on_task_without_a_console(self):
+        import xml.etree.ElementTree as ET
+        with patch.object(consumer.sys, "platform", "win32"), \
+             patch.object(consumer, "shared_root", return_value=self.app):
+            plan = consumer.timer_commands(self.app, 600)
+        (task_file, body), = plan["task_xml"].items()
+        self.assertEqual(task_file, self.app / ".factory/schedule-task.xml")
+        self.assertEqual(plan["install"][0][:2], ["schtasks", "/Create"])
+        self.assertEqual(plan["install"][0][plan["install"][0].index("/XML") + 1], str(task_file))
+        ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+        task = ET.fromstring(body.split("\n", 1)[1])
+        command = task.find("t:Actions/t:Exec/t:Command", ns).text
+        if Path(sys.executable).with_name("pythonw.exe").exists():
+            self.assertTrue(command.lower().endswith("pythonw.exe"), command)
+        self.assertEqual(task.find("t:Actions/t:Exec/t:Arguments", ns).text,
+                         "factory\\consumer.py schedule fire")
+        self.assertEqual(task.find("t:Actions/t:Exec/t:WorkingDirectory", ns).text, str(self.app))
+        self.assertEqual(task.find("t:Triggers/t:TimeTrigger/t:Repetition/t:Interval", ns).text,
+                         "PT10M")
+        self.assertEqual(task.find("t:Settings/t:Hidden", ns).text, "true")
+        self.assertEqual(task.find("t:Settings/t:MultipleInstancesPolicy", ns).text, "IgnoreNew")
+        self.assertEqual(task.find("t:Principals/t:Principal/t:LogonType", ns).text,
+                         "InteractiveToken")
+
+    def test_a_windowless_tick_logs_its_output_and_opens_no_console(self):
+        (self.app / ".factory").mkdir(exist_ok=True)
+        (self.app / ".factory/trigger.json").write_text("{}")
+        calls = []
+
+        def fake_execute(argv, cwd, **kwargs):
+            calls.append((argv, kwargs))
+            kwargs["output"].write("native output\n")
+            return subprocess.CompletedProcess(argv, 0)
+        with patch.object(consumer, "windowless", return_value=True), \
+             patch.object(consumer, "read_settings", return_value={}), \
+             patch.object(consumer, "verify_source", return_value=self.app), \
+             patch.object(consumer, "cli", return_value=["archon"]), \
+             patch.object(consumer, "shared_root", return_value=self.app), \
+             patch.object(consumer, "execute", side_effect=fake_execute):
+            self.assertEqual(consumer.schedule(self.app, ["fire"]), 0)
+        self.assertEqual([argv[1:3] for argv, _ in calls], [["trigger", "fire"], ["workflow", "wake"]])
+        log = (self.app / ".factory/schedule.log").read_text(encoding="utf-8")
+        self.assertIn("=== schedule fire", log)
+        self.assertEqual(log.count("native output"), 2)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows console creation flags")
+    def test_children_get_no_console_window_only_when_nothing_shows_their_output(self):
+        seen = []
+        with patch.object(consumer.subprocess, "run",
+                          side_effect=lambda argv, **kw: seen.append(kw) or None):
+            consumer.execute(["git"], self.app)
+            consumer.execute(["git"], self.app, capture=False)
+            with patch.object(consumer, "windowless", return_value=True):
+                consumer.execute(["git"], self.app, capture=False)
+        flags = [kw.get("creationflags") for kw in seen]
+        self.assertEqual(flags, [subprocess.CREATE_NO_WINDOW, None, subprocess.CREATE_NO_WINDOW])
 
     def test_declared_required_checks_reach_merging_workflows_only(self):
         harness = self.app / "harness/harness.config.json"
