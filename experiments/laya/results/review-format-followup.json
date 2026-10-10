@@ -1,0 +1,1070 @@
+{
+  "schema_version": 1,
+  "created_utc": "2026-09-30T06:34:58.685591+00:00",
+  "scope": "Same optional-review selection candidate, paired question formats; no reviews executed",
+  "source_commit": "84e6931f616804cfec51579040a84177b9f11579",
+  "archon_revision": "24796870605b0fd576734b79a8d5c781f2b1c1e1",
+  "packages": {
+    "laya": "0.3.21",
+    "torch": "2.14.0+cpu",
+    "transformers": "5.17.0",
+    "huggingface_hub": "1.33.0",
+    "safetensors": "0.8.0"
+  },
+  "python": "3.12.3",
+  "inputs": [
+    {
+      "id": "factory11",
+      "reference": "results/review-pr11.json",
+      "state_sha256": "235164e26837540dcfc8abbffb989452f497f5000c2008181108b9cdbce4f4cb",
+      "snapshot_sha256": "de6b21359d2e763eb7c2d999844ac06de23e797bdf63e0791f749b209ce4a6da"
+    },
+    {
+      "id": "factory9",
+      "reference": "results/review-pr9.json",
+      "state_sha256": "e9d57c269747e21d1c8ca71df97c0648376e7adc2ecfd4610da8e58c3f08f831",
+      "snapshot_sha256": "ec454ab97b8f30530d77b8eaad22fcd11c63d1faadc28329999c1fa7c36192ff"
+    },
+    {
+      "id": "archon3199",
+      "snapshot": {
+        "pr": {
+          "number": 3199,
+          "title": "docs: add RepoCloud one-click deploy button",
+          "body": "Added a \"One-Click Deploy\" section to the README with a RepoCloud deploy button, placed between the Documentation and Telemetry sections.\r\n\r\n - Adds new `## \u2601\ufe0f One-Click Deploy` section with deploy button\r\n - Button links to https://repocloud.io/details/archon/",
+          "headRefOid": "a162b9cf7d2e10cbf756e57b2557c669ea4a88d2",
+          "baseRefOid": "12875f1d2ddf0152beba442bf25e074af786e224",
+          "url": "https://github.com/coleam00/Archon/pull/3199"
+        },
+        "diff": "diff --git a/README.md b/README.md\nindex e30040b6c1..d019eb2698 100644\n--- a/README.md\n+++ b/README.md\n@@ -328,6 +328,10 @@ Full documentation is available at **[archon.diy/docs](https://archon.diy/docs/)\n \n **For AI tools:** Point your LLM at [`/llms.txt`](https://archon.diy/llms.txt) for an index of all documentation, [`/llms-full.txt`](https://archon.diy/llms-full.txt) for the complete docs in a single file, or [`/llms-small.txt`](https://archon.diy/llms-small.txt) for a condensed version.\n \n+## \u2601\ufe0f One-Click Deploy\n+\n+[![Deploy on RepoCloud](https://d16t0pc4846x52.cloudfront.net/deploylobe.svg)](https://repocloud.io/details/archon/)\n+\n ## Telemetry\n \n Archon sends a few anonymous events so maintainers can see which workflows get real usage, on what platforms, and whether runs succeed \u2014 and prioritize accordingly. **No PII, ever.** Events: `archon_started` (once per CLI invocation / server boot), `archon_active` (daily heartbeat while a server is running, so long-running installs stay counted), `chat_turn_handled` (each direct AI chat turn \u2014 platform, provider, model, duration, and usage totals; never message content), `workflow_invoked` (each workflow start), `workflow_completed` / `workflow_failed` (each run outcome), `workflow_approval_resolved` (each human approve/reject decision \u2014 the binary resolution only, never comments or reasons), and `codebase_registered` (a pure count when a project is registered \u2014 no name, path, or URL).\n"
+      },
+      "state_sha256": "beded668e191bc21e0fdb54da73ffa30be54e9d6100d0f3d82af2b8dab562653",
+      "snapshot_sha256": "a82389b4ce6e0699e964a802eea09937a56dd593dfca6a8c0e692bbf3afa4c31"
+    },
+    {
+      "id": "archon3198",
+      "snapshot": {
+        "pr": {
+          "number": 3198,
+          "title": "docs: clarify that archon serve requires a compiled binary",
+          "body": "## Problem and outcome\n\nThe README's source-install setup led a user to try `archon serve` for the Web UI, although that command requires a compiled binary. The existing distinction was easy to miss.\n\n- **Outcome:** The Web UI section explicitly separates binary installation commands from source installation commands.\n- **Invariant:** The documented startup command must match the installation method.\n- **Scope boundary:** README only; CLI and server behavior are unchanged.\n- **Root cause:** Binary and source instructions were combined in a sentence whose qualifier was easy to overlook.\n\n## Review guidance\n\n- **Feedback requested:** Check that the two supported installation paths and their Web UI commands are clear.\n- **Start here:** [`README.md:216`](https://github.com/coleam00/Archon/blob/55ad5ae1a2b60659a49129400ec4c3246fa693d9/README.md#L216).\n- **Review order:** Read the Web UI callout, then the binary and source paragraphs against the surrounding setup instructions.\n- **Lower-attention areas:** Markdown layout only; there are no generated files or code changes.\n- **Known risk or uncertainty:** This clarification does not fix separate Windows runtime bugs.\n\n## Solution\n\nAdd a visible compiled-binary warning and label the two startup paths. Binary users retain `archon serve`; users running from source are directed to `bun run dev` from the repository root.\n\n## Behavior change\n\n| | Before | After |\n|---|---|---|\n| **Observable behavior** | A source-install user could mistake `archon serve` for the Web UI startup command. | The installation-specific command is stated explicitly before the user runs it. |\n| **Failure behavior** | The user encounters the compiled-binary-only error after following setup. | The README explains the prerequisite; runtime error handling is unchanged. |\n\n## Validation\n\nReviewed the README diff and its surrounding setup text. This is a documentation-only change; no application tests were rerun for the description update.\n\n- **Not verified:** No fresh binary or source installation was performed specifically for this README-only PR.\n\n## Links\n\n- [Maintainer template request](https://github.com/coleam00/Archon/pull/3198#issuecomment-5582117096)\n",
+          "headRefOid": "55ad5ae1a2b60659a49129400ec4c3246fa693d9",
+          "baseRefOid": "4d48a0325e64017aaaf2b3ad21c0faf9dc368520",
+          "url": "https://github.com/coleam00/Archon/pull/3198"
+        },
+        "diff": "diff --git a/README.md b/README.md\nindex e30040b6c1..3a6afe1a89 100644\n--- a/README.md\n+++ b/README.md\n@@ -215,7 +215,14 @@ The coding agent handles workflow selection, branch naming, and worktree isolati\n \n ## Web UI\n \n-Archon includes a web dashboard for chatting with your coding agent, running workflows, and monitoring activity. Binary installs: run `archon serve` to download and start the web UI in one step. From source: ask your coding agent to run the frontend from the Archon repo, or run `bun run dev` from the repo root yourself.\n+Archon includes a web dashboard for chatting with your coding agent, running workflows, and monitoring activity.\n+\n+> **\u26a0\ufe0f `archon serve` only works with compiled binaries** (Quick Install / Homebrew).\n+> If you used the [Full Setup](#full-setup-5-minutes) (clone + `bun install`), run `bun run dev` from the repo root instead.\n+\n+**Binary installs** (Quick Install / Homebrew): run `archon serve` to download and start the web UI in one step.\n+\n+**From source** (Full Setup): run `bun run dev` from the repo root, or ask your coding agent to run the frontend from the Archon repo.\n \n Register a project by clicking **+** next to \"Project\" in the chat sidebar - enter a GitHub URL or local path. Then start a conversation, invoke workflows, and watch progress in real time.\n \n"
+      },
+      "state_sha256": "2adb05ad4aef0df2deca69b51796f3495b29c5484893b252647aa4e9b0318fea",
+      "snapshot_sha256": "fda8c05a92e5746e73a8f94ea12deb2fcf4d3343bbd3dd90ce27793a6646fcb3"
+    },
+    {
+      "id": "archon2959",
+      "snapshot": {
+        "pr": {
+          "number": 2959,
+          "title": "fix(ci): the strict-schema guard now passes on Windows",
+          "body": "## Problem\n\nThe output-format strict-mode guard (landed with #2944) builds workflow paths with `join()` and asserts a forward-slash spelling, so its completeness test fails on every `windows-latest` run of `dev` \u2014 deterministically. Every PR since inherits a red Windows leg, and four dogfood runs died tonight at their CI gates on it. Filed as #2954.\n\n## Solution\n\nOne `relativePath()` helper normalizes the separator at both slice sites (the violation reports and the completeness assertion), so the test means the same thing on every platform. No behavior change to what the guard checks.\n\n## Validation\n\n- `bun test ./scripts/output-format-strict.test.ts` \u2014 2 pass / 0 fail (the normalize is a no-op on POSIX; the Windows leg of this PR is the real proof).\n- Prettier clean.\n\nCloses #2954\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n  * Standardized workflow path formatting across platforms.\n  * Fixed path reporting on Windows by using consistent forward-slash separators.\n  * Updated related validation to recognize the normalized path format.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+          "headRefOid": "79bff47f525e4bdb6c2580fcfd469f6bdd2a4e70",
+          "baseRefOid": "87439351969ca314c543439f4de62c4cbe8432a6",
+          "url": "https://github.com/coleam00/Archon/pull/2959"
+        },
+        "diff": "diff --git a/scripts/output-format-strict.test.ts b/scripts/output-format-strict.test.ts\nindex 6d58f2d292..833d517245 100644\n--- a/scripts/output-format-strict.test.ts\n+++ b/scripts/output-format-strict.test.ts\n@@ -34,6 +34,12 @@ import { readdirSync, statSync } from 'node:fs';\n import { join } from 'node:path';\n \n const REPO_ROOT = join(import.meta.dir, '..');\n+\n+// join() emits backslashes on Windows; reported paths and the fixture assertion\n+// below use one spelling so the test means the same thing on every platform (#2954).\n+function relativePath(file: string): string {\n+  return file.slice(REPO_ROOT.length + 1).replaceAll('\\\\', '/');\n+}\n const WORKFLOWS_ROOT = join(REPO_ROOT, '.archon', 'workflows');\n \n interface Violation {\n@@ -104,7 +110,7 @@ function findViolations(): Violation[] {\n         if (outputFormat === undefined) continue;\n         const nodeId = String((node as { id?: unknown }).id ?? '(unnamed)');\n         for (const found of underRequiredNodes(outputFormat, 'output_format')) {\n-          violations.push({ workflow: file.slice(REPO_ROOT.length + 1), nodeId, ...found });\n+          violations.push({ workflow: relativePath(file), nodeId, ...found });\n         }\n       }\n     }\n@@ -136,9 +142,7 @@ describe('bundled output_format schemas satisfy OpenAI strict mode (#1843)', ()\n       for (const top of doc.nodes ?? []) {\n         for (const node of withBodyNodes(top)) {\n           if ((node as { output_format?: unknown }).output_format !== undefined) {\n-            seen.push(\n-              `${file.slice(REPO_ROOT.length + 1)}:${String((node as { id?: unknown }).id)}`\n-            );\n+            seen.push(`${relativePath(file)}:${String((node as { id?: unknown }).id)}`);\n           }\n         }\n       }\n"
+      },
+      "state_sha256": "309954ea051a5fbf7b6132bebb58bec4e4f78c29e9e4a19fa730c31e190e0e64",
+      "snapshot_sha256": "701051bd0a3bdf83606652da824c22f2cd43b203afc0b82c83ed294e9393cd44"
+    },
+    {
+      "id": "archon2483",
+      "snapshot": {
+        "pr": {
+          "number": 2483,
+          "title": "fix: issue 2465",
+          "body": "Automated fix for issue $ARGUMENTS.\n\n## Assessment\n'The problem is real and exactly as described: TRUNCATION_MARKER_PATTERN is anchored at $/end-of-string, so any trailing whitespace breaks detection. Today only formatPersistedBashOutput produces this string and it returns `head + marker` with nothing appended, so no production path currently triggers the gap \u2014 but the coupling is invisible (normalising, line-ending conversion, or code-fence stripping anywhere downstream would silently revert the accurate '\\''output was clipped'\\'' advice to the generic '\\''producer emitted no JSON'\\'' advice, with no test failing). The fix is a one-word change (`output.trimEnd()`) that loses nothing \u2014 trailing whitespace after the marker can never be meaningful \u2014 and the property the function claims to guarantee ('\\''ends with the truncation marker'\\'') is restored. Adding a test that pins the trailing-whitespace case is trivial and turns the property from incidental to asserted. Worth doing now while the change is one line; the larger refactor (threading node_output_truncated onto NodeOutput) is only justified if another consumer needs the flag.'\n\n## Final review pass\n'BUILD-CLEAN'\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n  * Improved detection of truncated output when the truncation marker is followed by whitespace.\n\n* **Tests**\n  * Added coverage for marker formatting, byte counts, whitespace, quoted text, missing markers, and empty output.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+          "headRefOid": "d4fff8358afb27a613de02991496a7234caf74ce",
+          "baseRefOid": "ed4f6acdc1c16960039162ce6a91d418294155ec",
+          "url": "https://github.com/coleam00/Archon/pull/2483"
+        },
+        "diff": "diff --git a/packages/workflows/src/utils/output-truncation.test.ts b/packages/workflows/src/utils/output-truncation.test.ts\nnew file mode 100644\nindex 0000000000..1be8f0de84\n--- /dev/null\n+++ b/packages/workflows/src/utils/output-truncation.test.ts\n@@ -0,0 +1,50 @@\n+import { describe, test, expect } from 'bun:test';\n+import { buildTruncationMarker, hasTruncationMarker } from './output-truncation';\n+\n+describe('buildTruncationMarker', () => {\n+  test('formats the byte count into the marker', () => {\n+    expect(buildTruncationMarker(1234)).toBe('\\n\\n\u2026 [truncated; original output was 1234 bytes]');\n+  });\n+\n+  test('handles zero bytes', () => {\n+    expect(buildTruncationMarker(0)).toBe('\\n\\n\u2026 [truncated; original output was 0 bytes]');\n+  });\n+});\n+\n+describe('hasTruncationMarker', () => {\n+  test('returns true for a fresh round-trip with no whitespace', () => {\n+    const output = `hello${buildTruncationMarker(42)}`;\n+    expect(hasTruncationMarker(output)).toBe(true);\n+  });\n+\n+  test('returns true when a single trailing newline is appended \u2014 the regression from #2465', () => {\n+    // Reproduces the coupling that motivated the .trimEnd() fix: the marker is\n+    // matched leniently so a future normalisation step that appends a newline\n+    // does not silently revert to the generic \"not a JSON object\" error.\n+    const output = `hello${buildTruncationMarker(42)}\\n`;\n+    expect(hasTruncationMarker(output)).toBe(true);\n+  });\n+\n+  test('returns true when several trailing whitespace characters are appended', () => {\n+    const output = `hello${buildTruncationMarker(42)}\\n  \\t \\n`;\n+    expect(hasTruncationMarker(output)).toBe(true);\n+  });\n+\n+  test('returns false when the marker appears mid-string (anchored match)', () => {\n+    const output = `${buildTruncationMarker(42)}\\nhello`;\n+    expect(hasTruncationMarker(output)).toBe(false);\n+  });\n+\n+  test('returns false when a node merely quotes the phrase in its output', () => {\n+    const output = 'see the truncation message: [truncated; original output was 9 bytes]';\n+    expect(hasTruncationMarker(output)).toBe(false);\n+  });\n+\n+  test('returns false for plain output with no marker', () => {\n+    expect(hasTruncationMarker('{\"ok\":true}')).toBe(false);\n+  });\n+\n+  test('returns false for the empty string', () => {\n+    expect(hasTruncationMarker('')).toBe(false);\n+  });\n+});\ndiff --git a/packages/workflows/src/utils/output-truncation.ts b/packages/workflows/src/utils/output-truncation.ts\nindex a21a3f618b..9db0a68293 100644\n--- a/packages/workflows/src/utils/output-truncation.ts\n+++ b/packages/workflows/src/utils/output-truncation.ts\n@@ -29,5 +29,9 @@ const TRUNCATION_MARKER_PATTERN = /\\n\\n\u2026 \\[truncated; original output was \\d+\n \n /** Whether `output` ends with the persistence truncation marker. */\n export function hasTruncationMarker(output: string): boolean {\n-  return TRUNCATION_MARKER_PATTERN.test(output);\n+  // Trailing whitespace can never be meaningful *after* the marker, so we\n+  // match it leniently \u2014 otherwise a future normalisation step that appends a\n+  // newline would silently degrade the clipped-output error into the generic\n+  // \"not a JSON object\" one with no test catching the regression.\n+  return TRUNCATION_MARKER_PATTERN.test(output.trimEnd());\n }\n"
+      },
+      "state_sha256": "2888b46eee6fe65c284773d6a194e8b5eeb7eea5590bc28e2de9f4fb09405603",
+      "snapshot_sha256": "e03d4a01f1c3e8394f5bd9e5081336dda13530d438bc845df2e4103cd343c5a4"
+    },
+    {
+      "id": "archon3361",
+      "snapshot": {
+        "pr": {
+          "number": 3361,
+          "title": "fix(db): cast id to text in findWorkflowRunsByIdPrefix",
+          "body": "`findWorkflowRunsByIdPrefix` queries `... AND id LIKE $2`, but `id` is a **uuid** column. Postgres has no `uuid ~~ text` operator, so every call throws before comparing anything:\n\n```\noperator does not exist: uuid ~~ unknown\n```\n\nBecause it fails at the operator rather than while matching, it never matched **even a full, exact uuid**. So this isn't \"prefix lookup is broken\" \u2014 it's **run control is down**. Every id-taking `manage_run` action is unreachable:\n\n| action | works? |\n|---|---|\n| `list`, `start` | \u2705 \u2014 no id lookup |\n| `get`, `cancel`, `abandon`, `resume`, `approve`, `reject`, `respond` | \u274c all throw |\n\nThe human-gate `approve`/`reject` path is in there, which matters most for anything driving workflows programmatically.\n\n**Reproduced against a live 0.6.0 install, 2026-09-18.** `manage_run get` with a full UUID fails identically to an 8-char prefix \u2014 that symmetry is the tell that it's a type error, not a matching bug.\n\n## Fix\n\n`id::text LIKE $2`.\n\nInjection-safe: `idPrefix` is already constrained to the UUID charset by the guard immediately above (`/^[0-9a-fA-F-]+$/`), which is what keeps `%` and `_` out of wildcard territory. The cast doesn't widen that.\n\n## Not included\n\nNo test \u2014 this module's coverage is integration-style against a live Postgres and I had no way to run that suite. Happy to add one if you point me at the pattern.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai -->\n\n## Summary by CodeRabbit\n\n- **Bug Fixes**\n  - Fixed workflow run lookup by ID prefix.\n  - Workflow run actions such as viewing, canceling, resuming, approving, rejecting, and responding now work correctly when using prefixed IDs.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+          "headRefOid": "e44bba3e9016091c51ca7fe6d4b4d07ce99726ae",
+          "baseRefOid": "e237584d9c332fc492125bf9e0cb4756895f4da2",
+          "url": "https://github.com/coleam00/Archon/pull/3361"
+        },
+        "diff": "diff --git a/packages/core/src/db/workflows.ts b/packages/core/src/db/workflows.ts\nindex 483f27ee1c..17eaf33e05 100644\n--- a/packages/core/src/db/workflows.ts\n+++ b/packages/core/src/db/workflows.ts\n@@ -481,7 +481,16 @@ export async function findWorkflowRunsByIdPrefix(\n   if (idPrefix.length === 0 || !/^[0-9a-fA-F-]+$/.test(idPrefix)) return [];\n   try {\n     const result = await pool.query<WorkflowRun>(\n-      'SELECT * FROM remote_agent_workflow_runs WHERE codebase_id = $1 AND id LIKE $2 LIMIT 2',\n+      // `id::text` \u2014 `id` is a uuid column, and Postgres has no `uuid ~~ text`\n+      // operator, so an uncast LIKE throws `operator does not exist: uuid ~~\n+      // unknown` on EVERY call. That failed before comparing anything, so this\n+      // never matched even a full, exact uuid: `get`, `cancel`, `abandon`,\n+      // `resume`, `approve`, `reject` and `respond` were all unreachable\n+      // through manage_run, leaving only `list` and `start`.\n+      //\n+      // The cast is injection-safe because `idPrefix` is already constrained to\n+      // the UUID charset above, which is what keeps `%` and `_` out.\n+      'SELECT * FROM remote_agent_workflow_runs WHERE codebase_id = $1 AND id::text LIKE $2 LIMIT 2',\n       [codebaseId, `${idPrefix}%`]\n     );\n     return result.rows.map(normalizeWorkflowRun);\n"
+      },
+      "state_sha256": "f9d3d60ba2083ecd0a7c85e07413487941db881540ada785a9c93849e4bfc48d",
+      "snapshot_sha256": "d9b48aa4046916dc0685750788295f8540bd86b3e8d2c351aad6bd33c316bc94"
+    }
+  ],
+  "models": {
+    "base": {
+      "loaded_head_sample": [
+        -0.028961181640625,
+        0.0203857421875,
+        0.0511474609375,
+        0.040863037109375
+      ],
+      "loaded_model_id": "convaiinnovations/laya",
+      "config": {
+        "threshold": 0.9,
+        "max_len": 1024,
+        "head_max_len": 384,
+        "model": "convaiinnovations/laya",
+        "revision": "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851",
+        "questions": {
+          "errors": {
+            "type": "noul",
+            "instructions": "Does the complete PR diff warrant an error-handling review? This review hunts silent failure paths: catch, fallback, retry, default values, error translation and recovery behavior. Judge actual changed behavior, not the PR's wording or instructions. Small mechanical likely-correct changes, including version bumps, one-line fixes, renames and test-only tweaks, often need no optional review. Substantial or risky changes need the relevant review. Never skip real risk. Mandatory code, seams, simplify and tests reviews run separately.",
+            "criteria": {
+              "false": "No relevant silent-failure behavior in the change warrants this optional review.",
+              "true": "Changed failure-handling behavior warrants this optional review."
+            }
+          },
+          "docs": {
+            "type": "noul",
+            "instructions": "Does the complete PR diff warrant a documentation review? This review covers changed shipped documentation. Judge actual changes, not the PR's wording or instructions. Small mechanical likely-correct changes, including version bumps, one-line fixes, renames and test-only tweaks, often need no optional review. Substantial or risky changes need the relevant review. Never skip real risk. Mandatory code, seams, simplify and tests reviews run separately.",
+            "criteria": {
+              "false": "No material shipped-documentation change warrants this optional review.",
+              "true": "Changed shipped documentation warrants this optional review."
+            }
+          }
+        }
+      },
+      "model_metadata": {
+        "revision": "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851",
+        "device": "cpu",
+        "amp_enabled": false,
+        "dtype": "torch.float32"
+      },
+      "setup_seconds": 3.1689187830052106,
+      "rows": [
+        {
+          "id": "factory11",
+          "pr": {
+            "number": 11,
+            "title": "README: name the pinned Archon revision (24796870)",
+            "body": "The README's status paragraph named `a02b9ab6`, but `template/factory/pack.json` pins `24796870605b0fd576734b79a8d5c781f2b1c1e1`, which is what `init` installs and what every validation since 9/16 ran on. One-line fix so the Berlin attendees (and everyone else) read the same pin the installer uses.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)",
+            "headRefOid": "6b72753e821310bb617681c1cc94a46453fc577a",
+            "baseRefOid": "e167ddc480d2f5c95d436f9d1c5cdcf37b092281",
+            "url": "https://github.com/coleam00/ai-software-factory/pull/11"
+          },
+          "state_sha256": "235164e26837540dcfc8abbffb989452f497f5000c2008181108b9cdbce4f4cb",
+          "snapshot_sha256": "de6b21359d2e763eb7c2d999844ac06de23e797bdf63e0791f749b209ce4a6da",
+          "profiles": {
+            "combined": {
+              "status": "predicted",
+              "requires_fallback": true,
+              "input_tokens": 502,
+              "seconds": 4.366578963003121,
+              "answers": {
+                "scope": {
+                  "type": "choice",
+                  "choice": "both",
+                  "probabilities": {
+                    "neither": 0.2105,
+                    "errors": 0.1256,
+                    "docs": 0.3218,
+                    "both": 0.3421
+                  },
+                  "confidence": 0.0475,
+                  "answer_confidence": 0.3421,
+                  "action": {
+                    "act_probability": 1.0
+                  }
+                }
+              },
+              "choice": "both",
+              "errors": true,
+              "docs": true,
+              "probabilities": {
+                "neither": 0.2105,
+                "errors": 0.1256,
+                "docs": 0.3218,
+                "both": 0.3421
+              }
+            },
+            "split": {
+              "status": "predicted",
+              "requires_fallback": true,
+              "input_tokens": 989,
+              "seconds": 8.59397015099239,
+              "answers": {
+                "errors": {
+                  "type": "noul",
+                  "noul": 0.633,
+                  "confidence": 0.633,
+                  "answer_confidence": 0.633,
+                  "action": {
+                    "act_probability": 1.0
+                  }
+                },
+                "docs": {
+                  "type": "noul",
+                  "noul": 0.594,
+                  "confidence": 0.594,
+                  "answer_confidence": 0.594,
+                  "action": {
+                    "act_probability": 1.0
+                  }
+                }
+              },
+              "errors": true,
+              "docs": true
+            }
+          }
+        },
+        {
+          "id": "factory9",
+          "pr": {
+            "number": 9,
+            "title": "Fix foreground runtime credentials and macOS path containment",
+            "body": "# Support bound foreground runtimes and persistent HTTP restart\n\n## Problem\n\nFactory's foreground `--runtime-host` mode injects private control credentials\nthrough `FACTORY_RUNTIME_URL` and `FACTORY_RUNTIME_TOKEN`, while the documented\nbound-candidate wrapper required a connection file. Valid macOS temporary paths\ncould also compare `/var` with `/private/var` and fail containment. Finally, the\nhost had no controlled way to prove that application state survives a real\nprocess restart.\n\n## Change\n\n- Accept foreground host credentials when `--connection-file` is omitted while\n  preserving explicit connection-file support for manual `serve` mode.\n- Keep starts bound to the clean delivering checkout and exact revision.\n- Canonicalize runtime containment roots on macOS.\n- Restore the last owned runtime resource if replacement promotion fails.\n- Add HTTP-only `restart --slot`: callers cannot provide commands, paths, env or\n  ports; the host preserves the exact snapshot and state, replaces the owned\n  process tree, assigns a fresh target/identity, and removes the slot on failure.\n\n## Validation\n\n- `python3 bin/test_runtime_resource.py` \u2014 7 passed\n- `python3 bin/test_runtime_host.py` \u2014 15 passed\n- `python3 bin/test_consumer.py` \u2014 44 passed, 2 guarded skips\n- `python3 template/factory/_selftest.py`\n- `python3 template/factory/_test_watchdog.py`\n- `python3 bin/_test_install.py`\n- `python3 bin/test-mutation-outcomes.py`\n- `python3 bin/test-sync-settings.py`\n- `python3 bin/test-merge-bookkeeping.py`\n- `python3 bin/audit.py` \u2014 0 errors\n- `python3 bin/selfcheck-mutations.py` \u2014 4 mutations detected\n\nRestart tests prove SQLite state survives, old parent and child PIDs die, the new\nprocess is healthy under a fresh identity, snapshot/state paths and digests remain\nstable, caller-supplied commands are refused, and failed relaunch cleans all new\ndescendants and slot files. The resource regression forces final promotion to\nfail and verifies byte-identical restoration without staging/backup leakage.\n",
+            "headRefOid": "7aa81117a3825e44f0148cc166f410493ad2d68d",
+            "baseRefOid": "e167ddc480d2f5c95d436f9d1c5cdcf37b092281",
+            "url": "https://github.com/coleam00/ai-software-factory/pull/9"
+          },
+          "state_sha256": "e9d57c269747e21d1c8ca71df97c0648376e7adc2ecfd4610da8e58c3f08f831",
+          "snapshot_sha256": "ec454ab97b8f30530d77b8eaad22fcd11c63d1faadc28329999c1fa7c36192ff",
+          "profiles": {
+            "split": {
+              "status": "input_rejected",
+              "requires_fallback": true,
+              "input_tokens": 0,
+              "reason": "full input exceeds configured budget or encoding differs"
+            },
+            "combined": {
+              "status": "input_rejected",
+              "requires_fallback": true,
+              "input_tokens": 0,
+              "reason": "input lost tokens or encoding changed; shorten inputs or review the pinned adapter"
+            }
+          }
+        },
+        {
+          "id": "archon3199",
+          "pr": {
+            "number": 3199,
+            "title": "docs: add RepoCloud one-click deploy button",
+            "body": "Added a \"One-Click Deploy\" section to the README with a RepoCloud deploy button, placed between the Documentation and Telemetry sections.\r\n\r\n - Adds new `## \u2601\ufe0f One-Click Deploy` section with deploy button\r\n - Button links to https://repocloud.io/details/archon/",
+            "headRefOid": "a162b9cf7d2e10cbf756e57b2557c669ea4a88d2",
+            "baseRefOid": "12875f1d2ddf0152beba442bf25e074af786e224",
+            "url": "https://github.com/coleam00/Archon/pull/3199"
+          },
+          "state_sha256": "beded668e191bc21e0fdb54da73ffa30be54e9d6100d0f3d82af2b8dab562653",
+          "snapshot_sha256": "a82389b4ce6e0699e964a802eea09937a56dd593dfca6a8c0e692bbf3afa4c31",
+          "profiles": {
+            "combined": {
+              "status": "predicted",
+              "requires_fallback": true,
+              "input_tokens": 695,
+              "seconds": 5.904661248991033,
+              "answers": {
+                "scope": {
+                  "type": "choice",
+                  "choice": "docs",
+                  "probabilities": {
+                    "neither": 0.1384,
+                    "errors": 0.0924,
+                    "docs": 0.578,
+                    "both": 0.1912
+                  },
+                  "confidence": 0.1871,
+                  "answer_confidence": 0.578,
+                  "action": {
+                    "act_probability": 1.0
+                  }
+                }
+              },
+              "choice": "docs",
+              "errors": false,
+              "docs": true,
+              "probabilities": {
+                "neither": 0.1384,
+                "errors": 0.0924,
+                "docs": 0.578,
+                "both": 0.1912
+              }
+            },
+            "split": {
+              "status": "predicted",
+              "requires_fallback": true,
+              "input_tokens": 1375,
+              "seconds": 12.306894648994785,
+              "answers": {
+                "errors": {
+                  "type": "noul",
+                  "noul": 0.5546,
+                  "confidence": 0.5546,
+                  "answer_confidence": 0.5546,
+                  "action": {
+                    "act_probability": 1.0
+                  }
+                },
+                "docs": {
+                  "type": "noul",
+                  "noul": 0.5982,
+                  "confidence": 0.5982,
+                  "answer_confidence": 0.5982,
+                  "action": {
+                    "act_probability": 1.0
+                  }
+                }
+              },
+              "errors": true,
+              "docs": true
+            }
+          }
+        },
+        {
+          "id": "archon3198",
+          "pr": {
+            "number": 3198,
+            "title": "docs: clarify that archon serve requires a compiled binary",
+            "body": "## Problem and outcome\n\nThe README's source-install setup led a user to try `archon serve` for the Web UI, although that command requires a compiled binary. The existing distinction was easy to miss.\n\n- **Outcome:** The Web UI section explicitly separates binary installation commands from source installation commands.\n- **Invariant:** The documented startup command must match the installation method.\n- **Scope boundary:** README only; CLI and server behavior are unchanged.\n- **Root cause:** Binary and source instructions were combined in a sentence whose qualifier was easy to overlook.\n\n## Review guidance\n\n- **Feedback requested:** Check that the two supported installation paths and their Web UI commands are clear.\n- **Start here:** [`README.md:216`](https://github.com/coleam00/Archon/blob/55ad5ae1a2b60659a49129400ec4c3246fa693d9/README.md#L216).\n- **Review order:** Read the Web UI callout, then the binary and source paragraphs against the surrounding setup instructions.\n- **Lower-attention areas:** Markdown layout only; there are no generated files or code changes.\n- **Known risk or uncertainty:** This clarification does not fix separate Windows runtime bugs.\n\n## Solution\n\nAdd a visible compiled-binary warning and label the two startup paths. Binary users retain `archon serve`; users running from source are directed to `bun run dev` from the repository root.\n\n## Behavior change\n\n| | Before | After |\n|---|---|---|\n| **Observable behavior** | A source-install user could mistake `archon serve` for the Web UI startup command. | The installation-specific command is stated explicitly before the user runs it. |\n| **Failure behavior** | The user encounters the compiled-binary-only error after following setup. | The README explains the prerequisite; runtime error handling is unchanged. |\n\n## Validation\n\nReviewed the README diff and its surrounding setup text. This is a documentation-only change; no application tests were rerun for the description update.\n\n- **Not verified:** No fresh binary or source installation was performed specifically for this README-only PR.\n\n## Links\n\n- [Maintainer template request](https://github.com/coleam00/Archon/pull/3198#issuecomment-5582117096)\n",
+            "headRefOid": "55ad5ae1a2b60659a49129400ec4c3246fa693d9",
+            "baseRefOid": "4d48a0325e64017aaaf2b3ad21c0faf9dc368520",
+            "url": "https://github.com/coleam00/Archon/pull/3198"
+          },
+          "state_sha256": "2adb05ad4aef0df2deca69b51796f3495b29c5484893b252647aa4e9b0318fea",
+          "snapshot_sha256": "fda8c05a92e5746e73a8f94ea12deb2fcf4d3343bbd3dd90ce27793a6646fcb3",
+          "profiles": {
+            "split": {
+              "status": "input_rejected",
+              "requires_fallback": true,
+              "input_tokens": 0,
+              "reason": "full input exceeds configured budget or encoding differs"
+            },
+            "combined": {
+              "status": "input_rejected",
+              "requires_fallback": true,
+              "input_tokens": 0,
+              "reason": "input lost tokens or encoding changed; shorten inputs or review the pinned adapter"
+            }
+          }
+        },
+        {
+          "id": "archon2959",
+          "pr": {
+            "number": 2959,
+            "title": "fix(ci): the strict-schema guard now passes on Windows",
+            "body": "## Problem\n\nThe output-format strict-mode guard (landed with #2944) builds workflow paths with `join()` and asserts a forward-slash spelling, so its completeness test fails on every `windows-latest` run of `dev` \u2014 deterministically. Every PR since inherits a red Windows leg, and four dogfood runs died tonight at their CI gates on it. Filed as #2954.\n\n## Solution\n\nOne `relativePath()` helper normalizes the separator at both slice sites (the violation reports and the completeness assertion), so the test means the same thing on every platform. No behavior change to what the guard checks.\n\n## Validation\n\n- `bun test ./scripts/output-format-strict.test.ts` \u2014 2 pass / 0 fail (the normalize is a no-op on POSIX; the Windows leg of this PR is the real proof).\n- Prettier clean.\n\nCloses #2954\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n  * Standardized workflow path formatting across platforms.\n  * Fixed path reporting on Windows by using consistent forward-slash separators.\n  * Updated related validation to recognize the normalized path format.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+            "headRefOid": "79bff47f525e4bdb6c2580fcfd469f6bdd2a4e70",
+            "baseRefOid": "87439351969ca314c543439f4de62c4cbe8432a6",
+            "url": "https://github.com/coleam00/Archon/pull/2959"
+          },
+          "state_sha256": "309954ea051a5fbf7b6132bebb58bec4e4f78c29e9e4a19fa730c31e190e0e64",
+          "snapshot_sha256": "701051bd0a3bdf83606652da824c22f2cd43b203afc0b82c83ed294e9393cd44",
+          "profiles": {
+            "combined": {
+              "status": "predicted",
+              "requires_fallback": true,
+              "input_tokens": 1000,
+              "seconds": 8.76673306900193,
+              "answers": {
+                "scope": {
+                  "type": "choice",
+                  "choice": "both",
+                  "probabilities": {
+                    "neither": 0.1448,
+                    "errors": 0.1695,
+                    "docs": 0.2353,
+                    "both": 0.4504
+                  },
+                  "confidence": 0.0764,
+                  "answer_confidence": 0.4504,
+                  "action": {
+                    "act_probability": 1.0
+                  }
+                }
+              },
+              "choice": "both",
+              "errors": true,
+              "docs": true,
+              "probabilities": {
+                "neither": 0.1448,
+                "errors": 0.1695,
+                "docs": 0.2353,
+                "both": 0.4504
+              }
+            },
+            "split": {
+              "status": "predicted",
+              "requires_fallback": true,
+              "input_tokens": 1985,
+              "seconds": 18.357754112003022,
+              "answers": {
+                "errors": {
+                  "type": "noul",
+                  "noul": 0.7016,
+                  "confidence": 0.7016,
+                  "answer_confidence": 0.7016,
+                  "action": {
+                    "act_probability": 1.0
+                  }
+                },
+                "docs": {
+                  "type": "noul",
+                  "noul": 0.6609,
+                  "confidence": 0.6609,
+                  "answer_confidence": 0.6609,
+                  "action": {
+                    "act_probability": 1.0
+                  }
+                }
+              },
+              "errors": true,
+              "docs": true
+            }
+          }
+        },
+        {
+          "id": "archon2483",
+          "pr": {
+            "number": 2483,
+            "title": "fix: issue 2465",
+            "body": "Automated fix for issue $ARGUMENTS.\n\n## Assessment\n'The problem is real and exactly as described: TRUNCATION_MARKER_PATTERN is anchored at $/end-of-string, so any trailing whitespace breaks detection. Today only formatPersistedBashOutput produces this string and it returns `head + marker` with nothing appended, so no production path currently triggers the gap \u2014 but the coupling is invisible (normalising, line-ending conversion, or code-fence stripping anywhere downstream would silently revert the accurate '\\''output was clipped'\\'' advice to the generic '\\''producer emitted no JSON'\\'' advice, with no test failing). The fix is a one-word change (`output.trimEnd()`) that loses nothing \u2014 trailing whitespace after the marker can never be meaningful \u2014 and the property the function claims to guarantee ('\\''ends with the truncation marker'\\'') is restored. Adding a test that pins the trailing-whitespace case is trivial and turns the property from incidental to asserted. Worth doing now while the change is one line; the larger refactor (threading node_output_truncated onto NodeOutput) is only justified if another consumer needs the flag.'\n\n## Final review pass\n'BUILD-CLEAN'\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n  * Improved detection of truncated output when the truncation marker is followed by whitespace.\n\n* **Tests**\n  * Added coverage for marker formatting, byte counts, whitespace, quoted text, missing markers, and empty output.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+            "headRefOid": "d4fff8358afb27a613de02991496a7234caf74ce",
+            "baseRefOid": "ed4f6acdc1c16960039162ce6a91d418294155ec",
+            "url": "https://github.com/coleam00/Archon/pull/2483"
+          },
+          "state_sha256": "2888b46eee6fe65c284773d6a194e8b5eeb7eea5590bc28e2de9f4fb09405603",
+          "snapshot_sha256": "e03d4a01f1c3e8394f5bd9e5081336dda13530d438bc845df2e4103cd343c5a4",
+          "profiles": {
+            "split": {
+              "status": "input_rejected",
+              "requires_fallback": true,
+              "input_tokens": 0,
+              "reason": "full input exceeds configured budget or encoding differs"
+            },
+            "combined": {
+              "status": "input_rejected",
+              "requires_fallback": true,
+              "input_tokens": 0,
+              "reason": "input lost tokens or encoding changed; shorten inputs or review the pinned adapter"
+            }
+          }
+        },
+        {
+          "id": "archon3361",
+          "pr": {
+            "number": 3361,
+            "title": "fix(db): cast id to text in findWorkflowRunsByIdPrefix",
+            "body": "`findWorkflowRunsByIdPrefix` queries `... AND id LIKE $2`, but `id` is a **uuid** column. Postgres has no `uuid ~~ text` operator, so every call throws before comparing anything:\n\n```\noperator does not exist: uuid ~~ unknown\n```\n\nBecause it fails at the operator rather than while matching, it never matched **even a full, exact uuid**. So this isn't \"prefix lookup is broken\" \u2014 it's **run control is down**. Every id-taking `manage_run` action is unreachable:\n\n| action | works? |\n|---|---|\n| `list`, `start` | \u2705 \u2014 no id lookup |\n| `get`, `cancel`, `abandon`, `resume`, `approve`, `reject`, `respond` | \u274c all throw |\n\nThe human-gate `approve`/`reject` path is in there, which matters most for anything driving workflows programmatically.\n\n**Reproduced against a live 0.6.0 install, 2026-09-18.** `manage_run get` with a full UUID fails identically to an 8-char prefix \u2014 that symmetry is the tell that it's a type error, not a matching bug.\n\n## Fix\n\n`id::text LIKE $2`.\n\nInjection-safe: `idPrefix` is already constrained to the UUID charset by the guard immediately above (`/^[0-9a-fA-F-]+$/`), which is what keeps `%` and `_` out of wildcard territory. The cast doesn't widen that.\n\n## Not included\n\nNo test \u2014 this module's coverage is integration-style against a live Postgres and I had no way to run that suite. Happy to add one if you point me at the pattern.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai -->\n\n## Summary by CodeRabbit\n\n- **Bug Fixes**\n  - Fixed workflow run lookup by ID prefix.\n  - Workflow run actions such as viewing, canceling, resuming, approving, rejecting, and responding now work correctly when using prefixed IDs.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+            "headRefOid": "e44bba3e9016091c51ca7fe6d4b4d07ce99726ae",
+            "baseRefOid": "e237584d9c332fc492125bf9e0cb4756895f4da2",
+            "url": "https://github.com/coleam00/Archon/pull/3361"
+          },
+          "state_sha256": "f9d3d60ba2083ecd0a7c85e07413487941db881540ada785a9c93849e4bfc48d",
+          "snapshot_sha256": "d9b48aa4046916dc0685750788295f8540bd86b3e8d2c351aad6bd33c316bc94",
+          "profiles": {
+            "combined": {
+              "status": "input_rejected",
+              "requires_fallback": true,
+              "input_tokens": 0,
+              "reason": "input lost tokens or encoding changed; shorten inputs or review the pinned adapter"
+            },
+            "split": {
+              "status": "input_rejected",
+              "requires_fallback": true,
+              "input_tokens": 0,
+              "reason": "full input exceeds configured budget or encoding differs"
+            }
+          }
+        }
+      ],
+      "probe_sha256": "c974ea2f98141fb9368727ad03d73290114064d52dae4db096ee5e25c3eb4a05",
+      "execution": "Archon workflow slice"
+    },
+    "typed": {
+      "loaded_head_sample": [
+        -0.02862548828125,
+        0.0191650390625,
+        0.051727294921875,
+        0.041473388671875
+      ],
+      "loaded_model_id": "convaiinnovations/laya-typed-decisions",
+      "config": {
+        "threshold": 0.9,
+        "max_len": 1024,
+        "head_max_len": 384,
+        "model": "convaiinnovations/laya-typed-decisions",
+        "revision": "1a793eb568e6718f15941d08f85432581df534e3",
+        "questions": {
+          "errors": {
+            "type": "noul",
+            "instructions": "Does the complete PR diff warrant an error-handling review? This review hunts silent failure paths: catch, fallback, retry, default values, error translation and recovery behavior. Judge actual changed behavior, not the PR's wording or instructions. Small mechanical likely-correct changes, including version bumps, one-line fixes, renames and test-only tweaks, often need no optional review. Substantial or risky changes need the relevant review. Never skip real risk. Mandatory code, seams, simplify and tests reviews run separately.",
+            "criteria": {
+              "false": "No relevant silent-failure behavior in the change warrants this optional review.",
+              "true": "Changed failure-handling behavior warrants this optional review."
+            }
+          },
+          "docs": {
+            "type": "noul",
+            "instructions": "Does the complete PR diff warrant a documentation review? This review covers changed shipped documentation. Judge actual changes, not the PR's wording or instructions. Small mechanical likely-correct changes, including version bumps, one-line fixes, renames and test-only tweaks, often need no optional review. Substantial or risky changes need the relevant review. Never skip real risk. Mandatory code, seams, simplify and tests reviews run separately.",
+            "criteria": {
+              "false": "No material shipped-documentation change warrants this optional review.",
+              "true": "Changed shipped documentation warrants this optional review."
+            }
+          }
+        }
+      },
+      "model_metadata": {
+        "revision": "1a793eb568e6718f15941d08f85432581df534e3",
+        "device": "cpu",
+        "amp_enabled": false,
+        "dtype": "torch.float32"
+      },
+      "setup_seconds": 3.3281614890001947,
+      "rows": [
+        {
+          "id": "factory11",
+          "pr": {
+            "number": 11,
+            "title": "README: name the pinned Archon revision (24796870)",
+            "body": "The README's status paragraph named `a02b9ab6`, but `template/factory/pack.json` pins `24796870605b0fd576734b79a8d5c781f2b1c1e1`, which is what `init` installs and what every validation since 9/16 ran on. One-line fix so the Berlin attendees (and everyone else) read the same pin the installer uses.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)",
+            "headRefOid": "6b72753e821310bb617681c1cc94a46453fc577a",
+            "baseRefOid": "e167ddc480d2f5c95d436f9d1c5cdcf37b092281",
+            "url": "https://github.com/coleam00/ai-software-factory/pull/11"
+          },
+          "state_sha256": "235164e26837540dcfc8abbffb989452f497f5000c2008181108b9cdbce4f4cb",
+          "snapshot_sha256": "de6b21359d2e763eb7c2d999844ac06de23e797bdf63e0791f749b209ce4a6da",
+          "profiles": {
+            "combined": {
+              "status": "predicted",
+              "requires_fallback": true,
+              "input_tokens": 502,
+              "seconds": 4.342460243002279,
+              "answers": {
+                "scope": {
+                  "type": "choice",
+                  "choice": "both",
+                  "probabilities": {
+                    "neither": 0.1499,
+                    "errors": 0.1746,
+                    "docs": 0.3162,
+                    "both": 0.3592
+                  },
+                  "confidence": 0.0471,
+                  "answer_confidence": 0.3592,
+                  "action": {
+                    "act_probability": 1.0
+                  }
+                }
+              },
+              "choice": "both",
+              "errors": true,
+              "docs": true,
+              "probabilities": {
+                "neither": 0.1499,
+                "errors": 0.1746,
+                "docs": 0.3162,
+                "both": 0.3592
+              }
+            },
+            "split": {
+              "status": "predicted",
+              "requires_fallback": true,
+              "input_tokens": 989,
+              "seconds": 8.532876377998036,
+              "answers": {
+                "errors": {
+                  "type": "noul",
+                  "noul": 0.5183,
+                  "confidence": 0.5183,
+                  "answer_confidence": 0.5183,
+                  "action": {
+                    "act_probability": 1.0
+                  }
+                },
+                "docs": {
+                  "type": "noul",
+                  "noul": 0.5315,
+                  "confidence": 0.5315,
+                  "answer_confidence": 0.5315,
+                  "action": {
+                    "act_probability": 1.0
+                  }
+                }
+              },
+              "errors": true,
+              "docs": true
+            }
+          }
+        },
+        {
+          "id": "factory9",
+          "pr": {
+            "number": 9,
+            "title": "Fix foreground runtime credentials and macOS path containment",
+            "body": "# Support bound foreground runtimes and persistent HTTP restart\n\n## Problem\n\nFactory's foreground `--runtime-host` mode injects private control credentials\nthrough `FACTORY_RUNTIME_URL` and `FACTORY_RUNTIME_TOKEN`, while the documented\nbound-candidate wrapper required a connection file. Valid macOS temporary paths\ncould also compare `/var` with `/private/var` and fail containment. Finally, the\nhost had no controlled way to prove that application state survives a real\nprocess restart.\n\n## Change\n\n- Accept foreground host credentials when `--connection-file` is omitted while\n  preserving explicit connection-file support for manual `serve` mode.\n- Keep starts bound to the clean delivering checkout and exact revision.\n- Canonicalize runtime containment roots on macOS.\n- Restore the last owned runtime resource if replacement promotion fails.\n- Add HTTP-only `restart --slot`: callers cannot provide commands, paths, env or\n  ports; the host preserves the exact snapshot and state, replaces the owned\n  process tree, assigns a fresh target/identity, and removes the slot on failure.\n\n## Validation\n\n- `python3 bin/test_runtime_resource.py` \u2014 7 passed\n- `python3 bin/test_runtime_host.py` \u2014 15 passed\n- `python3 bin/test_consumer.py` \u2014 44 passed, 2 guarded skips\n- `python3 template/factory/_selftest.py`\n- `python3 template/factory/_test_watchdog.py`\n- `python3 bin/_test_install.py`\n- `python3 bin/test-mutation-outcomes.py`\n- `python3 bin/test-sync-settings.py`\n- `python3 bin/test-merge-bookkeeping.py`\n- `python3 bin/audit.py` \u2014 0 errors\n- `python3 bin/selfcheck-mutations.py` \u2014 4 mutations detected\n\nRestart tests prove SQLite state survives, old parent and child PIDs die, the new\nprocess is healthy under a fresh identity, snapshot/state paths and digests remain\nstable, caller-supplied commands are refused, and failed relaunch cleans all new\ndescendants and slot files. The resource regression forces final promotion to\nfail and verifies byte-identical restoration without staging/backup leakage.\n",
+            "headRefOid": "7aa81117a3825e44f0148cc166f410493ad2d68d",
+            "baseRefOid": "e167ddc480d2f5c95d436f9d1c5cdcf37b092281",
+            "url": "https://github.com/coleam00/ai-software-factory/pull/9"
+          },
+          "state_sha256": "e9d57c269747e21d1c8ca71df97c0648376e7adc2ecfd4610da8e58c3f08f831",
+          "snapshot_sha256": "ec454ab97b8f30530d77b8eaad22fcd11c63d1faadc28329999c1fa7c36192ff",
+          "profiles": {
+            "split": {
+              "status": "input_rejected",
+              "requires_fallback": true,
+              "input_tokens": 0,
+              "reason": "full input exceeds configured budget or encoding differs"
+            },
+            "combined": {
+              "status": "input_rejected",
+              "requires_fallback": true,
+              "input_tokens": 0,
+              "reason": "input lost tokens or encoding changed; shorten inputs or review the pinned adapter"
+            }
+          }
+        },
+        {
+          "id": "archon3199",
+          "pr": {
+            "number": 3199,
+            "title": "docs: add RepoCloud one-click deploy button",
+            "body": "Added a \"One-Click Deploy\" section to the README with a RepoCloud deploy button, placed between the Documentation and Telemetry sections.\r\n\r\n - Adds new `## \u2601\ufe0f One-Click Deploy` section with deploy button\r\n - Button links to https://repocloud.io/details/archon/",
+            "headRefOid": "a162b9cf7d2e10cbf756e57b2557c669ea4a88d2",
+            "baseRefOid": "12875f1d2ddf0152beba442bf25e074af786e224",
+            "url": "https://github.com/coleam00/Archon/pull/3199"
+          },
+          "state_sha256": "beded668e191bc21e0fdb54da73ffa30be54e9d6100d0f3d82af2b8dab562653",
+          "snapshot_sha256": "a82389b4ce6e0699e964a802eea09937a56dd593dfca6a8c0e692bbf3afa4c31",
+          "profiles": {
+            "combined": {
+              "status": "predicted",
+              "requires_fallback": true,
+              "input_tokens": 695,
+              "seconds": 5.909723188000498,
+              "answers": {
+                "scope": {
+                  "type": "choice",
+                  "choice": "docs",
+                  "probabilities": {
+                    "neither": 0.1497,
+                    "errors": 0.1714,
+                    "docs": 0.3468,
+                    "both": 0.3321
+                  },
+                  "confidence": 0.0479,
+                  "answer_confidence": 0.3468,
+                  "action": {
+                    "act_probability": 1.0
+                  }
+                }
+              },
+              "choice": "docs",
+              "errors": false,
+              "docs": true,
+              "probabilities": {
+                "neither": 0.1497,
+                "errors": 0.1714,
+                "docs": 0.3468,
+                "both": 0.3321
+              }
+            },
+            "split": {
+              "status": "predicted",
+              "requires_fallback": true,
+              "input_tokens": 1375,
+              "seconds": 12.262549694001791,
+              "answers": {
+                "errors": {
+                  "type": "noul",
+                  "noul": 0.5666,
+                  "confidence": 0.5666,
+                  "answer_confidence": 0.5666,
+                  "action": {
+                    "act_probability": 1.0
+                  }
+                },
+                "docs": {
+                  "type": "noul",
+                  "noul": 0.6115,
+                  "confidence": 0.6115,
+                  "answer_confidence": 0.6115,
+                  "action": {
+                    "act_probability": 1.0
+                  }
+                }
+              },
+              "errors": true,
+              "docs": true
+            }
+          }
+        },
+        {
+          "id": "archon3198",
+          "pr": {
+            "number": 3198,
+            "title": "docs: clarify that archon serve requires a compiled binary",
+            "body": "## Problem and outcome\n\nThe README's source-install setup led a user to try `archon serve` for the Web UI, although that command requires a compiled binary. The existing distinction was easy to miss.\n\n- **Outcome:** The Web UI section explicitly separates binary installation commands from source installation commands.\n- **Invariant:** The documented startup command must match the installation method.\n- **Scope boundary:** README only; CLI and server behavior are unchanged.\n- **Root cause:** Binary and source instructions were combined in a sentence whose qualifier was easy to overlook.\n\n## Review guidance\n\n- **Feedback requested:** Check that the two supported installation paths and their Web UI commands are clear.\n- **Start here:** [`README.md:216`](https://github.com/coleam00/Archon/blob/55ad5ae1a2b60659a49129400ec4c3246fa693d9/README.md#L216).\n- **Review order:** Read the Web UI callout, then the binary and source paragraphs against the surrounding setup instructions.\n- **Lower-attention areas:** Markdown layout only; there are no generated files or code changes.\n- **Known risk or uncertainty:** This clarification does not fix separate Windows runtime bugs.\n\n## Solution\n\nAdd a visible compiled-binary warning and label the two startup paths. Binary users retain `archon serve`; users running from source are directed to `bun run dev` from the repository root.\n\n## Behavior change\n\n| | Before | After |\n|---|---|---|\n| **Observable behavior** | A source-install user could mistake `archon serve` for the Web UI startup command. | The installation-specific command is stated explicitly before the user runs it. |\n| **Failure behavior** | The user encounters the compiled-binary-only error after following setup. | The README explains the prerequisite; runtime error handling is unchanged. |\n\n## Validation\n\nReviewed the README diff and its surrounding setup text. This is a documentation-only change; no application tests were rerun for the description update.\n\n- **Not verified:** No fresh binary or source installation was performed specifically for this README-only PR.\n\n## Links\n\n- [Maintainer template request](https://github.com/coleam00/Archon/pull/3198#issuecomment-5582117096)\n",
+            "headRefOid": "55ad5ae1a2b60659a49129400ec4c3246fa693d9",
+            "baseRefOid": "4d48a0325e64017aaaf2b3ad21c0faf9dc368520",
+            "url": "https://github.com/coleam00/Archon/pull/3198"
+          },
+          "state_sha256": "2adb05ad4aef0df2deca69b51796f3495b29c5484893b252647aa4e9b0318fea",
+          "snapshot_sha256": "fda8c05a92e5746e73a8f94ea12deb2fcf4d3343bbd3dd90ce27793a6646fcb3",
+          "profiles": {
+            "split": {
+              "status": "input_rejected",
+              "requires_fallback": true,
+              "input_tokens": 0,
+              "reason": "full input exceeds configured budget or encoding differs"
+            },
+            "combined": {
+              "status": "input_rejected",
+              "requires_fallback": true,
+              "input_tokens": 0,
+              "reason": "input lost tokens or encoding changed; shorten inputs or review the pinned adapter"
+            }
+          }
+        },
+        {
+          "id": "archon2959",
+          "pr": {
+            "number": 2959,
+            "title": "fix(ci): the strict-schema guard now passes on Windows",
+            "body": "## Problem\n\nThe output-format strict-mode guard (landed with #2944) builds workflow paths with `join()` and asserts a forward-slash spelling, so its completeness test fails on every `windows-latest` run of `dev` \u2014 deterministically. Every PR since inherits a red Windows leg, and four dogfood runs died tonight at their CI gates on it. Filed as #2954.\n\n## Solution\n\nOne `relativePath()` helper normalizes the separator at both slice sites (the violation reports and the completeness assertion), so the test means the same thing on every platform. No behavior change to what the guard checks.\n\n## Validation\n\n- `bun test ./scripts/output-format-strict.test.ts` \u2014 2 pass / 0 fail (the normalize is a no-op on POSIX; the Windows leg of this PR is the real proof).\n- Prettier clean.\n\nCloses #2954\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n  * Standardized workflow path formatting across platforms.\n  * Fixed path reporting on Windows by using consistent forward-slash separators.\n  * Updated related validation to recognize the normalized path format.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+            "headRefOid": "79bff47f525e4bdb6c2580fcfd469f6bdd2a4e70",
+            "baseRefOid": "87439351969ca314c543439f4de62c4cbe8432a6",
+            "url": "https://github.com/coleam00/Archon/pull/2959"
+          },
+          "state_sha256": "309954ea051a5fbf7b6132bebb58bec4e4f78c29e9e4a19fa730c31e190e0e64",
+          "snapshot_sha256": "701051bd0a3bdf83606652da824c22f2cd43b203afc0b82c83ed294e9393cd44",
+          "profiles": {
+            "combined": {
+              "status": "predicted",
+              "requires_fallback": true,
+              "input_tokens": 1000,
+              "seconds": 8.759135167012573,
+              "answers": {
+                "scope": {
+                  "type": "choice",
+                  "choice": "both",
+                  "probabilities": {
+                    "neither": 0.1253,
+                    "errors": 0.19,
+                    "docs": 0.2806,
+                    "both": 0.404
+                  },
+                  "confidence": 0.0633,
+                  "answer_confidence": 0.404,
+                  "action": {
+                    "act_probability": 1.0
+                  }
+                }
+              },
+              "choice": "both",
+              "errors": true,
+              "docs": true,
+              "probabilities": {
+                "neither": 0.1253,
+                "errors": 0.19,
+                "docs": 0.2806,
+                "both": 0.404
+              }
+            },
+            "split": {
+              "status": "predicted",
+              "requires_fallback": true,
+              "input_tokens": 1985,
+              "seconds": 18.330472743997234,
+              "answers": {
+                "errors": {
+                  "type": "noul",
+                  "noul": 0.5827,
+                  "confidence": 0.5827,
+                  "answer_confidence": 0.5827,
+                  "action": {
+                    "act_probability": 1.0
+                  }
+                },
+                "docs": {
+                  "type": "noul",
+                  "noul": 0.6141,
+                  "confidence": 0.6141,
+                  "answer_confidence": 0.6141,
+                  "action": {
+                    "act_probability": 1.0
+                  }
+                }
+              },
+              "errors": true,
+              "docs": true
+            }
+          }
+        },
+        {
+          "id": "archon2483",
+          "pr": {
+            "number": 2483,
+            "title": "fix: issue 2465",
+            "body": "Automated fix for issue $ARGUMENTS.\n\n## Assessment\n'The problem is real and exactly as described: TRUNCATION_MARKER_PATTERN is anchored at $/end-of-string, so any trailing whitespace breaks detection. Today only formatPersistedBashOutput produces this string and it returns `head + marker` with nothing appended, so no production path currently triggers the gap \u2014 but the coupling is invisible (normalising, line-ending conversion, or code-fence stripping anywhere downstream would silently revert the accurate '\\''output was clipped'\\'' advice to the generic '\\''producer emitted no JSON'\\'' advice, with no test failing). The fix is a one-word change (`output.trimEnd()`) that loses nothing \u2014 trailing whitespace after the marker can never be meaningful \u2014 and the property the function claims to guarantee ('\\''ends with the truncation marker'\\'') is restored. Adding a test that pins the trailing-whitespace case is trivial and turns the property from incidental to asserted. Worth doing now while the change is one line; the larger refactor (threading node_output_truncated onto NodeOutput) is only justified if another consumer needs the flag.'\n\n## Final review pass\n'BUILD-CLEAN'\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n  * Improved detection of truncated output when the truncation marker is followed by whitespace.\n\n* **Tests**\n  * Added coverage for marker formatting, byte counts, whitespace, quoted text, missing markers, and empty output.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+            "headRefOid": "d4fff8358afb27a613de02991496a7234caf74ce",
+            "baseRefOid": "ed4f6acdc1c16960039162ce6a91d418294155ec",
+            "url": "https://github.com/coleam00/Archon/pull/2483"
+          },
+          "state_sha256": "2888b46eee6fe65c284773d6a194e8b5eeb7eea5590bc28e2de9f4fb09405603",
+          "snapshot_sha256": "e03d4a01f1c3e8394f5bd9e5081336dda13530d438bc845df2e4103cd343c5a4",
+          "profiles": {
+            "split": {
+              "status": "input_rejected",
+              "requires_fallback": true,
+              "input_tokens": 0,
+              "reason": "full input exceeds configured budget or encoding differs"
+            },
+            "combined": {
+              "status": "input_rejected",
+              "requires_fallback": true,
+              "input_tokens": 0,
+              "reason": "input lost tokens or encoding changed; shorten inputs or review the pinned adapter"
+            }
+          }
+        },
+        {
+          "id": "archon3361",
+          "pr": {
+            "number": 3361,
+            "title": "fix(db): cast id to text in findWorkflowRunsByIdPrefix",
+            "body": "`findWorkflowRunsByIdPrefix` queries `... AND id LIKE $2`, but `id` is a **uuid** column. Postgres has no `uuid ~~ text` operator, so every call throws before comparing anything:\n\n```\noperator does not exist: uuid ~~ unknown\n```\n\nBecause it fails at the operator rather than while matching, it never matched **even a full, exact uuid**. So this isn't \"prefix lookup is broken\" \u2014 it's **run control is down**. Every id-taking `manage_run` action is unreachable:\n\n| action | works? |\n|---|---|\n| `list`, `start` | \u2705 \u2014 no id lookup |\n| `get`, `cancel`, `abandon`, `resume`, `approve`, `reject`, `respond` | \u274c all throw |\n\nThe human-gate `approve`/`reject` path is in there, which matters most for anything driving workflows programmatically.\n\n**Reproduced against a live 0.6.0 install, 2026-09-18.** `manage_run get` with a full UUID fails identically to an 8-char prefix \u2014 that symmetry is the tell that it's a type error, not a matching bug.\n\n## Fix\n\n`id::text LIKE $2`.\n\nInjection-safe: `idPrefix` is already constrained to the UUID charset by the guard immediately above (`/^[0-9a-fA-F-]+$/`), which is what keeps `%` and `_` out of wildcard territory. The cast doesn't widen that.\n\n## Not included\n\nNo test \u2014 this module's coverage is integration-style against a live Postgres and I had no way to run that suite. Happy to add one if you point me at the pattern.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai -->\n\n## Summary by CodeRabbit\n\n- **Bug Fixes**\n  - Fixed workflow run lookup by ID prefix.\n  - Workflow run actions such as viewing, canceling, resuming, approving, rejecting, and responding now work correctly when using prefixed IDs.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+            "headRefOid": "e44bba3e9016091c51ca7fe6d4b4d07ce99726ae",
+            "baseRefOid": "e237584d9c332fc492125bf9e0cb4756895f4da2",
+            "url": "https://github.com/coleam00/Archon/pull/3361"
+          },
+          "state_sha256": "f9d3d60ba2083ecd0a7c85e07413487941db881540ada785a9c93849e4bfc48d",
+          "snapshot_sha256": "d9b48aa4046916dc0685750788295f8540bd86b3e8d2c351aad6bd33c316bc94",
+          "profiles": {
+            "combined": {
+              "status": "input_rejected",
+              "requires_fallback": true,
+              "input_tokens": 0,
+              "reason": "input lost tokens or encoding changed; shorten inputs or review the pinned adapter"
+            },
+            "split": {
+              "status": "input_rejected",
+              "requires_fallback": true,
+              "input_tokens": 0,
+              "reason": "full input exceeds configured budget or encoding differs"
+            }
+          }
+        }
+      ],
+      "probe_sha256": "c974ea2f98141fb9368727ad03d73290114064d52dae4db096ee5e25c3eb4a05",
+      "execution": "Offline replay; repeat Archon invocation rejected by automatic approval"
+    }
+  },
+  "summaries": {
+    "base": {
+      "combined": {
+        "cases": 7,
+        "predicted": 3,
+        "rejected": 4,
+        "eligible": 0,
+        "encoder_input_tokens": 2197
+      },
+      "split": {
+        "cases": 7,
+        "predicted": 3,
+        "rejected": 4,
+        "eligible": 0,
+        "encoder_input_tokens": 4349
+      }
+    },
+    "typed": {
+      "combined": {
+        "cases": 7,
+        "predicted": 3,
+        "rejected": 4,
+        "eligible": 0,
+        "encoder_input_tokens": 2197
+      },
+      "split": {
+        "cases": 7,
+        "predicted": 3,
+        "rejected": 4,
+        "eligible": 0,
+        "encoder_input_tokens": 4349
+      }
+    }
+  },
+  "engine_receipt": {
+    "run_id": "c0022dac-e8d8-4eeb-877f-b3ac1b7a5047",
+    "workflow": "laya-review-base-verified",
+    "events": [
+      {
+        "type": "exec_output",
+        "step": "classify",
+        "exit_code": 0,
+        "stdout_tail": "{\"errors\": true, \"docs\": true, \"requires_fallback\": true, \"status\": \"predicted\"}",
+        "ts": "2026-09-30T06:28:43.080Z"
+      },
+      {
+        "type": "node_complete",
+        "step": "classify",
+        "duration_ms": 63555,
+        "ts": "2026-09-30T06:28:43.084Z"
+      },
+      {
+        "type": "exec_output",
+        "step": "resolve-scope",
+        "exit_code": 0,
+        "stdout_tail": "{\"errors\":\"true\"}",
+        "ts": "2026-09-30T06:28:43.207Z"
+      },
+      {
+        "type": "node_complete",
+        "step": "resolve-scope",
+        "duration_ms": 117,
+        "ts": "2026-09-30T06:28:43.207Z"
+      },
+      {
+        "type": "workflow_complete",
+        "ts": "2026-09-30T06:28:43.210Z"
+      }
+    ]
+  },
+  "deterministic_control": {
+    "policy": "Always enable both optional lenses",
+    "classifier_model_calls": 0,
+    "classifier_encoder_tokens": 0,
+    "scope": "Original resolver executed offline, no reviews performed",
+    "overrides": [
+      {
+        "forced": "auto",
+        "candidate": {
+          "errors": true,
+          "docs": true
+        },
+        "resolved": {
+          "errors": "true"
+        },
+        "seconds": 0.024148987999069504
+      },
+      {
+        "forced": "true",
+        "candidate": {
+          "errors": true,
+          "docs": true
+        },
+        "resolved": {
+          "errors": "true"
+        },
+        "seconds": 0.021962728002108634
+      },
+      {
+        "forced": "false",
+        "candidate": {
+          "errors": true,
+          "docs": true
+        },
+        "resolved": {
+          "errors": "false"
+        },
+        "seconds": 0.021570616008830257
+      }
+    ]
+  },
+  "load_check": [
+    {
+      "model": "convaiinnovations/laya",
+      "revision": "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851",
+      "loaded_head_matches_checkpoint": true,
+      "head_bias_first": [
+        -0.028961181640625,
+        0.0203857421875,
+        0.0511474609375,
+        0.040863037109375
+      ],
+      "answers": {
+        "scope": {
+          "type": "choice",
+          "choice": "both",
+          "probabilities": {
+            "neither": 0.2105,
+            "errors": 0.1256,
+            "docs": 0.3218,
+            "both": 0.3421
+          },
+          "confidence": 0.0475,
+          "answer_confidence": 0.3421,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "temperatures": [
+        1.6369030475616455,
+        1.2514300346374512,
+        1.983399510383606
+      ],
+      "temperature_by_options": {
+        "choice:3-5": 1.7601518630981445,
+        "choice:6-10": 1.0000158548355103,
+        "score:3-5": 1.2514300346374512,
+        "noul:2": 1.983399510383606,
+        "choice:11+": 0.5,
+        "choice:2": 1.9063563346862793
+      }
+    },
+    {
+      "model": "convaiinnovations/laya-typed-decisions",
+      "revision": "1a793eb568e6718f15941d08f85432581df534e3",
+      "loaded_head_matches_checkpoint": true,
+      "head_bias_first": [
+        -0.02862548828125,
+        0.0191650390625,
+        0.051727294921875,
+        0.041473388671875
+      ],
+      "answers": {
+        "scope": {
+          "type": "choice",
+          "choice": "both",
+          "probabilities": {
+            "neither": 0.1499,
+            "errors": 0.1746,
+            "docs": 0.3162,
+            "both": 0.3592
+          },
+          "confidence": 0.0471,
+          "answer_confidence": 0.3592,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "temperatures": [
+        1.0148024559020996,
+        1.0374259948730469,
+        1.0575125217437744
+      ],
+      "temperature_by_options": {
+        "choice:3-5": 1.7601518630981445,
+        "choice:6-10": 1.0000158548355103,
+        "score:3-5": 1.2514300346374512,
+        "noul:2": 1.983399510383606,
+        "choice:11+": 0.5,
+        "choice:2": 1.9063563346862793
+      }
+    }
+  ],
+  "limitations": [
+    "Five size-selected new public examples plus two previously examined examples; not a maintainer-labelled holdout.",
+    "Probability threshold is a diagnostic, not a calibrated correctness guarantee.",
+    "Base compared through Archon; typed follow-up replay offline after automatic title-provider export was rejected.",
+    "Archon independently attempted Claude title generation and failed authentication. No classifier provider call, but end-to-end external-call absence is not claimed.",
+    "Observed Bun1.4.0, pinned Archon requires1.4.2.",
+    "Timings exclude initial downloads, development retries and unused preliminary runs; no throughput or full-delivery saving measured."
+  ]
+}

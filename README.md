@@ -423,6 +423,11 @@ Instrument your tokens on day one. Start with one small issue and watch the mode
 calls before enabling a loop. Use medium models for routine work and large models
 where the workflow needs the extra reasoning.
 
+For an optional local decision-model experiment, see the
+[Laya routing benchmark](experiments/laya/README.md). It compares compact and
+detailed prompts with accuracy and token accounting; it does not change the
+factory's shared workflows or establish end-to-end savings.
+
 ---
 
 ## Layout

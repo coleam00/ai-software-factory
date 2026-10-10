@@ -1,0 +1,2 @@
+# Keep optional model dependencies out of the factory installer.
+laya==0.3.21
