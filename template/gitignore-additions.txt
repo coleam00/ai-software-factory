@@ -5,6 +5,7 @@ __pycache__/
 .factory/consumer.json
 .factory/backup/
 .factory/STOP
+.factory/PAUSE
 .factory/schedule.log
 .factory/schedule-task.xml
 .factory/trigger.json

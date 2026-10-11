@@ -264,6 +264,9 @@ python factory/consumer.py halt
 
 `halt` blocks new launches and continuations. Cancel an active run explicitly;
 `unhalt` allows launches again. Runtime-host runs stay in the foreground.
+`pause` only stops the timer from starting laps: it keeps waking runs that wait on CI,
+and explicit `run` commands still launch. `unpause` resumes scheduled launches. Use it
+instead of disabling the host timer, which would leave an in-flight lap paused forever.
 
 After the first successful lap, ask your agent to configure
 `.factory/schedule.json` with a shared workflow and its inputs, then:

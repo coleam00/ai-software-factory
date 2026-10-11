@@ -228,6 +228,28 @@ class ConsumerTests(Fixture):
         self.assertIn("Local STOP is set", result.stderr)
         self.assertEqual(self.calls()[before:], [])
 
+    def test_pause_stops_scheduled_launches_but_keeps_waking_active_runs(self):
+        # Seen live: disabling the timer to queue an explicit lap stranded a lap already paused
+        # on CI, because the same tick that fires launches also wakes durable waits.
+        (self.app / ".factory/schedule.json").write_text(
+            json.dumps({"workflow": "archon-lifecycle", "inputs": {}}))
+        self.assertEqual(self.command("schedule", "install").returncode, 0)
+        self.assertEqual(self.command("pause").returncode, 0)
+        before = len(self.calls())
+        result = self.command("schedule", "fire")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Scheduled launches paused", result.stderr)
+        self.assertEqual([row[:2] for row in self.calls()[before:]], [["workflow", "wake"]])
+        # An explicit run is the operator's own launch and is not paused.
+        before = len(self.calls())
+        self.command("run", "archon-lifecycle", "--input", "target=7")
+        self.assertIn(["workflow", "run"], [row[:2] for row in self.calls()[before:]])
+        self.assertEqual(self.command("unpause").returncode, 0)
+        before = len(self.calls())
+        self.assertEqual(self.command("schedule", "fire").returncode, 0)
+        self.assertEqual([row[:2] for row in self.calls()[before:]],
+                         [["trigger", "fire"], ["workflow", "wake"]])
+
     def test_windows_timer_is_a_hidden_logged_on_task_without_a_console(self):
         import xml.etree.ElementTree as ET
         with patch.object(consumer.sys, "platform", "win32"), \

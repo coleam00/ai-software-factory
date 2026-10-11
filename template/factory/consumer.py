@@ -17,6 +17,7 @@ SETTINGS = ".factory/consumer.json"
 ENTRY = "packages/cli/src/cli.ts"
 SCHEDULE = ".factory/schedule.json"
 TRIGGER = ".factory/trigger.json"
+PAUSE = ".factory/PAUSE"
 # The shared workflows that carry a merge gate and accept a declared required-check policy.
 MERGING_WORKFLOWS = {"archon-lifecycle", "archon-merge-queue"}
 
@@ -278,7 +279,7 @@ def invoke(root: Path, action: str, args: list[str]) -> int:
     if action == "schedule":
         return schedule(root, args)
     if action not in {"run", "list", "get", "status", "approve", "reject", "respond",
-                      "cancel", "resume", "doctor", "halt", "unhalt"}:
+                      "cancel", "resume", "doctor", "halt", "unhalt", "pause", "unpause"}:
         raise ValueError(f"Unknown command '{action}'. Run factory --help for the commands.")
     stop = shared_root(root) / ".factory/STOP"
     if action in {"halt", "unhalt"}:
@@ -290,6 +291,21 @@ def invoke(root: Path, action: str, args: list[str]) -> int:
         else:
             stop.unlink(missing_ok=True)
         print("Local launch brake " + ("set. Active runs require cancel <run-id>." if action == "halt" else "cleared."))
+        return 0
+    if action in {"pause", "unpause"}:
+        # Launch-only: the timer stops starting laps but keeps waking durable waits, so a lap
+        # already in flight (paused on CI, a usage limit) still finishes. Disabling the host
+        # timer instead strands it; halt blocks its continuation by design.
+        if args:
+            raise ValueError(f"{action} takes no arguments")
+        pause = shared_root(root) / PAUSE
+        if action == "pause":
+            pause.parent.mkdir(parents=True, exist_ok=True)
+            pause.write_text("Operator paused scheduled launches; wakes continue.\n", encoding="utf-8")
+        else:
+            pause.unlink(missing_ok=True)
+        print("Scheduled launches " + ("paused. The timer still wakes active runs; explicit runs still launch."
+                                       if action == "pause" else "resumed."))
         return 0
     for arg in args:
         if arg.split("=", 1)[0] in {"--cwd", "--workflow-source"}:
@@ -517,8 +533,13 @@ def schedule(root: Path, args: list[str]) -> int:
             if log:
                 log.write(f"=== schedule fire {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
                 log.flush()
-            fired = execute([*native, "trigger", "fire", "--config", str(config_path)], root,
-                            capture=False, timeout=None, output=log).returncode
+            if (shared_root(root) / PAUSE).exists():
+                fired = 0
+                message = "Scheduled launches paused; no trigger fired, waking only. Use unpause to resume.\n"
+                (log.write if log else sys.stderr.write)(message)
+            else:
+                fired = execute([*native, "trigger", "fire", "--config", str(config_path)], root,
+                                capture=False, timeout=None, output=log).returncode
             # Resume due durable waits (CI pauses, usage-limit resumes) in the same tick.
             woken = execute([*native, "workflow", "wake"], root, capture=False, timeout=None,
                             output=log).returncode
@@ -551,7 +572,8 @@ def main(argv: list[str] | None = None) -> int:
               "factory schedule install [--interval <seconds>] [--apply] | fire | remove [--apply] | status\n"
               "factory list | doctor | status | get <run-id>\n"
               "factory approve | reject | respond | cancel | resume <run-id>\n"
-              "factory halt | unhalt (local launch brake only)")
+              "factory halt | unhalt (local launch brake only)\n"
+              "factory pause | unpause (stop scheduled launches; the timer keeps waking active runs)")
         return 0
     try:
         return invoke(project_root(), args[0], args[1:])
