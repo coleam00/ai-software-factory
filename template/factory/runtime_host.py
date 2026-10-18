@@ -130,7 +130,10 @@ class Environments:
         self.stopping = stopping
         self.base = Path(tempfile.mkdtemp(prefix="factory-runtime-"))
         self.active = {}
-        self.used_ports = set()
+        # port -> monotonic allocation time. Freed ports become reusable after a cooldown,
+        # so a long-lived owner does not exhaust the pool; a just-torn-down port stays
+        # reserved while the OS releases its sockets.
+        self.used_ports = {}
 
     def teardown(self, slot):
         item = self.active.get(slot)
@@ -199,12 +202,15 @@ class Environments:
                 if not find or find == replace or body.count(find) != 1:
                     raise ValueError("mutation requires a unique changing anchor")
                 target.write_bytes(body.replace(find, replace, 1))
+            now = time.monotonic()
+            self.used_ports = {port: taken for port, taken in self.used_ports.items()
+                               if now - taken <= 120}
             for _ in range(100):
                 with socket.socket() as lease:
                     lease.bind(("127.0.0.1", 0))
                     port = lease.getsockname()[1]
                 if port not in self.used_ports:
-                    self.used_ports.add(port)
+                    self.used_ports[port] = now
                     break
             else:
                 raise ValueError("cannot allocate a fresh target")

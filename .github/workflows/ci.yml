@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    # This repo's whole thesis is trusting merges through gates; these are its own.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.12" }
+          - { os: ubuntu-latest, python: "3.10" }
+          - { os: windows-latest, python: "3.12" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Consumer audit (no shipped workflows, no shell execution in the runtime host)
+        run: python bin/audit.py
+      - name: Consumer boundary tests (scheduling, launch gate, budgets, install)
+        run: python -X utf8 bin/test_consumer.py
+      - name: Runtime resource tests
+        run: python -X utf8 bin/test_runtime_resource.py
+      - name: Runtime host ownership tests
+        run: python -X utf8 bin/test_runtime_host.py
+      - name: Mutation selfcheck (guard mutations are caught by the suites above)
+        run: python bin/selfcheck-mutations.py
+
+  pin-conformance:
+    # Validate that the pinned Archon revision in pack.json still satisfies every
+    # contract this consumer assumes. Skipped everywhere by default; here it runs.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: oven-sh/setup-bun@v2
+      - name: Clone and install the pinned Archon source
+        run: |
+          revision=$(python -c "import json; print(json.load(open('template/factory/pack.json'))['integration_revision_required'])")
+          git clone --no-hardlinks https://github.com/coleam00/Archon "$revision"
+          git -C "$revision" checkout --detach "$revision"
+          bun install --frozen-lockfile --cwd "$revision"
+          echo "FACTORY_ARCHON_CONFORMANCE_SOURCE=$GITHUB_WORKSPACE/$revision" >> "$GITHUB_ENV"
+      - name: Conformance tests against the pin
+        run: python -X utf8 bin/test_consumer.py SourceConformanceTests

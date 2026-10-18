@@ -16,7 +16,9 @@ The installer selects the shared Archon source revision automatically.
    `python factory/consumer.py list`, then explain anything still missing.
 5. Watch one small issue go to a PR with `archon-ship`. For the full sequence,
    use `archon-lifecycle` with the prepared runtime/holdout inputs and merge approval.
-6. Inspect the result before asking the agent to configure scheduling.
+6. Inspect the result before asking the agent to configure scheduling. Before leaving
+   the loop unattended, set lap ceilings in `schedule.json` ([budgeting](budgeting.md));
+   the default is unlimited.
 
 The current integration still needs live end-to-end validation. Installation checks
 alone do not prove a successful factory run.

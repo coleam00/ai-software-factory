@@ -74,7 +74,23 @@ fi
 
 say "Claude Code"
 if ! [ -x "$HOME/.local/bin/claude" ]; then
-  curl -fsSL https://claude.ai/install.sh | bash >/dev/null
+  # Agent CLIs are optional rather than bootstrap-critical: a failed install warns and
+  # the report below says NOT INSTALLED, instead of aborting the whole bootstrap.
+  curl -fsSL https://claude.ai/install.sh | bash >/dev/null \
+    || echo "WARN: Claude Code install failed; continuing without it" >&2
+fi
+
+say "node from NodeSource (Ubuntu's apt node is too old for modern agent CLIs)"
+if ! command -v node >/dev/null 2>&1 \
+    || [ "$(node -p 'parseInt(process.versions.node)' 2>/dev/null || echo 0)" -lt 18 ]; then
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null
+  apt-get install -y -qq nodejs >/dev/null
+fi
+
+say "Codex (OpenAI)"
+if ! command -v codex >/dev/null 2>&1; then
+  npm install -g @openai/codex \
+    || echo "WARN: codex install failed; continuing without it" >&2
 fi
 
 say "Codex (OpenAI): node from apt, then the CLI"

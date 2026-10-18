@@ -32,6 +32,11 @@
     "  - an element that stays visible       (the hide is removed; the data is right)",
     "  - a computed dimension pinned         (a width hardcoded, not derived)",
     "",
+    "NOTE: the shipped harness drivers (harness/appproc.py) reach http, cli and library",
+    "surfaces only. Screen-shaped defects need browser-based verification, which the",
+    "shared runtime verification must be wired up to provide; this scaffold's own gate",
+    "cannot see them.",
+    "",
     "READ WHICH RUNG CAUGHT EACH ONE. If every line says 'by unit', the set is not",
     "finished: add one only an end-to-end assertion would notice, and one only the",
     "holdout would."

@@ -15,20 +15,9 @@ CONFIG = json.loads((HERE / "harness.config.json").read_text(encoding="utf-8"))
 def unquote(token: str) -> str:
     """Take one layer of matching surrounding quotes off a token.
 
-    Commands are split with `posix=False`, which is right on Windows because it
-    leaves backslashes in paths alone -- and wrong in that it leaves the QUOTES
-    attached to every token it split.
-
-    That was applied to argv[0] only, and the consequence on the rest was severe:
-    `python -c "import app"` arrived as the three tokens
-    `python`, `-c`, `"import app"`, so Python evaluated the STRING LITERAL
-    `"import app"` and exited 0. Measured: `python -c "import
-    definitely_not_a_module"` also exits 0. The library driver's import check --
-    the entire evidence behind `APP_STARTED driver=library` -- could not fail.
-    The Node equivalent this shipped later had exactly the same hole.
-
-    Stripping every token is what posix mode would have done, without giving up
-    the backslashes.
+    posix=False splitting (right on Windows because it keeps backslashes) leaves the
+    quotes attached to every token. See harness/appproc.py unquote() for the measured
+    cost of stripping them off argv[0] only: an import check that could not fail.
     """
     if len(token) > 1 and token[0] == token[-1] and token[0] in "\"'":
         return token[1:-1]

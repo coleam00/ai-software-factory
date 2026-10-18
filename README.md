@@ -24,6 +24,25 @@ Archon workflows handle every agent, from triage through verification and merge.
 
 ---
 
+## Quick start
+
+Already have the prerequisites (git, Python 3.10+, `gh` with the `workflow` scope,
+a coding agent, `bun`, `uv`)? This is the whole install, from your application repo:
+
+```bash
+git clone https://github.com/coleam00/ai-software-factory ~/ai-software-factory
+python ~/ai-software-factory/bin/factory.py init
+python factory/consumer.py doctor
+python factory/consumer.py run archon-ship \
+  --input target=https://github.com/OWNER/REPO/issues/1 --detach --json
+```
+
+The recommended path is still the setup prompt below: it also writes the three files
+only you can write. Watch that first issue become a PR before scheduling anything, and
+set lap budgets before leaving the loop unattended ([docs/budgeting.md](docs/budgeting.md)).
+
+---
+
 ## Set it up
 
 Paste this to your coding agent, in the repo you want the factory in:
@@ -308,6 +327,24 @@ writes each tick's output to `.factory/schedule.log`. On Linux it is a systemd u
 runtime host. Run the host as its own service instead (`python factory/runtime_host.py
 serve`) and point the scenarios at its connection file.
 
+**Budgeting.** An unattended loop spends tokens on every lap. The default is unlimited;
+before you leave it running, set rolling lap ceilings in `.factory/schedule.json`:
+
+```json
+{
+  "workflow": "archon-loop",
+  "inputs": {},
+  "budget": { "max_laps_per_hour": 2, "max_laps_per_day": 20 }
+}
+```
+
+Both keys are optional rolling windows over laps the scheduled workflow started; omit
+`budget` (or set a key to `"unlimited"`) for no ceiling. A tick at or over a ceiling
+starts no lap and says so in `.factory/schedule.log`; the ceiling reopens by itself
+when the window rolls. Manual `factory run` launches are the operator's own and are
+never budget-blocked. [`docs/budgeting.md`](docs/budgeting.md) maps every place a
+ceiling can or should live, including the ones only Archon or the provider can enforce.
+
 **Merge policy.** Free private GitHub repositories cannot report branch protection, so
 the merge queue needs the project to say which CI checks a merge requires. Set
 `required_checks` in `harness/harness.config.json` to the CI job names (for example
@@ -453,6 +490,7 @@ template/                    what init copies into your repo
   harness/                   project checks and END-TO-END.md
 docs/first-hour.md            what to do after setup
 docs/server-cheat-sheet.md    every prompt for a server install, in order
+docs/budgeting.md             lap ceilings, and every place a spend cap can live
 docs/incidents.md             historical failures and lessons
 ```
 
