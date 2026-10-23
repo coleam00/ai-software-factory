@@ -51,7 +51,7 @@ Archon source, including the shared workflows; you do not need to check out Arch
 or merge its PRs yourself.
 
 **Current status:** the default pins exact Archon revision
-`120f3e040f45c0ad88249601d846e414f4bf438b` on the `factory/sdlc-on-dev` branch (Archon
+`1cf9c3f0f6f10301351addb35517ca4fd5879b09` on the `factory/sdlc-on-dev` branch (Archon
 dev plus the SDLC pack's factory workflows). `archon-loop` is the recommended scheduled workflow: each lap picks one move and routes it to an in-loop builder or to `archon-ship`, then a black-box app check (tested on the merge with the default branch, with probes, a defects-seen record and evidence the next step verifies by script) and a reviewer decide, and a deterministic merge gate merges only what that record supports; the scheduler starts a lap only when there is workable work for it; `archon-manager` steps back on a slower schedule and also keeps the loop itself healthy (runs that never started, runs that failed on infrastructure, leftover app instances, empty laps). Its pack also supports dependency-aware intake,
 reviewed delivery, scoped validation reuse, runtime and optional holdout verification,
 bounded repair, discovery handling, a merge queue that reads required checks and protected paths and seals its plan by script,
