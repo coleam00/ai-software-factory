@@ -1,0 +1,17 @@
+{
+  "$comment": "Project recipe for drive.mjs: fill in the login steps of YOUR app. drive.mjs is generic; only this file changes between repositories. Selectors are Playwright locators. $user and $password are substituted; 'optional' steps may fail silently (for identity providers that ask for the password on a second page).",
+  "viewport": { "width": 1280, "height": 800 },
+  "password": "$user",
+  "login": {
+    "path": "/login",
+    "steps": [
+      { "fill": "input[name=username], #username", "value": "$user" },
+      { "fill": "input[name=password], #password", "value": "$password" },
+      { "click": "button[type=submit]" }
+    ],
+    "done": { "urlNot": "/login" }
+  },
+  "themes": {
+    "dark": { "localStorage": { "theme": "dark" }, "reload": true }
+  }
+}

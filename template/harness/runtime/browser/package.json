@@ -1,0 +1,9 @@
+{
+  "name": "harness-browser-driver",
+  "private": true,
+  "description": "Browser driver for the factory's test drive: real login, screenshots, scripted drives. Project specifics live in browser.config.json.",
+  "type": "module",
+  "dependencies": {
+    "playwright": "1.63.0"
+  }
+}
