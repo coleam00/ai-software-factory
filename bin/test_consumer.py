@@ -124,44 +124,42 @@ class Fixture(unittest.TestCase):
 
 
 class ConsumerTests(Fixture):
-    def test_factory_state_labels_default_only_for_declaring_workflows(self):
-        expected = consumer.MANIFEST["default_inputs"]["archon-triage"]["state_labels"]
-        for workflow in ("archon-triage", "archon-ship", "archon-lifecycle"):
+    def test_factory_holdout_default_only_for_declaring_workflows(self):
+        expected = consumer.MANIFEST["default_inputs"]["archon-manager"]["holdout"]
+        for workflow in ("archon-loop", "archon-manager", "archon-holdouts"):
             with self.subTest(workflow=workflow):
                 result = self.command("run", workflow, "--json")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 argv = json.loads(result.stdout)["argv"]
                 self.assertEqual(argv.count("--input"), 1)
-                self.assertEqual(argv.count("state_labels=" + expected), 1)
-                self.assertFalse(any(arg.startswith(("publish=", "publish_holds="))
-                                     for arg in argv))
+                self.assertEqual(argv.count("holdout=" + expected), 1)
         result = self.command("run", "archon-backlog", "--json")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse(any(arg.startswith("state_labels=") for arg in json.loads(result.stdout)["argv"]))
+        self.assertFalse(any(arg.startswith("holdout=") for arg in json.loads(result.stdout)["argv"]))
 
-    def test_explicit_state_labels_override_defaults_in_both_flag_forms(self):
-        for input_args in (("--input", "state_labels={}"),
-                           ("--input=state_labels={}",)):
+    def test_explicit_inputs_override_defaults_in_both_flag_forms(self):
+        for input_args in (("--input", "holdout=elsewhere.md"),
+                           ("--input=holdout=elsewhere.md",)):
             with self.subTest(input_args=input_args):
-                result = self.command("run", "archon-ship", *input_args, "--json")
+                result = self.command("run", "archon-manager", *input_args, "--json")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 argv = json.loads(result.stdout)["argv"]
                 values = [argv[index + 1] for index, arg in enumerate(argv[:-1])
                           if arg == "--input"]
                 values += [arg.removeprefix("--input=") for arg in argv
                            if arg.startswith("--input=")]
-                self.assertEqual(values, ["state_labels={}"])
+                self.assertEqual(values, ["holdout=elsewhere.md"])
 
     def test_defaults_do_not_enter_messages_or_native_continuations(self):
-        result = self.command("run", "archon-ship", "--", "--input", "state_labels={}")
+        result = self.command("run", "archon-manager", "--", "--input", "holdout=x")
         self.assertEqual(result.returncode, 0, result.stderr)
         argv = json.loads(result.stdout)["argv"]
-        self.assertEqual(argv[argv.index("--") + 1:], ["--input", "state_labels={}"])
-        self.assertIn("state_labels=" + consumer.MANIFEST["default_inputs"]["archon-ship"]["state_labels"], argv)
-        result = self.command("run", "archon-ship", "--resume", "--json")
+        self.assertEqual(argv[argv.index("--") + 1:], ["--input", "holdout=x"])
+        self.assertIn("holdout=" + consumer.MANIFEST["default_inputs"]["archon-manager"]["holdout"], argv)
+        result = self.command("run", "archon-manager", "--resume", "--json")
         self.assertEqual(result.returncode, 0, result.stderr)
         argv = json.loads(result.stdout)["argv"]
-        self.assertFalse(any(arg.startswith("state_labels=") for arg in argv))
+        self.assertFalse(any(arg.startswith("holdout=") for arg in argv))
         self.assertNotIn("--workflow-source", argv)
 
     def trigger_binding(self):
@@ -169,36 +167,36 @@ class ConsumerTests(Fixture):
 
     def test_scheduled_defaults_and_explicit_empty_mapping(self):
         schedule = self.app / ".factory/schedule.json"
-        schedule.write_text(json.dumps({"workflow": "archon-lifecycle", "inputs": {}}))
+        schedule.write_text(json.dumps({"workflow": "archon-manager", "inputs": {}}))
         result = self.command("schedule", "install")
         self.assertEqual(result.returncode, 0, result.stderr)
-        expected = consumer.MANIFEST["default_inputs"]["archon-lifecycle"]["state_labels"]
+        expected = consumer.MANIFEST["default_inputs"]["archon-manager"]["holdout"]
         binding = self.trigger_binding()
-        self.assertEqual(binding["launch"]["inputs"]["state_labels"], expected)
-        self.assertEqual(binding["launch"]["workflowName"], "archon-lifecycle")
+        self.assertEqual(binding["launch"]["inputs"]["holdout"], expected)
+        self.assertEqual(binding["launch"]["workflowName"], "archon-manager")
         self.assertEqual(binding["launch"]["cwd"], str(self.app))
         self.assertEqual(binding["runAsUserId"], "user-123")
-        self.assertEqual(binding["resource"], "github:owner/repo:archon-lifecycle")
+        self.assertEqual(binding["resource"], "github:owner/repo:archon-manager")
         self.assertEqual(binding["capacity"], 1)
         self.assertEqual(binding["overlap"], "skip")
-        schedule.write_text(json.dumps({"workflow": "archon-lifecycle",
-                                        "inputs": {"state_labels": {}}}))
+        schedule.write_text(json.dumps({"workflow": "archon-manager",
+                                        "inputs": {"holdout": ""}}))
         result = self.command("schedule", "install")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.trigger_binding()["launch"]["inputs"]["state_labels"], "{}")
+        self.assertEqual(self.trigger_binding()["launch"]["inputs"]["holdout"], "")
 
     def test_parallel_laps_get_their_own_slot_with_that_capacity(self):
         schedule = self.app / ".factory/schedule.json"
-        schedule.write_text(json.dumps({"workflow": "archon-lifecycle", "inputs": {}, "parallel": 3}))
+        schedule.write_text(json.dumps({"workflow": "archon-manager", "inputs": {}, "parallel": 3}))
         result = self.command("schedule", "install")
         self.assertEqual(result.returncode, 0, result.stderr)
         binding = self.trigger_binding()
         self.assertEqual(binding["capacity"], 3)
         # A slot's capacity is fixed once used, so the key names it.
-        self.assertEqual(binding["resource"], "github:owner/repo:archon-lifecycle:x3")
+        self.assertEqual(binding["resource"], "github:owner/repo:archon-manager:x3")
         for bad in (0, 9, "3", True, 2.5):
             with self.subTest(parallel=bad):
-                schedule.write_text(json.dumps({"workflow": "archon-lifecycle", "inputs": {},
+                schedule.write_text(json.dumps({"workflow": "archon-manager", "inputs": {},
                                                 "parallel": bad}))
                 result = self.command("schedule", "install")
                 self.assertNotEqual(result.returncode, 0)
@@ -217,7 +215,7 @@ class ConsumerTests(Fixture):
 
     def test_schedule_install_writes_the_binding_but_never_registers_a_timer_unasked(self):
         (self.app / ".factory/schedule.json").write_text(
-            json.dumps({"workflow": "archon-lifecycle", "inputs": {}}))
+            json.dumps({"workflow": "archon-manager", "inputs": {}}))
         result = self.command("schedule", "install", "--interval", "600")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Run to enable:", result.stdout)
@@ -231,7 +229,7 @@ class ConsumerTests(Fixture):
 
     def test_schedule_fire_fires_then_wakes_and_honors_stop(self):
         (self.app / ".factory/schedule.json").write_text(
-            json.dumps({"workflow": "archon-lifecycle", "inputs": {}}))
+            json.dumps({"workflow": "archon-manager", "inputs": {}}))
         self.assertEqual(self.command("schedule", "install").returncode, 0)
         before = len(self.calls())
         result = self.command("schedule", "fire")
@@ -256,7 +254,7 @@ class ConsumerTests(Fixture):
         # Seen live: disabling the timer to queue an explicit lap stranded a lap already paused
         # on CI, because the same tick that fires launches also wakes durable waits.
         (self.app / ".factory/schedule.json").write_text(
-            json.dumps({"workflow": "archon-lifecycle", "inputs": {}}))
+            json.dumps({"workflow": "archon-manager", "inputs": {}}))
         self.assertEqual(self.command("schedule", "install").returncode, 0)
         self.assertEqual(self.command("pause").returncode, 0)
         before = len(self.calls())
@@ -267,7 +265,7 @@ class ConsumerTests(Fixture):
                          [["workflow", "wake"]])
         # An explicit run is the operator's own launch and is not paused.
         before = len(self.calls())
-        self.command("run", "archon-lifecycle", "--input", "target=7")
+        self.command("run", "archon-manager", "--input", "target=7")
         self.assertIn(["workflow", "run"], [row[:2] for row in self.calls()[before:]])
         self.assertEqual(self.command("unpause").returncode, 0)
         before = len(self.calls())
@@ -303,7 +301,7 @@ class ConsumerTests(Fixture):
         # Seen live: with no base known, each launch ran ls-remote; a failed one left the
         # run pending with its slot held for hours.
         schedule = self.app / ".factory/schedule.json"
-        schedule.write_text(json.dumps({"workflow": "archon-lifecycle", "inputs": {}}))
+        schedule.write_text(json.dumps({"workflow": "archon-manager", "inputs": {}}))
         result = self.command("schedule", "install")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.trigger_binding()["launch"]["isolation"], {"kind": "default"})
@@ -316,11 +314,11 @@ class ConsumerTests(Fixture):
         self.assertEqual(self.trigger_binding()["launch"]["isolation"],
                          {"kind": "worktree", "baseOverride": "trunk"})
         self.assertIn("Laps start from trunk.", result.stdout)
-        schedule.write_text(json.dumps({"workflow": "archon-lifecycle", "inputs": {},
+        schedule.write_text(json.dumps({"workflow": "archon-manager", "inputs": {},
                                         "base_branch": "release/2"}))
         self.assertEqual(self.command("schedule", "install").returncode, 0)
         self.assertEqual(self.trigger_binding()["launch"]["isolation"]["baseOverride"], "release/2")
-        schedule.write_text(json.dumps({"workflow": "archon-lifecycle", "inputs": {},
+        schedule.write_text(json.dumps({"workflow": "archon-manager", "inputs": {},
                                         "base_branch": "bad name"}))
         self.assertNotEqual(self.command("schedule", "install").returncode, 0)
 
@@ -335,7 +333,7 @@ class ConsumerTests(Fixture):
 
     def test_a_tick_that_finds_a_launch_in_progress_skips_it_but_still_wakes(self):
         (self.app / ".factory/schedule.json").write_text(
-            json.dumps({"workflow": "archon-lifecycle", "inputs": {}}))
+            json.dumps({"workflow": "archon-manager", "inputs": {}}))
         self.assertEqual(self.command("schedule", "install").returncode, 0)
         before = len(self.calls())
         with consumer.single_flight(self.app / ".factory/fire.lock") as held:
@@ -384,23 +382,23 @@ class ConsumerTests(Fixture):
         harness = self.app / "harness/harness.config.json"
         harness.parent.mkdir(parents=True, exist_ok=True)
         harness.write_text(json.dumps({"unit": "", "required_checks": "tests"}))
-        for workflow in ("archon-lifecycle", "archon-merge-queue"):
+        for workflow in ("archon-merge-queue",):
             with self.subTest(workflow=workflow):
                 result = self.command("run", workflow, "--json")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(result.stdout)["argv"].count("required_checks=tests"), 1)
-        result = self.command("run", "archon-ship", "--json")
+        result = self.command("run", "archon-backlog", "--json")
         self.assertFalse(any(arg.startswith("required_checks=")
                              for arg in json.loads(result.stdout)["argv"]))
-        result = self.command("run", "archon-lifecycle", "--input", "required_checks=none", "--json")
+        result = self.command("run", "archon-merge-queue", "--input", "required_checks=none", "--json")
         argv = json.loads(result.stdout)["argv"]
         self.assertEqual([a for a in argv if a.startswith("required_checks=")], ["required_checks=none"])
         (self.app / ".factory/schedule.json").write_text(
-            json.dumps({"workflow": "archon-lifecycle", "inputs": {}}))
+            json.dumps({"workflow": "archon-merge-queue", "inputs": {}}))
         self.assertEqual(self.command("schedule", "install").returncode, 0)
         self.assertEqual(self.trigger_binding()["launch"]["inputs"]["required_checks"], "tests")
         harness.write_text(json.dumps({"unit": "", "required_checks": ""}))
-        result = self.command("run", "archon-lifecycle", "--json")
+        result = self.command("run", "archon-merge-queue", "--json")
         self.assertFalse(any(arg.startswith("required_checks=")
                              for arg in json.loads(result.stdout)["argv"]))
 
@@ -411,35 +409,40 @@ class ConsumerTests(Fixture):
         # PowerShell's ConvertTo-Json writes a byte-order mark; it must not hide the policy.
         harness.write_text("﻿" + json.dumps(
             {"unit": "", "required_checks": "tests", "protected_paths": paths}), encoding="utf-8")
-        for workflow in ("archon-lifecycle", "archon-merge-queue"):
+        for workflow in ("archon-merge-queue",):
             with self.subTest(workflow=workflow):
                 result = self.command("run", workflow, "--json")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 argv = json.loads(result.stdout)["argv"]
                 self.assertEqual(argv.count(f"protected_paths={paths}"), 1)
                 self.assertEqual(argv.count("required_checks=tests"), 1)
-        result = self.command("run", "archon-ship", "--json")
+        # The loop's merge gate refuses owner-only files; it takes no required-check policy.
+        result = self.command("run", "archon-loop", "--json")
+        argv = json.loads(result.stdout)["argv"]
+        self.assertEqual(argv.count(f"protected_paths={paths}"), 1)
+        self.assertFalse(any(arg.startswith("required_checks=") for arg in argv))
+        result = self.command("run", "archon-backlog", "--json")
         self.assertFalse(any(arg.startswith("protected_paths=")
                              for arg in json.loads(result.stdout)["argv"]))
-        result = self.command("run", "archon-lifecycle", "--input", "protected_paths=none", "--json")
+        result = self.command("run", "archon-merge-queue", "--input", "protected_paths=none", "--json")
         argv = json.loads(result.stdout)["argv"]
         self.assertEqual([a for a in argv if a.startswith("protected_paths=")], ["protected_paths=none"])
         (self.app / ".factory/schedule.json").write_text(
-            json.dumps({"workflow": "archon-lifecycle", "inputs": {}}))
+            json.dumps({"workflow": "archon-merge-queue", "inputs": {}}))
         self.assertEqual(self.command("schedule", "install").returncode, 0)
         self.assertEqual(self.trigger_binding()["launch"]["inputs"]["protected_paths"], paths)
         harness.write_text(json.dumps({"unit": "", "protected_paths": " "}))
-        result = self.command("run", "archon-lifecycle", "--json")
+        result = self.command("run", "archon-merge-queue", "--json")
         self.assertFalse(any(arg.startswith("protected_paths=")
                              for arg in json.loads(result.stdout)["argv"]))
 
     def test_runtime_host_detach_and_resume_refused_before_native_launch(self):
         for args in [("--detach",), ("--detach=true",), ("-d",), ("--resume",)]:
-            result = self.command("run", "archon-ship", "--runtime-host", "missing.json", *args)
+            result = self.command("run", "archon-ship-block", "--runtime-host", "missing.json", *args)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("ownership contract", result.stderr)
         self.assertEqual(self.calls(), [])
-        result = self.command("run", "archon-ship", "--detach", "--json")
+        result = self.command("run", "archon-ship-block", "--detach", "--json")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--detach", json.loads(result.stdout)["argv"])
 
@@ -452,7 +455,7 @@ class ConsumerTests(Fixture):
             "health_path": "/health", "identity_path": "/identity", "timeout_s": 5}))
         output = self.base / "host-result.json"
         for rc in (0, 23):
-            result = self.command("run", "archon-ship", "--runtime-host", str(config), "--json",
+            result = self.command("run", "archon-ship-block", "--runtime-host", str(config), "--json",
                 env={"FACTORY_TEST_HOST_RESULT": str(output), "FACTORY_TEST_EXIT": str(rc)})
             self.assertEqual(result.returncode, rc, result.stderr)
             argv = json.loads(result.stdout)["argv"]
@@ -465,7 +468,7 @@ class ConsumerTests(Fixture):
         schedule = self.app / ".factory/schedule.json"
         for host in ("runtime.json", "", None, False, 0, [], {}):
             with self.subTest(runtime_host=host):
-                schedule.write_text(json.dumps({"workflow": "archon-ship", "inputs": {},
+                schedule.write_text(json.dumps({"workflow": "archon-ship-block", "inputs": {},
                                                 "runtime_host": host}))
                 result = self.command("schedule", "install")
                 self.assertNotEqual(result.returncode, 0)
@@ -511,7 +514,7 @@ class ConsumerTests(Fixture):
             "identity": "",
         }
         schedule = self.app / ".factory/schedule.json"
-        schedule.write_text(json.dumps({"workflow": "archon-lifecycle", "inputs": scheduled_inputs}))
+        schedule.write_text(json.dumps({"workflow": "archon-manager", "inputs": scheduled_inputs}))
         scheduled = self.command("schedule", "install")
         self.assertEqual(scheduled.returncode, 0, scheduled.stderr)
         inputs = self.trigger_binding()["launch"]["inputs"]
@@ -551,20 +554,20 @@ class ConsumerTests(Fixture):
             self.assertEqual(json.loads(result.stdout)["status"], status)
 
     def test_adopt_and_resume_have_native_source_semantics(self):
-        result = self.command("run", "archon-deliver", "--adopt", "producer-run", "--input", "work=fix.md")
+        result = self.command("run", "archon-ship-block", "--adopt", "producer-run", "--input", "work=fix.md")
         argv = json.loads(result.stdout)["argv"]
         self.assertIn("producer-run", argv)
         self.assertIn("--workflow-source", argv)
-        result = self.command("run", "archon-deliver", "--resume")
+        result = self.command("run", "archon-ship-block", "--resume")
         self.assertNotIn("--workflow-source", json.loads(result.stdout)["argv"])
 
     def test_source_overrides_refused(self):
         for flag in ("--workflow-source=evil", "--cwd=evil", "--workflow-source", "--cwd"):
-            self.assertNotEqual(self.command("run", "archon-ship", flag, "evil").returncode, 0)
+            self.assertNotEqual(self.command("run", "archon-ship-block", flag, "evil").returncode, 0)
         self.assertEqual(self.calls(), [])
 
     def test_separator_cannot_turn_source_flags_into_message_text(self):
-        result = self.command("run", "archon-ship", "--", "--resume", "literal message")
+        result = self.command("run", "archon-ship-block", "--", "--resume", "literal message")
         self.assertEqual(result.returncode, 0, result.stderr)
         argv = json.loads(result.stdout)["argv"]
         self.assertLess(argv.index("--cwd"), argv.index("--"))
@@ -572,7 +575,7 @@ class ConsumerTests(Fixture):
         self.assertEqual(argv[argv.index("--") + 1:], ["--resume", "literal message"])
 
     def test_failed_native_launch_is_not_retried_or_promoted(self):
-        result = self.command("run", "archon-ship", "--json",
+        result = self.command("run", "archon-ship-block", "--json",
                               env={"FACTORY_TEST_STATUS": "failed", "FACTORY_TEST_EXIT": "23"})
         self.assertEqual(result.returncode, 23)
         self.assertEqual(json.loads(result.stdout)["status"], "failed")
@@ -582,7 +585,7 @@ class ConsumerTests(Fixture):
 
     def test_stop_does_not_guess_or_cancel_active_runs(self):
         self.assertEqual(self.command("halt").returncode, 0)
-        self.assertNotEqual(self.command("run", "archon-ship").returncode, 0)
+        self.assertNotEqual(self.command("run", "archon-ship-block").returncode, 0)
         self.assertEqual(self.command("status", "--json").returncode, 0)
         self.assertEqual(self.command("cancel", "run-123").returncode, 0)
         self.assertEqual(self.command("unhalt").returncode, 0)
@@ -599,27 +602,27 @@ class ConsumerTests(Fixture):
         with self.assertRaisesRegex(ValueError, "changes"):
             consumer.verify_source(self.settings)
         self.git(self.source, "restore", ".")
-        (self.source / ".archon/ignored.yaml").write_text("name: archon-ship")
+        (self.source / ".archon/ignored.yaml").write_text("name: archon-ship-block")
         with self.assertRaisesRegex(ValueError, "Untracked authoring"):
             consumer.verify_source(self.settings)
 
     def test_doctor_missing_workflow_or_command_is_not_ready(self):
-        self.assertEqual(consumer.doctor(self.settings)["revision"], self.revision)
+        self.assertEqual(consumer.doctor(self.settings, self.app)["revision"], self.revision)
         with patch.object(consumer, "discover", return_value={}):
             with self.assertRaisesRegex(ValueError, "missing shared"):
-                consumer.doctor(self.settings)
+                consumer.doctor(self.settings, self.app)
         with patch.object(consumer, "native_json", return_value={"results": [{"valid": False}]}):
             with self.assertRaisesRegex(ValueError, "validation failed"):
-                consumer.validate(self.settings, self.source, "archon-ship")
+                consumer.validate(self.settings, self.source, "archon-ship-block")
 
     def test_capability_probe_refuses_unsupported_cli(self):
         with patch.object(consumer, "checked", return_value="no capabilities"), \
              patch.object(consumer, "verify_source", return_value=self.source):
             with self.assertRaisesRegex(ValueError, "missing workflow"):
-                consumer.doctor(self.settings)
+                consumer.doctor(self.settings, self.app)
 
     def test_source_index_refuses_missing_command_include_and_conflict(self):
-        path = next(self.source.rglob("archon-ship.yaml"))
+        path = next(self.source.rglob("archon-ship-block.yaml"))
         body = path.read_text()
         command = path.parent / "commands/check.md"
         command.unlink()
@@ -631,7 +634,7 @@ class ConsumerTests(Fixture):
             consumer.source_workflows(self.source)
         path.write_text(body)
         conflict = self.source / ".archon/workflows/conflict.yaml"
-        conflict.write_text("name: archon-ship\n")
+        conflict.write_text("name: archon-ship-block\n")
         with self.assertRaisesRegex(ValueError, "Conflicting workflow"):
             consumer.source_workflows(self.source)
 
@@ -645,7 +648,7 @@ class ConsumerTests(Fixture):
         worktree = self.base / "application worktree"
         self.git(self.app, "worktree", "add", "-b", "fixture-branch", str(worktree))
         self.assertEqual(consumer.read_settings(worktree), self.settings)
-        result = subprocess.run([sys.executable, str(HOME / "bin/factory.py"), "run", "archon-ship", "--json"],
+        result = subprocess.run([sys.executable, str(HOME / "bin/factory.py"), "run", "archon-ship-block", "--json"],
                                 cwd=worktree, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         argv = json.loads(result.stdout)["argv"]
@@ -809,7 +812,7 @@ class LaunchGateTests(unittest.TestCase):
 
     def test_a_workflow_without_a_gate_always_launches(self):
         (self.app / ".factory/trigger.json").write_text(json.dumps({"binding": {"launch": {
-            "workflowName": "archon-lifecycle", "inputs": {}}}}))
+            "workflowName": "archon-manager", "inputs": {}}}}))
         self.assertTrue(self.decide({}))
         self.assertFalse(self.seen.exists())
 
@@ -848,7 +851,7 @@ class SourceConformanceTests(unittest.TestCase):
         consumer.verify_source({"source": str(source), "revision": revision})
 
         defaults = consumer.MANIFEST["default_inputs"]
-        workflows = ("archon-triage", "archon-ship", "archon-lifecycle")
+        workflows = ("archon-triage", "archon-ship-block", "archon-manager")
         self.assertEqual(set(defaults), set(workflows))
         mappings = [json.loads(defaults[name]["state_labels"]) for name in workflows]
         self.assertTrue(all(mapping == mappings[0] for mapping in mappings))
@@ -867,8 +870,8 @@ class SourceConformanceTests(unittest.TestCase):
             self.assertEqual(labels, {label.casefold() for label in mapping.values()})
 
         directory = source / consumer.MANIFEST["source_directory"]
-        for name, folder in (("archon-triage", "triage"), ("archon-ship", "ship"),
-                             ("archon-lifecycle", "lifecycle")):
+        for name, folder in (("archon-triage", "triage"), ("archon-ship-block", "ship"),
+                             ("archon-manager", "lifecycle")):
             lines = (directory / folder / f"{name}.yaml").read_text(encoding="utf-8").splitlines()
             start = lines.index("inputs:") + 1
             input_lines = next((lines[start:index] for index in range(start, len(lines))
@@ -887,6 +890,25 @@ class SourceConformanceTests(unittest.TestCase):
 
 
 class InstallTests(Fixture):
+    def test_fence_merges_into_user_settings_and_is_idempotent(self):
+        claude = self.app / ".claude/settings.json"
+        claude.parent.mkdir(parents=True, exist_ok=True)
+        claude.write_text(json.dumps({"permissions": {"allow": ["Bash(ls)"]},
+                                      "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+                                          {"type": "command", "command": "mine"}]}]}}))
+        (self.app / ".ignore").write_text("node_modules/")
+        for _ in range(2):
+            with contextlib.redirect_stdout(io.StringIO()):
+                sync(self.app)
+        settings = json.loads(claude.read_text())
+        self.assertEqual(settings["permissions"], {"allow": ["Bash(ls)"]})
+        commands = [hook["command"] for entries in settings["hooks"].values()
+                    for entry in entries for hook in entry["hooks"]]
+        self.assertEqual(sorted(commands), sorted(["mine", consumer.fence_command("pre"),
+                                                   consumer.fence_command("post")]))
+        self.assertEqual((self.app / ".ignore").read_text().splitlines(), ["node_modules/", consumer.FENCE_IGNORE])
+        self.assertTrue((self.app / consumer.FENCE_SCRIPT).is_file())
+
     def test_policy_pointer_preserves_existing_bytes_and_is_idempotent(self):
         agents = self.app / "engineering.md"
         original = b"# Existing guidance\r\n\r\nKeep this byte-for-byte."
@@ -980,7 +1002,7 @@ class InstallTests(Fixture):
         provider_before = provider.read_bytes()
         with patch.dict(os.environ, {"HOME": str(self.base / "home"), "USERPROFILE": str(self.base / "home")}), contextlib.redirect_stdout(io.StringIO()):
             sync(self.app)
-            consumer.doctor(self.settings)
+            consumer.doctor(self.settings, self.app)
         self.assertEqual(provider.read_bytes(), provider_before)
         for rel, data in originals.items():
             self.assertEqual((self.app / rel).read_bytes(), data, rel)

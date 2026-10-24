@@ -20,8 +20,21 @@ ENTRY = "packages/cli/src/cli.ts"
 SCHEDULE = ".factory/schedule.json"
 TRIGGER = ".factory/trigger.json"
 PAUSE = ".factory/PAUSE"
-# The shared workflows that carry a merge gate and accept a declared required-check policy.
-MERGING_WORKFLOWS = {"archon-lifecycle", "archon-merge-queue"}
+# The shared workflows that carry a merge gate, and the merge policy keys each one accepts.
+MERGING_WORKFLOWS = {"archon-merge-queue": ("required_checks", "protected_paths"),
+                     "archon-loop": ("protected_paths",)}
+# The holdout fence: a Claude Code hook registered in the project's own settings, so every
+# lap's checkout carries it. Only the holdout subagents may read .factory/holdout/.
+FENCE_SCRIPT = ".factory/hooks/holdout_fence.py"
+FENCE_HOOKS = {"PreToolUse": "pre", "PostToolUse": "post"}
+FENCE_MATCHERS = {
+    "PreToolUse": "Bash|PowerShell|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|NotebookRead|Agent|Task",
+    "PostToolUse": "Bash|PowerShell|Read|Grep|Glob|Agent|Task"}
+FENCE_IGNORE = ".factory/holdout/"
+
+
+def fence_command(mode: str) -> str:
+    return f'python "$CLAUDE_PROJECT_DIR/{FENCE_SCRIPT}" {mode}'
 
 
 def windowless() -> bool:
@@ -195,7 +208,47 @@ def validate(settings: dict, source: Path, name: str) -> None:
         raise ValueError(f"Workflow/command validation failed for {name}: {data}")
 
 
-def doctor(settings: dict) -> dict:
+def fence_report(root: Path) -> str:
+    """Prove the holdout fence holds in this checkout, by running the registered hook itself."""
+    if not (root / ".factory/holdout/HOLDOUT.md").exists():
+        return "no holdout scenarios"
+    try:
+        settings = json.loads((root / ".claude/settings.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        settings = {}
+    registered = {hook.get("command") for entries in settings.get("hooks", {}).values()
+                  for entry in entries for hook in entry.get("hooks", [])}
+    missing = [event for event, mode in FENCE_HOOKS.items() if fence_command(mode) not in registered]
+    if missing:
+        raise ValueError(f"Holdout fence not registered in .claude/settings.json for {', '.join(missing)}; rerun factory init")
+    ignore = root / ".ignore"
+    if not ignore.exists() or FENCE_IGNORE not in ignore.read_text(encoding="utf-8").splitlines():
+        raise ValueError(f".ignore does not list {FENCE_IGNORE}; rerun factory init")
+    # Laps run in fresh checkouts of the pushed branch, so an uncommitted fence protects nothing there.
+    uncommitted = [tracked for tracked in (FENCE_SCRIPT, ".claude/settings.json", ".ignore", ".factory/holdout/HOLDOUT.md")
+                   if execute(["git", "ls-files", "--error-unmatch", tracked], root).returncode != 0]
+    shell = shutil.which("bash") or shutil.which("sh")
+    if shell is None:
+        raise ValueError("No bash to run the holdout fence the way Claude Code runs hooks")
+    scenarios = str(root / ".factory/holdout/HOLDOUT.md")
+    cases = [("a builder reading the scenarios", {"file_path": scenarios}, None, 2),
+             ("the verifier reading the scenarios", {"file_path": scenarios}, "holdout-verifier", 0),
+             ("a builder reading a source file", {"file_path": str(root / "README.md")}, None, 0)]
+    for name, tool_input, agent, expected in cases:
+        event = {"tool_name": "Read", "tool_input": tool_input, "cwd": str(root),
+                 **({"agent_type": agent} if agent else {})}
+        result = subprocess.run([shell, "-c", fence_command("pre")], input=json.dumps(event), text=True,
+                                capture_output=True, cwd=root, timeout=60,
+                                env={**os.environ, "CLAUDE_PROJECT_DIR": str(root)})
+        if result.returncode != expected:
+            raise ValueError(f"Holdout fence is open: {name} exited {result.returncode}, expected {expected}. "
+                             f"{result.stderr.strip()[:300]} (check that `python` runs Python 3 in bash)")
+    if uncommitted:
+        return "holds here, but laps will not have it until these are committed and pushed: " + ", ".join(uncommitted)
+    return "holds"
+
+
+def doctor(settings: dict, root: Path | None = None) -> dict:
     source = verify_source(settings)
     # Global flags such as --json are documented once, in the top-level workflow
     # help, and not repeated under every subcommand (`workflow status --help` lists
@@ -215,11 +268,8 @@ def doctor(settings: dict) -> dict:
         validate(settings, source, name)
     return {"source": str(source), "revision": settings["revision"],
             "workflows": sorted(discovered), "automation": "supervised integration",
+            **({"holdout_fence": fence_report(root)} if root is not None else {}),
             "provider_configuration": "native configuration preserved; authentication not live-tested"}
-
-
-# Merge policy keys a project declares once in harness/harness.config.json.
-MERGE_POLICY_KEYS = ("required_checks", "protected_paths")
 
 
 def harness_inputs(root: Path, name: str) -> dict:
@@ -235,7 +285,7 @@ def harness_inputs(root: Path, name: str) -> dict:
         return {}
     if not isinstance(config, dict):
         return {}
-    return {key: config[key] for key in MERGE_POLICY_KEYS
+    return {key: config[key] for key in MERGING_WORKFLOWS[name]
             if isinstance(config.get(key), str) and config[key].strip()}
 
 
@@ -317,7 +367,7 @@ def invoke(root: Path, action: str, args: list[str]) -> int:
     settings = read_settings(root)
     source = verify_source(settings)
     if action == "doctor":
-        print(json.dumps(doctor(settings), indent=2))
+        print(json.dumps(doctor(settings, root), indent=2))
         return 0
     if action == "list":
         print(json.dumps({"source": str(source), "revision": settings["revision"],
@@ -392,7 +442,7 @@ def trigger_config(root: Path, settings: dict, source: Path, interval: int) -> d
     the durable queue and overlap; this only names what to start."""
     schedule_file = shared_root(root) / SCHEDULE
     schedule_data = json.loads(schedule_file.read_text(encoding="utf-8"))
-    workflow = schedule_data.get("workflow", "archon-lifecycle")
+    workflow = schedule_data.get("workflow", "archon-loop")
     inputs = schedule_data.get("inputs")
     if not isinstance(workflow, str) or not isinstance(inputs, dict):
         raise ValueError("schedule.json requires a shared workflow and inputs object")

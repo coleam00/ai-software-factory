@@ -1,21 +1,25 @@
 # Holdout scenarios
 
-Example task-service data. Replace with independent composed scenarios.
-The producer must establish isolation and start a fresh environment for this pass.
-No factory Python helper enforces a private holdout boundary.
+Acceptance checks the agents building the code never see. They are written from the product document,
+not from the issues or the code, and they test the space between issues: one rule on every surface,
+sequences, what must never happen by any route, and old behaviour that has to keep working.
 
-## Three lists, one restart, and a rename in the middle
+This file is committed so the team shares it. People read and edit it freely. Agents cannot: the hook
+in `.factory/hooks/holdout_fence.py` refuses every agent except the `holdout-writer` and
+`holdout-verifier` subagents, and `.ignore` keeps the folder out of searches. The app check and the
+manager run these through the verifier, which reports only a verdict and what a user sees.
 
-1. Create tasks `quarry-lantern`, `sable-ferry` and `nine-of-cups`.
-2. Complete `sable-ferry`.
-3. Rename `nine-of-cups` to `nine-of-swords`.
-4. Restart the app.
-5. Exactly three tasks exist. Exactly one is done, and it is `sable-ferry`.
-   `nine-of-cups` does not appear anywhere. The open count is 2.
+No scenarios yet. Write the first set before the backlog is built (ask your coding agent to dispatch
+the holdout-writer with the product document), or by hand in this form:
 
-## Deleting the completed one does not resurrect it
+```
+## H-01 A short title in the user's words
+Protects: the product rule it guards (PRD section or rule number)
+Touches: the product areas it exercises, so a change is checked only against scenarios it can affect
+Setup: the state to start from
+Steps: what a user does, through the app's public surface
+Expect: what a user sees, exactly where the product document fixes it
+Author: owner
+```
 
-1. Starting from the state above, delete `sable-ferry`.
-2. The list has two tasks, both open, open count 2.
-3. Restart the app.
-4. Still two tasks, both open. `sable-ferry` is gone and the completed count is 0.
+Scenarios are added and tightened, never loosened, except by the owner with a reason recorded here.

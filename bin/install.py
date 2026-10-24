@@ -70,6 +70,35 @@ def install_policy_pointer(root: Path, dry: bool) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def install_fence(root: Path, dry: bool) -> None:
+    # The holdout fence is a Claude Code hook, so it is registered in the project's own
+    # settings (which every lap's checkout carries), merged into whatever the user has there.
+    # .ignore keeps the Grep and Glob tools out of the folder; the hook covers everything else.
+    path = within(root, root / ".claude/settings.json")
+    settings = json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
+    hooks = settings.setdefault("hooks", {})
+    changed = False
+    for event, mode in consumer.FENCE_HOOKS.items():
+        command = consumer.fence_command(mode)
+        entries = hooks.setdefault(event, [])
+        if not any(hook.get("command") == command for entry in entries for hook in entry.get("hooks", [])):
+            entries.append({"matcher": consumer.FENCE_MATCHERS[event],
+                            "hooks": [{"type": "command", "command": command}]})
+            changed = True
+    if changed:
+        print("install .claude/settings.json holdout fence hooks")
+        if not dry:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    ignore = within(root, root / ".ignore")
+    previous = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
+    if consumer.FENCE_IGNORE not in previous.splitlines():
+        print("install .ignore holdout entry")
+        if not dry:
+            separator = "" if not previous or previous.endswith("\n") else "\n"
+            ignore.write_text(previous + separator + consumer.FENCE_IGNORE + "\n", encoding="utf-8")
+
+
 def sync(root: Path, dry: bool = False) -> None:
     root = root.resolve()
     # An installed file the user changed is backed up before the new version
@@ -90,6 +119,7 @@ def sync(root: Path, dry: bool = False) -> None:
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)
     install_policy_pointer(root, dry)
+    install_fence(root, dry)
     ignore = within(root, root / ".gitignore")
     previous = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
     additions = [line for line in (TEMPLATE / "gitignore-additions.txt").read_text().splitlines()

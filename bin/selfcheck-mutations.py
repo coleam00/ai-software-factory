@@ -11,12 +11,12 @@ DEFECTS = [
      "ConsumerTests.test_missing_shared_workflow_fails_closed"),
     ("source SHA unchecked", "if actual != revision:", "if False:",
      "ConsumerTests.test_sha_dirty_and_ignored_authoring_drift_refused"),
-    ("declared required checks dropped", 'MERGE_POLICY_KEYS = ("required_checks", "protected_paths")',
-     'MERGE_POLICY_KEYS = ("protected_paths",)', "ConsumerTests.test_declared_required_checks_reach_merging_workflows_only"),
-    ("declared protected paths dropped", 'MERGE_POLICY_KEYS = ("required_checks", "protected_paths")',
-     'MERGE_POLICY_KEYS = ("required_checks",)', "ConsumerTests.test_declared_protected_paths_reach_merging_workflows_only"),
-    ("state label defaults skipped", "    return {**MANIFEST.get(\"default_inputs\", {}).get(name, {}), **harness_inputs(root, name)}",
-     "    return harness_inputs(root, name)", "ConsumerTests.test_factory_state_labels_default_only_for_declaring_workflows"),
+    ("declared required checks dropped", 'MERGING_WORKFLOWS = {"archon-merge-queue": ("required_checks", "protected_paths"),',
+     'MERGING_WORKFLOWS = {"archon-merge-queue": ("protected_paths",),', "ConsumerTests.test_declared_required_checks_reach_merging_workflows_only"),
+    ("declared protected paths dropped", '"archon-loop": ("protected_paths",)}',
+     '"archon-loop": ()}', "ConsumerTests.test_declared_protected_paths_reach_merging_workflows_only"),
+    ("factory input defaults skipped", "    return {**MANIFEST.get(\"default_inputs\", {}).get(name, {}), **harness_inputs(root, name)}",
+     "    return harness_inputs(root, name)", "ConsumerTests.test_factory_holdout_default_only_for_declaring_workflows"),
 ]
 
 def main():

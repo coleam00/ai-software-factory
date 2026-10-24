@@ -8,14 +8,18 @@ The installer selects the shared Archon source revision automatically.
 2. Starting from a PRD instead of an app? Have the agent run `archon-backlog` on it
    and review the issues it proposes before they are published; the first one makes
    the product runnable and names its start command, so the runtime host is wired
-   from it before it is built. That ticket then goes through the lifecycle like
+   from it before it is built. That ticket then goes through `archon-loop` like
    every other one.
-3. Review the journeys and independent holdout scenarios. Have the agent configure
+3. Have the agent dispatch the `holdout-writer` subagent on the PRD before any issue
+   is built, then review `.factory/holdout/HOLDOUT.md` in your editor (agents other
+   than the holdout subagents are refused it). Commit and push it with
+   `.factory/hooks/`, `.claude/settings.json` and `.ignore`.
+   Review the journeys. Have the agent configure
    runtime inputs and app startup using the installed `factory/RUNTIME_HOST.md`.
 4. Have the agent run `python factory/consumer.py doctor` and
    `python factory/consumer.py list`, then explain anything still missing.
-5. Watch one small issue go to a PR with `archon-ship`. For the full sequence,
-   use `archon-lifecycle` with the prepared runtime/holdout inputs and merge approval.
+5. Watch one lap: `python factory/consumer.py run archon-loop --input merge=approve`
+   (the reviewer approves instead of merging, so you see a whole lap first).
 6. Inspect the result before asking the agent to configure scheduling.
 
 The current integration still needs live end-to-end validation. Installation checks

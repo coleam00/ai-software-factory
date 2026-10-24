@@ -51,7 +51,7 @@ Archon source, including the shared workflows; you do not need to check out Arch
 or merge its PRs yourself.
 
 **Current status:** the default pins exact Archon revision
-`30bb494648ce47fa18d1e931ce728a71e96a3757` on the `factory/sdlc-on-dev` branch (Archon
+`abd85896e7971c9ac5199ed7e87973f27130250f` on the `factory/sdlc-on-dev` branch (Archon
 dev plus the SDLC pack's factory workflows). `archon-loop` is the recommended scheduled workflow: each lap picks one move and routes it to an in-loop builder or to `archon-ship`, then a black-box app check (tested on the merge with the default branch, with probes, a defects-seen record and evidence the next step verifies by script) and a reviewer decide, and a deterministic merge gate merges only what that record supports; the scheduler starts a lap only when there is workable work for it; `archon-manager` steps back on a slower schedule and also keeps the loop itself healthy (runs that never started, runs that failed on infrastructure, leftover app instances, empty laps). Its pack also supports dependency-aware intake,
 reviewed delivery, scoped validation reuse, runtime and optional holdout verification,
 bounded repair, discovery handling, a merge queue that reads required checks and protected paths and seals its plan by script,
@@ -128,9 +128,9 @@ request is drift rather than a good idea. Do not ask the user to produce it from
 nothing. Propose seven entries yourself from what you read, make them things a
 reasonable person would actually ask for, and have them strike the wrong ones.
 
-Draft the holdout yourself, then tell the user to review it. A directory called
-"holdout" does not make it private: arrange actual isolation from the builder if
-these scenarios are meant to be hidden.
+Do not draft the holdout yourself: you are a builder, and the fence refuses you the
+folder. Dispatch the `holdout-writer` subagent with the product document, relay its
+one-line summary per scenario, and tell the user to review the file in their editor.
 
 Journeys describe what the product **does today**, never what it should do. A
 journey for behaviour that does not exist yet leaves the gate red before the first
@@ -163,31 +163,29 @@ and available workflows; it does not prove a live agent can sign in or complete 
 
 **5. Ask the one question that picks the path: existing codebase, or a PRD?**
 
-*Existing codebase.* The user files issues. Give them the exact command for one
-small issue, using `archon-ship` for issue-to-PR or `archon-lifecycle` for the
-full verification-and-merge sequence. For lifecycle, prepare the scenario/holdout
-inputs and runtime host first. Start with merge approval enabled and discovery
-publication in preview mode.
+*Existing codebase.* The user files issues. Have them write holdouts for the area
+first (`python factory/consumer.py run archon-holdouts --input source=<docs>`), then
+give them the exact command for one lap on one issue:
+`python factory/consumer.py run archon-loop --input merge=approve`. With `merge=approve`
+the reviewer approves instead of merging, so the user sees a whole lap before any
+merge is automatic.
 
-*A PRD.* The factory creates the backlog from it:
+*A PRD.* Write the holdouts from it first, then slice it into a backlog:
 
 ```bash
+python factory/consumer.py run archon-holdouts --input source=<path to the PRD>
 python factory/consumer.py run archon-backlog --input prd=<path to the PRD> --input publication=approve
 ```
 
-The shared workflow slices the document into ordered issues the way an engineering
-lead would, the first one making the product runnable end to end (start command,
-health check, build-identity endpoint, tests, CI). Re-running it never duplicates
-an issue. The first ticket's body names the exact start command and the health and
-build-id paths, so wire the runtime host from it now, before anything is built, and
-then every ticket, the first included, goes through `archon-lifecycle` with the
-journeys and holdout from step 3. There is no special first-ticket path: the
-lifecycle verifies the skeleton against the journeys before merging it, which is
-also the first proof the journeys are right. If the merge queue holds a PR, the
-reason is retained in the run. If hold publication was explicitly enabled, it is
-also a comment starting `<!-- archon-merge-hold -->`; re-run
-`archon-deliver` adopting the delivery run (`--adopt <run id>`) and the review turns
-that hold into a finding it fixes.
+The holdout writer reads only the PRD and writes `.factory/holdout/HOLDOUT.md`; no
+builder ever sees it. The backlog workflow slices the document into ordered issues the
+way an engineering lead would, the first one making the product runnable end to end
+(start command, health check, build-identity endpoint, tests, CI). Re-running it never
+duplicates an issue. The first ticket's body names the exact start command and the
+health and build-id paths, so write the runtime instructions from it now, before
+anything is built. Then every ticket, the first included, goes through `archon-loop`:
+the app check verifies the skeleton against the journeys before it merges, which is
+also the first proof the journeys are right.
 
 **6. Stop there.** Leave scheduling off until the user has watched a lap complete.
 If they already asked you to run that first lap, continue within that scope.
@@ -208,9 +206,27 @@ body forever. The setup agent turns those journeys into inputs for Archon's runt
 verification workflow, which drives the running app and records what it observes.
 
 **`.factory/holdout/HOLDOUT.md`** checks the same product through different
-combinations and edge cases. Checks the builder can read are useful, but they are
-not a hidden holdout. Keep private scenarios outside the builder's accessible
-checkout and give them only to the verification environment.
+combinations and edge cases, written from the product document rather than the
+issues. It is committed, so the team shares it, and fenced, so no builder reads it:
+
+- `.factory/hooks/holdout_fence.py`, registered in `.claude/settings.json`, refuses
+  every agent except the `holdout-writer` and `holdout-verifier` subagents any call
+  that would show it a scenario: naming the folder, a recursive search that covers
+  it, or a git diff, log or show that would print one of its files (git is asked
+  first, so nothing else is refused). Nothing may change the fence but you.
+- `.ignore` keeps the Grep and Glob tools out of the folder.
+- The app check and the manager run the scenarios through the verifier, which
+  returns a verdict and what a user sees, never the scenario. The manager adds
+  scenarios through the writer: for each defect that got past review, and before a
+  new section of the product is built.
+- After every call the hook checks what came back for scenario text and appends any
+  hit to `holdout-exposures.jsonl` in the repository's git directory, so a leak it
+  did not foresee is counted.
+- `factory doctor` runs the hook itself and reports whether the fence holds and
+  whether it is committed (lap checkouts only carry what is pushed).
+
+The fence is a Claude Code hook. A factory running Codex or Pi has no fence: keep its
+holdout outside the repository and pass that path as the `holdout` input instead.
 
 ---
 
@@ -222,17 +238,15 @@ shared SDLC pack. You can run the workflows individually or use the full composi
 | What you want | Shared Archon workflow |
 |---|---|
 | Turn a PRD into an ordered backlog of issues | `archon-backlog` |
-| Check whether an issue is ready and in scope | `archon-triage` |
-| Take an issue through planning, implementation and review to a PR | `archon-ship` |
-| Implement an existing plan or repair a PR | `archon-deliver` |
-| Review code or run project checks | `archon-review`, `archon-validate` |
+| Write holdout scenarios no builder sees, from the PRD or an escaped defect | `archon-holdouts` |
+| Take an issue through triage, planning, delivery rounds and review to a PR | `archon-ship-block` |
+| Run project checks | `archon-validate` |
 | Exercise a running app and record evidence | `archon-verify-runtime` |
 | Check a baseline and whether verification catches deliberate defects | `archon-verify-runtime-suite` |
 | Re-test existing behavior and diagnose regressions | `archon-regress` |
 | Recheck discoveries, deduplicate them and optionally publish issues | `archon-discoveries` |
 | Check PRs and CI, then merge according to the selected approval mode | `archon-merge-queue` |
 | Roll the default branch onto a running service and read the revision back | `archon-deploy` |
-| Run shipping, runtime/holdout verification, bounded repair, discoveries, merge and deployment | `archon-lifecycle` |
 | Keep a backlog moving unattended, one move per lap, with parallel laps if wanted | `archon-loop` |
 | Step back on a slower schedule: steer the backlog, unstick work, record metrics | `archon-manager` |
 
@@ -311,67 +325,40 @@ serve`) and point the scenarios at its connection file.
 **Merge policy.** Free private GitHub repositories cannot report branch protection, so
 the merge queue needs the project to say which CI checks a merge requires. Set
 `required_checks` in `harness/harness.config.json` to the CI job names (for example
-`"tests"`), or to `"none"`. The factory passes it to `archon-lifecycle` and
-`archon-merge-queue`. Left empty, the merge queue reads GitHub, and on a free private
+`"tests"`), or to `"none"`. The factory passes it to `archon-merge-queue`. Left empty, the merge queue reads GitHub, and on a free private
 repository it holds every PR with a reason that names this setting.
 
 **Protected paths.** Review does not reliably notice an agent editing the files that
 govern it (a reviewed delivery once rewrote `engineering.md` and merged). Set
 `protected_paths` in `harness/harness.config.json` to comma-separated path patterns,
 anchored at the repository root (`*` within one segment, `**` across segments, a
-trailing `/` for a directory). The factory passes it to `archon-lifecycle` and
-`archon-merge-queue`, whose `path-policy` script lists each PR's changed files and
-holds any PR that touches a match, with a comment naming the files and saying a human
-must make that change. New installs protect `MISSION.md`, `FACTORY.md`,
-`FACTORY_RULES.md`, `harness/**`, `.factory/**` and `factory/**`; add the project's
+trailing `/` for a directory). The factory passes it to `archon-loop`, whose merge
+gate refuses any PR that touches a match and says the owner must make that change,
+and to `archon-merge-queue`. New installs protect `MISSION.md`, `FACTORY.md`,
+`FACTORY_RULES.md`, `harness/**`, `.factory/**` (the holdouts and their fence),
+`factory/**`, `.claude/settings.json` and `.ignore`; add the project's
 own governance documents. An existing project's harness configuration is never
 overwritten, so add the key by hand.
 
-The scheduler never selects work itself. Backlog intake lives in the shared
-lifecycle: with an empty `target` and `publish=true`, each run takes the oldest
-open issue with none of the factory's configured state labels and no open PR naming
-it and no open `Depends on: #n`. A run that finds nothing completes with nothing to
-do, and its `waiting_on` names the open dependencies the backlog is stuck behind. The
-consumer supplies
-the factory state-label mapping to triage, ship and lifecycle. An explicit
-`--input state_labels={}` or scheduled `"state_labels": {}` disables that default.
-A fixed `target` repeats that same target on every tick.
-
-Publication remains opt-in. A supervised schedule can label intake while leaving
-merge approval gated and discoveries read-only:
+The scheduler never selects work itself: each `archon-loop` lap's pick agent reads the
+whole board and chooses one move (finish an open PR, build a simple item, ship a
+complex one), and parallel laps claim their item with a comment so they never collide.
+A schedule names the workflow, its inputs and how many laps may run at once:
 
 ```json
 {
-  "workflow": "archon-lifecycle",
+  "workflow": "archon-loop",
+  "parallel": 3,
   "inputs": {
-    "target": "",
-    "publish": "true",
-    "scenario": "/private/runtime.json",
-    "holdout": "/private/holdout.json",
-    "merge_mode": "approve",
-    "merge_method": "squash",
-    "discovery_publication": "preview"
+    "runtime": "/private/runtime/scenario.json",
+    "merge": "auto"
   }
 }
 ```
 
-To opt into evidence-backed hold comments, use the publication inputs together:
-
-```json
-{
-  "workflow": "archon-lifecycle",
-  "inputs": {
-    "target": "",
-    "publish": "true",
-    "scenario": "/private/runtime.json",
-    "holdout": "/private/holdout.json",
-    "merge_mode": "approve",
-    "merge_method": "squash",
-    "publish_holds": "true",
-    "discovery_publication": "preview"
-  }
-}
-```
+The factory adds `holdout=.factory/holdout/HOLDOUT.md` and the project's
+`protected_paths` unless the schedule names them. Run `archon-manager` on a slower
+schedule (every few hours) above the loop.
 
 `publish_holds` does not authorize merging, has no effect when `merge_mode` is
 `preview`, and is deliberately absent from the default example.
@@ -411,7 +398,7 @@ A run paused on a pending GitHub check resumes on the next tick, through
 `archon workflow wake`.
 
 Deployment is project-specific: the setup agent wires the service (systemd, a
-reverse proxy, DNS) and gives the lifecycle its `deploy`, `health` and `identity`
+reverse proxy, DNS) and gives the loop its `deploy` and `health`
 commands. With those set, a confirmed merge runs the shared `archon-deploy`
 workflow, which rolls the default branch onto the service and reads the deployed
 revision back. Without them, a merge is only a merge.

@@ -22,23 +22,11 @@ first story.
 
 ## Factory-owned workflow inputs
 
-Factory supplies this state-label mapping to `archon-triage`, `archon-ship`, and
-`archon-lifecycle` unless the caller explicitly supplies `state_labels`, including
-an explicit `{}`:
-
-| State | GitHub label |
-|---|---|
-| `READY` | `archon-ready` |
-| `DESIGN_FIRST` | `archon-design-first` |
-| `NEEDS_CONTRACT_WORK` | `archon-needs-contract` |
-| `BLOCKED` | `archon-blocked` |
-| `NO_ACTION` | `archon-close` |
-
-Automatic lifecycle intake requires the complete mapping and `publish=true` to
-mark selected issues as touched. Publication remains off by default. Hold-comment
-publication separately requires `publish_holds=true` in approve or auto merge mode;
-`merge_mode=preview` is always read-only, and a published hold never authorizes a
-merge.
+Factory supplies `holdout=.factory/holdout/HOLDOUT.md` to `archon-loop`, `archon-manager` and
+`archon-holdouts`, and the project's `protected_paths` (from `harness/harness.config.json`) to
+`archon-loop` and `archon-merge-queue`, unless the caller supplies them. The holdout scenarios are
+read only by the `holdout-verifier` and `holdout-writer` agents; `.factory/hooks/holdout_fence.py`
+refuses every other agent.
 
 ## Runtime and review evidence
 
