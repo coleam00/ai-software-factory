@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -93,7 +94,7 @@ def verify_source(settings: dict) -> Path:
             shown += f", and {len(changed) - 5} more"
         raise ValueError(
             f"Pinned source has changes ({shown}). The pinned tree is verified byte for byte. "
-            f"Restore it with: rm -rf {source} && python3 bin/factory.py init from your repo. "
+            f"Restore it with: rm -rf {shlex.quote(str(source))} && python3 bin/factory.py init from your repo. "
             f"To change engine behavior, move the pin in factory/pack.json instead of editing the tree"
         )
     # Include ignored files under authoring roots: an ignored workflow can shadow a
@@ -405,6 +406,8 @@ def trigger_config(root: Path, settings: dict, source: Path, interval: int) -> d
     for key in inputs:
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
             raise ValueError("Invalid scheduled workflow input name")
+    # Refuse a malformed lap budget at install time; each tick then enforces it fail-closed.
+    budget_windows(schedule_data)
     values = {**workflow_defaults(root, workflow),
               **{k: v if isinstance(v, str) else json.dumps(v) for k, v in inputs.items()}}
     parallel = schedule_data.get("parallel", 1)
@@ -604,12 +607,72 @@ def empty_lap_since(runs: list[dict], since: float) -> bool:
     return False
 
 
+# Rolling lap ceilings a project declares in schedule.json; unlimited by default.
+BUDGET_KEYS = {1: "max_laps_per_hour", 24: "max_laps_per_day"}
+
+
+def budget_windows(schedule_data: dict) -> list[tuple[int, int]]:
+    """(window hours, max laps) pairs from schedule.json `budget`; empty means unlimited.
+
+    Both keys are optional; a value may be "unlimited" explicitly. Anything else must be
+    a whole number of laps of at least 1. Raises ValueError on malformed configuration so
+    `schedule install` can refuse the file and a tick can refuse to launch blind."""
+    budget = schedule_data.get("budget")
+    if budget is None or budget == "unlimited":
+        return []
+    if not isinstance(budget, dict):
+        raise ValueError('schedule.json budget must be an object such as '
+                         '{"max_laps_per_hour": 2, "max_laps_per_day": 20}, or absent for unlimited')
+    unknown = set(budget) - set(BUDGET_KEYS.values())
+    if unknown:
+        raise ValueError("unknown budget key(s): " + ", ".join(sorted(unknown))
+                         + "; expected " + " or ".join(sorted(BUDGET_KEYS.values())))
+    windows = []
+    for hours, key in sorted(BUDGET_KEYS.items()):
+        limit = budget.get(key)
+        if limit is None or limit == "unlimited":
+            continue
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+            raise ValueError(f'schedule.json budget.{key} must be a whole number of laps of at '
+                             'least 1, or "unlimited"')
+        windows.append((hours, limit))
+    return windows
+
+
+def budget_exceeded(windows: list[tuple[int, int]], runs: list[dict]) -> str | None:
+    """The first ceiling the recently started laps have reached, or None. Windows roll:
+    "per day" counts laps this workflow started in the last 24 hours, not calendar days."""
+    now = time.time()
+    starts = [start for start in (_when(run.get("started_at")) for run in runs) if start is not None]
+    for hours, limit in windows:
+        counted = sum(1 for start in starts if now - hours * 3600 <= start)
+        if counted >= limit:
+            return (f"the last {hours}h started {counted} lap(s) of this workflow, at or over "
+                    f"budget.{BUDGET_KEYS[hours]}={limit}; scheduled launches resume on their "
+                    f"own when the window rolls past older laps")
+    return None
+
+
+def unreadable_times(runs: list[dict]) -> int:
+    """Completed runs whose timestamps cannot be parsed. Silent None from _when here is
+    how the empty-lap guard and lap counting quietly go blind after a format change."""
+    unreadable = 0
+    for run in runs:
+        if run.get("status") != "completed":
+            continue
+        if (run.get("started_at") or run.get("completed_at")) and (
+                _when(run.get("started_at")) is None or _when(run.get("completed_at")) is None):
+            unreadable += 1
+    return unreadable
+
+
 def launch_decision(root: Path, settings: dict, source: Path, write) -> bool:
-    """Whether this tick should start a lap. A workflow without a launch gate always
-    launches. With one, the tick first clears runs that never started and claims of runs
-    that ended, then launches only when there is workable work and no lap is still
-    choosing its item, plus one lap per idle period for bookkeeping. Any failure to read
-    the board launches, as before the gate existed."""
+    """Whether this tick should start a lap. A configured lap budget is a hard ceiling,
+    checked first and fail-closed, before any path below can launch. Without a budget,
+    a workflow without a launch gate always launches; with one, the tick first clears
+    runs that never started and claims of runs that ended, then launches only when there
+    is workable work and no lap is still choosing its item, plus one lap per idle period
+    for bookkeeping. Any failure to read the board launches, as before the gate existed."""
     try:
         binding = json.loads((shared_root(root) / TRIGGER).read_text(encoding="utf-8"))["binding"]
         launch_config = binding["launch"]
@@ -621,9 +684,39 @@ def launch_decision(root: Path, settings: dict, source: Path, write) -> bool:
         schedule_data = json.loads((shared_root(root) / SCHEDULE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         schedule_data = {}
+    try:
+        windows = budget_windows(schedule_data)
+    except ValueError as error:
+        write(f"No launch: the budget configuration is invalid ({error}). Fix or remove "
+              f"'budget' in schedule.json; manual runs are unaffected.\n")
+        return False
     gate = MANIFEST.get("launch_gates", {}).get(workflow)
     script = source / MANIFEST["source_directory"] / gate if gate else None
-    if script is None or not script.is_file():
+    has_gate = script is not None and script.is_file()
+    runs, runs_error = None, None
+    if windows or has_gate:
+        try:
+            listed = native_json(settings, source, ["workflow", "runs", "--limit", "100"], root)
+            runs = [run for run in listed.get("runs", []) if run.get("workflow_name") == workflow]
+        except (ValueError, KeyError, OSError, subprocess.SubprocessError) as error:
+            runs_error = error
+    if runs is not None:
+        blind = unreadable_times(runs)
+        if blind:
+            write(f"Warning: {blind} completed run(s) report unreadable timestamps; lap "
+                  f"counting and the empty-lap guard are partly blind.\n")
+    if windows:
+        if runs is None:
+            write(f"No launch: budget ceilings are configured but laps could not be counted "
+                  f"({str(runs_error)[:200]}); no scheduled lap starts until the run list is "
+                  f"readable.\n")
+            return False
+        exceeded = budget_exceeded(windows, runs)
+        if exceeded:
+            write(f"No launch: {exceeded}.\n")
+            tick_state(root, last_budget_block=time.time())
+            return False
+    if not has_gate:
         return True
     state = tick_state(root)
 
@@ -635,8 +728,8 @@ def launch_decision(root: Path, settings: dict, source: Path, write) -> bool:
         return True
 
     try:
-        listed = native_json(settings, source, ["workflow", "runs", "--limit", "100"], root)
-        runs = [run for run in listed.get("runs", []) if run.get("workflow_name") == workflow]
+        if runs is None:
+            raise ValueError(f"the run list could not be read ({str(runs_error)[:200]})")
         swept = sweep_stuck(root, settings, source, runs, write)
         ended = [run["id"] for run in runs if run.get("status") in ENDED]
         active = {run["id"] for run in runs if run.get("status") in ACTIVE} - swept
@@ -693,7 +786,13 @@ def schedule(root: Path, args: list[str]) -> int:
     apply = "--apply" in flags
     interval = 300
     if "--interval" in flags:
-        interval = int(flags[flags.index("--interval") + 1])
+        index = flags.index("--interval")
+        if index + 1 >= len(flags):
+            raise ValueError("--interval requires a number of seconds")
+        try:
+            interval = int(flags[index + 1])
+        except ValueError:
+            raise ValueError("--interval must be a number of seconds") from None
         if interval < 60:
             raise ValueError("--interval must be at least 60 seconds")
     settings = read_settings(root)
@@ -711,6 +810,14 @@ def schedule(root: Path, args: list[str]) -> int:
         print(f"Laps start from {base}." if base else
               "No default branch is known locally, so every launch asks the remote for it. "
               "Run `git remote set-head origin --auto` or set base_branch in schedule.json.")
+        try:
+            windows = budget_windows(json.loads(
+                (shared_root(root) / SCHEDULE).read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            windows = []
+        print("Budget: " + ("unlimited (no lap ceilings configured)." if not windows else
+              "at most " + " and ".join(f"{limit} lap(s) per {hours}h" for hours, limit in windows)
+              + " (rolling windows)."))
         if sys.platform == "darwin":
             plan = {"install": [[*native, "trigger", "schedule", "install", "--config", str(config_path)],
                                 [*native, "workflow", "wake", "schedule", "install", "--interval", "60"]]}

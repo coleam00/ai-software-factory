@@ -119,6 +119,13 @@ def install_source(repository: str, revision: str, cache: Path, bun: str) -> dic
     dirty = consumer.checked(["git", "status", "--porcelain", "--untracked-files=all"], dest)
     if dirty.strip():
         raise ValueError("Existing cache is dirty; it will not be overwritten")
+    # A pin reachable only through a fork branch is one branch deletion away from breaking
+    # every new install; name that at install time instead of failing silently later.
+    on_default = consumer.execute(["git", "merge-base", "--is-ancestor", revision, "origin/HEAD"], dest)
+    if on_default.returncode == 1:
+        print("Warning: the pinned revision is not contained in the source repository's default "
+              "branch; new installs depend on the branch that carries it until the workflows "
+              "merge upstream.")
     if not (dest / "node_modules").is_dir():
         consumer.checked([bun, "install", "--frozen-lockfile"], dest, 1800)
     consumer.doctor(settings)

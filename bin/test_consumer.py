@@ -204,6 +204,26 @@ class ConsumerTests(Fixture):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("parallel must be", result.stderr)
 
+    def test_schedule_install_validates_and_reports_the_budget(self):
+        schedule = self.app / ".factory/schedule.json"
+        schedule.write_text(json.dumps({"workflow": "archon-lifecycle", "inputs": {},
+                                        "budget": {"max_laps_per_hour": 4, "max_laps_per_day": 20}}))
+        result = self.command("schedule", "install")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Budget: at most 4 lap(s) per 1h and 20 lap(s) per 24h", result.stdout)
+        schedule.write_text(json.dumps({"workflow": "archon-lifecycle", "inputs": {}, "budget": {}}))
+        result = self.command("schedule", "install")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Budget: unlimited", result.stdout)
+        for bad in ({"max_laps_per_day": 0}, {"max_laps_per_day": "3"}, {"max_laps_per_day": True},
+                    {"max_laps_per_hour": 2.5}, {"spend_dollars": 5}, "daily"):
+            with self.subTest(budget=bad):
+                schedule.write_text(json.dumps({"workflow": "archon-lifecycle", "inputs": {},
+                                                "budget": bad}))
+                result = self.command("schedule", "install")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("budget", result.stderr)
+
     def test_unknown_commands_fail_without_a_native_launch(self):
         for args in (("tick",), ("level", "4"), ("accept", "gh:pr:1")):
             with self.subTest(args=args):
@@ -834,6 +854,52 @@ class LaunchGateTests(unittest.TestCase):
         self.assertTrue(any("Released the claim run killed left on #9" in l for l in self.lines))
         self.runs = [r for r in self.runs if r["id"] != "new"]
         self.assertTrue(self.decide(board))
+
+    def test_a_budget_caps_scheduled_laps_and_unlimited_is_the_default(self):
+        board = {"workable": [{"kind": "issue", "number": 4}]}
+        now = time.time()
+        stamp = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t))
+        self.runs = [{"id": f"lap{i}", "workflow_name": "archon-loop", "status": "completed",
+                      "started_at": stamp(now - i * 600),
+                      "completed_at": stamp(now - i * 600 + 400)} for i in range(3)]
+        self.recent_launch()
+        # Unlimited by default: with three laps today, a fourth still launches.
+        self.assertTrue(self.decide(board))
+        # Three laps inside the last hour: an hourly ceiling of three blocks the fourth.
+        self.assertFalse(self.decide(board, schedule={"budget": {"max_laps_per_hour": 3}}))
+        self.assertIn("budget.max_laps_per_hour=3", self.lines[-1])
+        # A daily ceiling above the count does not block, and explicit "unlimited" never does.
+        self.assertTrue(self.decide(board, schedule={"budget": {"max_laps_per_day": 4}}))
+        self.assertTrue(self.decide(board, schedule={"budget": {"max_laps_per_hour": "unlimited"}}))
+
+    def test_an_exhausted_budget_also_blocks_bookkeeping_laps_on_an_empty_board(self):
+        now = time.time()
+        stamp = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t))
+        self.runs = [{"id": "lap0", "workflow_name": "archon-loop", "status": "completed",
+                      "started_at": stamp(now - 400), "completed_at": stamp(now)}]
+        self.recent_launch()
+        self.assertFalse(self.decide({}, schedule={"budget": {"max_laps_per_day": 1}}))
+        self.assertIn("budget.max_laps_per_day=1", self.lines[-1])
+        # The refusal is recorded for observability, like every other launch decision.
+        self.assertIn("last_budget_block", (self.app / ".factory/gate.json").read_text())
+
+    def test_an_unreadable_run_list_blocks_launch_only_when_a_budget_is_configured(self):
+        board = {"workable": [{"kind": "issue", "number": 4}]}
+        with patch.object(consumer, "native_json", side_effect=ValueError("native refused")):
+            # Unlimited: the tick stays fail-open and launches, as before budgets existed.
+            self.assertTrue(self.decide(board))
+            self.assertIn("could not read the board", self.lines[-1])
+            # With a ceiling to enforce, the same failure must not launch blind.
+            self.assertFalse(self.decide(board, schedule={"budget": {"max_laps_per_hour": 2}}))
+            self.assertIn("could not be counted", self.lines[-1])
+
+    def test_an_invalid_budget_configuration_refuses_to_launch_and_names_itself(self):
+        for bad in ({"max_laps_per_day": 0}, {"max_laps_per_day": "3"}, {"max_laps_per_day": True},
+                    {"max_laps_per_hour": 2.5}, {"spend_dollars": 5}, "daily"):
+            with self.subTest(budget=bad):
+                self.assertFalse(self.decide({"workable": [{"kind": "issue", "number": 4}]},
+                                             schedule={"budget": bad}))
+                self.assertIn("budget", self.lines[-1])
 
 
 class SourceConformanceTests(unittest.TestCase):
