@@ -1704,3 +1704,74 @@ tracking branch stale. A real Git fixture reproduces that failure and verifies t
 explicit refspec, dirty-checkout refusal, and repeated bookkeeping. The completed
 consumer exercise verified the accepted merge parents, closed its linked issue, and
 raised the unit-test floor from the measured gate result.
+
+## The pack needed a newer Bun than the factory could launch with, and every complex lap built its change and then threw it away
+
+Found 2026-10-25 by reading the overnight scorecard: one merge in eight hours on North
+Star, about $78 spent, and two finished features sitting in local branches nobody would
+ever see.
+
+**What happened.** Two Bun builds were on the machine, and each broke a different half of a
+lap:
+
+- **Bun 1.3.x** (what `consumer.json` `"bun": "bun"` resolved to) launches laps fine, but
+  the pack's `pr/scripts/publish-pr.ts` calls `Bun.markdown.html`, which only exists from
+  Bun 1.4. It arrived with dev's archon-ship-block (pack abd85896 and later). So every
+  complex lap planned, built and tested its change, wrote the PR intent, and then died at
+  `pr__publish` with nothing pushed. Simple and continue laps were untouched, which is why
+  the loop looked busy rather than broken.
+- **Bun 1.4.2** (what Archon's `engines` asks for) has `Bun.markdown`, but on Windows it
+  breaks every lap launch: Archon starts each run as a detached `trigger execute` with stdio
+  pointed at a log file, and under 1.4.2 any `git` that process spawns exits 66 with no
+  stderr (`Command failed: git -C <repo> remote`). Reproduced with a bare detached child
+  writing to a file: 1.4.2 fails, 1.3.5 works.
+
+There was no Bun the factory could run that made both halves work.
+
+**Why it ran all night.** Each stranded lap was reported correctly: the review wrote "no
+pull request", and the manager put an operator item in the owner decisions issue on
+its first pass. Nothing else happened. The loop's attempt cap then counted the
+infrastructure failures as failed attempts and parked both items as `needs-owner`. So the
+work was lost twice over: once at publish, and again when the cap blamed the item for the
+machine's fault. One lane spent the night re-building things it could not deliver.
+
+**The fix, and how general it is.**
+
+- **General, in the pack (Archon 99be58cd).** `publish-pr.ts` no longer needs
+  `Bun.markdown`. When the running Bun has no Markdown renderer, it finds the description
+  markers with a code-aware scan instead: a marker counts unless it sits in fenced,
+  indented or inline code, or inside a raw HTML container (an unclosed one runs to the
+  end). The 1.4 path is unchanged. The publish tests pass 118/118 on Bun 1.3.5 and on 1.4.2.
+  This lives in the shared SDLC pack, not in North Star, so **every factory that pins
+  99be58cd or later gets it**. A factory on an older pin gets it when it is repinned
+  (`factory.py init` after the template's `pack.json` moves). On 2026-10-25: North Star
+  is fixed; Mission Control (Bun 1.3.7, pin c23d423f) was still exposed; DynaChat (pin
+  4eb7bd77) predates the `Bun.markdown` change, so it was not affected yet and is safe once
+  repinned.
+- **Not fixed, and general: Bun 1.4.2 cannot launch laps on Windows.** Any factory whose
+  `consumer.json` `"bun"` resolves to 1.4.2 launches nothing. Today the factories survive
+  only because `bun` on PATH is 1.3.x. That needs a fix in Archon's detached spawn (or a
+  Bun upgrade that fixes it).
+- **Specific to North Star (operator steps, not code).** Lifting `needs-owner` from the two
+  stranded items with a note that the failures were infrastructure, and pointing the next
+  laps at the existing branches.
+
+**What would have stopped this on day one (for later ideation, not built).**
+
+1. **The pack states the Bun it needs, and init checks it.** A pack that calls a 1.4-only
+   API should say so, and `factory.py init` (and the watchdog) should refuse a consumer whose
+   Bun is older, or run a tiny smoke of every pack script under the consumer's own Bun.
+   Today the mismatch surfaces only at the very end of the most expensive lap.
+2. **Infrastructure failures do not count as attempts.** The attempt cap is for work the
+   loop cannot get right. A run that died in the pipeline, with the work intact, should
+   leave the item workable and say so, not park it as `needs-owner`.
+3. **The same infrastructure fault twice in a row stops launches and pages.** The manager
+   saw it and wrote it down, but writing it down is not a brake. After two laps fail at the
+   same node with the same fault, the scheduler should pause launches, keep every worktree,
+   and notify, instead of spending the night rebuilding.
+4. **A failed publish keeps its branch pushable.** Pushing the branch before the
+   description step would have left the work on origin instead of only in a local worktree.
+
+**Why this one is worth writing down.** No check failed and no alarm fired. Every
+component reported the truth and the loop kept spending. The scar is the gap between
+"reported" and "stopped".
