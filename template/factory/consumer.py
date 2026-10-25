@@ -654,6 +654,15 @@ def empty_lap_since(runs: list[dict], since: float) -> bool:
     return False
 
 
+def idle_pick_minutes(schedule_data: dict) -> int | float:
+    """How often a lap looks at a board the gate would otherwise leave alone (schedule.json
+    `idle_pick_minutes`, default 60; 0 turns those laps off)."""
+    idle = schedule_data.get("idle_pick_minutes", 60)
+    if not isinstance(idle, (int, float)) or isinstance(idle, bool) or idle < 0:
+        raise ValueError("schedule.json idle_pick_minutes must be a number of minutes (0 turns it off)")
+    return idle
+
+
 def launch_decision(root: Path, settings: dict, source: Path, write) -> bool:
     """Whether this tick should start a lap. A workflow without a launch gate always
     launches. With one, the tick first clears runs that never started and claims of runs
@@ -722,15 +731,26 @@ def launch_decision(root: Path, settings: dict, source: Path, write) -> bool:
         return False
     if workable and not choosing and signature == state.get("last_launch_board") and \
             empty_lap_since(runs, state.get("last_launch", 0)):
-        write(f"No launch: the last lap found nothing to start on this same board (workable {names}).\n")
+        # The signature carries workable numbers and live claims, not everything pick reads: a
+        # triage comment, a pull request under needs-owner, the comment that answers it, and pick's
+        # own judgement, which differs between laps. Seen live (2026-10-24, two stalls of 69 and
+        # 145 minutes): the signature did not move while what blocked pick sat outside it, and the
+        # gate waited for a human. So the wait is one idle period, the same period a drained board
+        # gets below; then one lap looks again. 0 turns the idle laps off and keeps the wait.
+        idle = idle_pick_minutes(schedule_data)
+        if idle and time.time() - state.get("last_launch", 0) >= idle * 60:
+            return launch(f"the board reads as it did when the last lap found nothing (workable {names}), "
+                          f"but no lap has looked in {idle} minutes; what held pick back may have moved "
+                          f"in a comment the board's signature does not carry.")
+        again = (f"a lap looks again {idle} minutes after the last launch" if idle else
+                 "idle_pick_minutes is 0, so no lap looks again until the board changes")
+        write(f"No launch: the last lap found nothing to start on this same board (workable {names}); {again}.\n")
         return False
     # One pick at a time: two laps choosing at once converge on the same item and the
     # later one loses the claim race (seen live). The next tick sees the first lap's claim.
     if workable and not choosing:
         return launch(f"workable {names}; no lap still choosing.")
-    idle = schedule_data.get("idle_pick_minutes", 60)
-    if not isinstance(idle, (int, float)) or isinstance(idle, bool) or idle < 0:
-        raise ValueError("schedule.json idle_pick_minutes must be a number of minutes (0 turns it off)")
+    idle = idle_pick_minutes(schedule_data)
     if idle and not active and time.time() - state.get("last_launch", 0) >= idle * 60:
         return launch(f"nothing workable, but no lap has looked in {idle} minutes (bookkeeping).")
     write(f"No launch: workable {names}; {len(active)} lap(s) active, {len(choosing)} still choosing.\n")
