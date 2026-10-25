@@ -794,6 +794,42 @@ class LaunchGateTests(unittest.TestCase):
         self.runs[0]["status"] = "completed"
         self.assertTrue(self.decide(board))
 
+    def test_an_unchanged_board_gets_one_more_lap_after_the_idle_period(self):
+        # Seen live (2026-10-24, two stalls of 69 and 145 minutes): the signature carries workable
+        # numbers and live claims, not the triage comment or the needs-owner answer that held pick
+        # back, so the board read "the same" while a lap would have found work. The stop holds one
+        # idle period, then a lap looks again.
+        board = {"workable": [{"kind": "issue", "number": 7}, {"kind": "issue", "number": 9}]}
+        stamp = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t))
+        gate = self.app / ".factory/gate.json"
+        signature = json.dumps([["issue:7", "issue:9"], []])
+        for minutes in (4, 30, 59):
+            launched = time.time() - minutes * 60
+            gate.write_text(json.dumps({"last_launch": launched, "last_launch_board": signature}))
+            self.runs = [{"id": "empty", "workflow_name": "archon-loop", "status": "completed",
+                          "started_at": stamp(launched + 5), "completed_at": stamp(launched + 65)}]
+            self.assertFalse(self.decide(board), minutes)
+            self.assertIn("a lap looks again 60 minutes after the last launch", self.lines[-1])
+        launched = time.time() - 2 * 3600
+        gate.write_text(json.dumps({"last_launch": launched, "last_launch_board": signature}))
+        self.runs = [{"id": "empty", "workflow_name": "archon-loop", "status": "completed",
+                      "started_at": stamp(launched + 5), "completed_at": stamp(launched + 65)}]
+        self.assertTrue(self.decide(board))
+        self.assertIn("no lap has looked in 60 minutes", self.lines[-1])
+        # The schedule sets the period; 0 keeps the stop until the board changes.
+        launched = time.time() - 20 * 60
+        gate.write_text(json.dumps({"last_launch": launched, "last_launch_board": signature}))
+        self.runs = [{"id": "empty", "workflow_name": "archon-loop", "status": "completed",
+                      "started_at": stamp(launched + 5), "completed_at": stamp(launched + 65)}]
+        self.assertTrue(self.decide(board, schedule={"idle_pick_minutes": 15}))
+        gate.write_text(json.dumps({"last_launch": launched, "last_launch_board": signature}))
+        self.assertFalse(self.decide(board, schedule={"idle_pick_minutes": 0}))
+        self.assertIn("idle_pick_minutes is 0, so no lap looks again until the board changes", self.lines[-1])
+        # A bad setting is refused where it is read, inside the stop as well as on a drained board.
+        gate.write_text(json.dumps({"last_launch": launched, "last_launch_board": signature}))
+        with self.assertRaises(ValueError):
+            self.decide(board, schedule={"idle_pick_minutes": "60"})
+
     def test_a_drained_board_launches_only_once_per_idle_period(self):
         self.recent_launch()
         self.assertFalse(self.decide({}))
