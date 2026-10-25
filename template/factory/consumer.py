@@ -714,8 +714,12 @@ def launch_decision(root: Path, settings: dict, source: Path, write) -> bool:
     # another lap would see the same and pick nothing too, so wait for the board to change
     # (seen live: items the gate counts as workable that pick stays clear of, because they
     # touch what a live claim is changing).
+    # `updated` (the newest change to any open item) makes an answer count as a change: an
+    # owner decision that lifts a park leaves the same workable items and claims as before
+    # the park (seen live: the factory idled 40 minutes after the owner unblocked an item).
     signature = json.dumps([sorted(f"{item.get('kind')}:{item.get('number')}" for item in workable),
-                            sorted(claim["run"] for claim in board.get("claims", []))])
+                            sorted(claim["run"] for claim in board.get("claims", [])),
+                            str(board.get("updated", ""))])
     # Archon skips a start when every slot is busy; say so instead of recording a launch.
     if isinstance(capacity, int) and len(active) >= capacity:
         write(f"No launch: all {capacity} slot(s) busy; workable {names}.\n")

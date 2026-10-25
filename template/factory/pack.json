@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/coleam00/Archon",
-  "integration_revision_required": "4c96667531819d850fc68df326ccb13b8a2305cd",
+  "integration_revision_required": "4a53ca8503bd01ead9c62a2c5a8b88ccda840acc",
   "description": "Pinned workflow-only SDLC source: an unattended loop (pick, build or ship, black-box app check with fenced holdouts, review, merge gate) and a manager above it. Factory remains a thin consumer; workflow gates own decisions and scheduling is Archon's.",
   "source_directory": ".archon/workflows/sdlc",
   "default_inputs": {

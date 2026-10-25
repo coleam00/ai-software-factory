@@ -794,6 +794,20 @@ class LaunchGateTests(unittest.TestCase):
         self.runs[0]["status"] = "completed"
         self.assertTrue(self.decide(board))
 
+    def test_an_answer_on_the_board_counts_as_a_change(self):
+        # Seen live: a lap parked an item for the owner in under 5 minutes, the owner answered
+        # and lifted the park, and the board had the same workable items and claims as at that
+        # lap's launch, so the gate idled until something else moved.
+        board = {"workable": [{"kind": "issue", "number": 7}], "updated": "2026-10-25T16:42:00Z"}
+        self.assertTrue(self.decide(board))
+        launched = json.loads((self.app / ".factory/gate.json").read_text())["last_launch"]
+        stamp = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t))
+        self.runs = [{"id": "parked", "workflow_name": "archon-loop", "status": "completed",
+                      "started_at": stamp(launched + 5), "completed_at": stamp(launched + 200)}]
+        self.assertFalse(self.decide(board))
+        board["updated"] = "2026-10-25T16:46:00Z"
+        self.assertTrue(self.decide(board))
+
     def test_a_drained_board_launches_only_once_per_idle_period(self):
         self.recent_launch()
         self.assertFalse(self.decide({}))
