@@ -618,6 +618,36 @@ def sweep_stuck(root: Path, settings: dict, source: Path, runs: list[dict], writ
     return swept
 
 
+# A running lap writes its log at least every half hour (measured 2026-10-25 over 150 runs:
+# the longest healthy silence was 29.5 min). One silent for an hour has died without ending:
+# seen live, a lap whose review step crashed held the only slot for five hours.
+SILENT_AFTER_SECONDS = 3600
+
+
+def sweep_silent(root: Path, settings: dict, source: Path, runs: list[dict], write) -> set[str]:
+    """Abandon running runs whose log has been silent for SILENT_AFTER_SECONDS. Abandoning
+    frees the slot and keeps the run's worktree, so its work survives for the next lap."""
+    swept = set()
+    for run in runs:
+        if run.get("status") != "running" or not isinstance(run.get("id"), str):
+            continue
+        logs = list((archon_home() / "workspaces").glob(f"*/*/logs/{run['id']}.jsonl"))
+        try:
+            newest = max(log.stat().st_mtime for log in logs) if logs else None
+        except OSError:
+            continue
+        if newest is None or time.time() - newest < SILENT_AFTER_SECONDS:
+            continue
+        result = execute([*cli(settings, source), "workflow", "abandon", run["id"], "--cwd", str(root)], root)
+        if result.returncode == 0:
+            swept.add(run["id"])
+            write(f"Abandoned run {run['id']}: its log has been silent for "
+                  f"{int((time.time() - newest) // 60)} min\n")
+        else:
+            write(f"Could not abandon silent run {run['id']}: {(result.stderr or result.stdout)[-300:]}\n")
+    return swept
+
+
 def tick_state(root: Path, **updates) -> dict:
     """The tick's small memory between runs (.factory/gate.json), updated in place."""
     path = shared_root(root) / ".factory/gate.json"
@@ -687,7 +717,7 @@ def launch_decision(root: Path, settings: dict, source: Path, write) -> bool:
     try:
         listed = native_json(settings, source, ["workflow", "runs", "--limit", "100"], root)
         runs = [run for run in listed.get("runs", []) if run.get("workflow_name") == workflow]
-        swept = sweep_stuck(root, settings, source, runs, write)
+        swept = sweep_stuck(root, settings, source, runs, write) | sweep_silent(root, settings, source, runs, write)
         ended = [run["id"] for run in runs if run.get("status") in ENDED]
         active = {run["id"] for run in runs if run.get("status") in ACTIVE} - swept
         result = execute([settings.get("bun", "bun"), str(script)], root, timeout=180, env={

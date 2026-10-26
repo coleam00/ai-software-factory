@@ -852,6 +852,28 @@ class LaunchGateTests(unittest.TestCase):
         self.runs = [r for r in self.runs if r["id"] != "new"]
         self.assertTrue(self.decide(board))
 
+    def test_a_running_lap_whose_log_went_silent_is_abandoned_and_frees_its_slot(self):
+        # Seen live: a lap whose review step crashed stayed `running` and held the only slot
+        # for five hours. A lap still writing its log, or with no log found, is left alone.
+        (self.app / ".factory/trigger.json").write_text(json.dumps({"binding": {"capacity": 1, "launch": {
+            "workflowName": "archon-loop", "inputs": {}}}}))
+        logs = self.home / "workspaces/owner/repo/logs"
+        logs.mkdir(parents=True)
+        for run, age in (("dead", 3700), ("busy", 1800)):
+            log = logs / f"{run}.jsonl"
+            log.write_text("{}\n")
+            os.utime(log, (time.time() - age, time.time() - age))
+        board = {"workable": [{"kind": "issue", "number": 4}],
+                 "claims": [{"kind": "issue", "number": 2, "run": "dead"}]}
+        self.runs = [{"id": "busy", "workflow_name": "archon-loop", "status": "running"},
+                     {"id": "nolog", "workflow_name": "archon-loop", "status": "running"}]
+        self.assertFalse(self.decide(board))
+        self.assertEqual(self.abandoned, [])
+        self.runs = [{"id": "dead", "workflow_name": "archon-loop", "status": "running"}]
+        self.assertTrue(self.decide(board))
+        self.assertEqual(self.abandoned, ["dead"])
+        self.assertTrue(any("Abandoned run dead: its log has been silent for 61 min" in l for l in self.lines))
+
 
 class SourceConformanceTests(unittest.TestCase):
     @patch.object(sys, "dont_write_bytecode", True)
