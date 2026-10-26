@@ -626,7 +626,8 @@ SILENT_AFTER_SECONDS = 3600
 
 def sweep_silent(root: Path, settings: dict, source: Path, runs: list[dict], write) -> set[str]:
     """Abandon running runs whose log has been silent for SILENT_AFTER_SECONDS. Abandoning
-    frees the slot and keeps the run's worktree, so its work survives for the next lap."""
+    frees the slot and removes the worktree but keeps the run's branch, so committed work
+    survives for the next lap; uncommitted changes do not."""
     swept = set()
     for run in runs:
         if run.get("status") != "running" or not isinstance(run.get("id"), str):

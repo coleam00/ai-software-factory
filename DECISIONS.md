@@ -21,7 +21,7 @@ Replaces: nothing yet.
 Version: none
 
 ## 2026-10-26 The scheduler abandons a lap whose log went silent
-Decision: Each scheduler tick abandons a `running` lap whose log has not been written for 60 minutes. Abandoning keeps the run's worktree, so the next lap can deliver its work.
+Decision: Each scheduler tick abandons a `running` lap whose log has not been written for 60 minutes. Abandoning removes the worktree but keeps the run's branch, so committed work survives for the next lap (corrected 2026-10-26: the first wording said the worktree was kept).
 Why: A lap whose review step crashed stayed `running` and held North Star's only slot for five hours. Over 150 recent runs the longest healthy silence in a lap was 29.5 minutes.
 Replaces: Only runs that never started were abandoned by the scheduler; everything else waited for the manager.
 Version: none (factory consumer 33173fa1)
