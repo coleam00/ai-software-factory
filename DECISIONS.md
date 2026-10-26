@@ -14,6 +14,18 @@ Version: the Archon pin it shipped in (or "none").
 
 Pin commits carry the per-change reason; this file holds the larger calls.
 
+## 2026-10-26 OPEN: the manager's schedule, health duty and config (plan with Cole soon)
+Decision: Not decided yet; Cole asked for it to be planned with him soon and not built tonight. The manager is already a separate process on its own timer (North Star: a scheduled task every 3 h, `manager_live.py`). What broke is everything around that timer: a pass now runs 3 to 5.5 h (holdouts, every committed check, playtesting), a fire that lands while a pass still runs is skipped, and the manager looks at run health only at the start of a pass, so a dead lap waited up to a whole pass. Its rule for a running-but-stuck lap is also report-only, after 3 h. To decide: (1) split run health out of the pass into something short that runs every few minutes (the scheduler's silent-lap sweep, 2026-10-26, is the first piece), so a pass only reports; (2) cap or split the pass so the interval in the docs is the interval in practice; (3) make the interval and pass scope factory config (in `.factory/`, not in a project's runtime scripts) so every factory sets them the same way; (4) whether the manager's games should share a lap's game budget. Related: the Bun incident in `docs/incidents.md` (2026-10-25), where the manager saw the fault on its first pass and wrote it down, and nothing stopped launches.
+Why: 2026-10-25: a lap died at 18:03 UTC while a 5.5 h manager pass ran; the next pass freed the slot at 23:16. Five hours with no lap and no merge.
+Replaces: nothing yet.
+Version: none
+
+## 2026-10-26 The scheduler abandons a lap whose log went silent
+Decision: Each scheduler tick abandons a `running` lap whose log has not been written for 60 minutes. Abandoning keeps the run's worktree, so the next lap can deliver its work.
+Why: A lap whose review step crashed stayed `running` and held North Star's only slot for five hours. Over 150 recent runs the longest healthy silence in a lap was 29.5 minutes.
+Replaces: Only runs that never started were abandoned by the scheduler; everything else waited for the manager.
+Version: none (factory consumer 33173fa1)
+
 ## 2026-10-24 The complex route runs dev's archon-ship-block
 Decision: The loop's complex route includes Archon dev's `archon-ship-block` (triage, investigate or plan, delivery rounds with one CI agent, review threads handled as work, delta reviews) instead of the factory's 10/7 fork of ship and deliver. The forked workflows and lifecycle are removed.
 Why: The fork's script gates stopped good work at least 15 times and never caught a real bug, and the branch had drifted 650 commits from dev. Merge step 1 of bringing the two factories together.
