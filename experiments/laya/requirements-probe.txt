@@ -1,0 +1,3 @@
+-r requirements.txt
+PyYAML==6.0.3
+uv==0.12.19

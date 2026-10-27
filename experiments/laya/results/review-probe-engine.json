@@ -1,0 +1,179 @@
+{
+  "archon_revision": "24796870605b0fd576734b79a8d5c781f2b1c1e1",
+  "factory_base": "e167ddc480d2f5c95d436f9d1c5cdcf37b092281",
+  "provider": {
+    "name": "codex",
+    "model": "gpt-6-astra",
+    "effort": "high"
+  },
+  "runs": {
+    "baseline_pr11": {
+      "run_id": "63271044e67b9898cba04d74c52e85ef",
+      "events": [
+        {
+          "type": "classifier_output",
+          "value": {
+            "errors": false,
+            "docs": true,
+            "reasons": {
+              "errors": "The complete diff only replaces a revision hash in README.md and introduces no failure-handling behavior.",
+              "docs": "The diff changes shipped documentation by updating the pinned Archon revision in README.md\u2019s current-status paragraph."
+            }
+          }
+        },
+        {
+          "type": "node_complete",
+          "step": "classify",
+          "duration_ms": 16987,
+          "tokens": {
+            "input": 30168,
+            "output": 244,
+            "cacheRead": 14592,
+            "cacheWrite": 0
+          },
+          "ts": "2026-09-28T23:16:20.696Z"
+        },
+        {
+          "type": "exec_output",
+          "step": "resolve-scope",
+          "exit_code": 0,
+          "stdout_tail": "{\"errors\":\"false\"}",
+          "ts": "2026-09-28T23:16:20.859Z"
+        },
+        {
+          "type": "node_complete",
+          "step": "resolve-scope",
+          "duration_ms": 155,
+          "ts": "2026-09-28T23:16:20.860Z"
+        },
+        {
+          "type": "workflow_complete",
+          "tokens": {
+            "input": 30168,
+            "output": 244,
+            "cacheRead": 14592,
+            "cacheWrite": 0
+          },
+          "ts": "2026-09-28T23:16:20.865Z"
+        }
+      ]
+    },
+    "laya_pr11": {
+      "run_id": "309a9f5b62b1872611a2f5dab2f5f347",
+      "events": [
+        {
+          "type": "exec_output",
+          "step": "classify",
+          "exit_code": 0,
+          "stdout_tail": "{\"status\": \"predicted\", \"requires_fallback\": true, \"choice\": \"both\", \"errors\": true, \"docs\": true}",
+          "ts": "2026-09-28T23:25:28.137Z"
+        },
+        {
+          "type": "node_complete",
+          "step": "classify",
+          "duration_ms": 12072,
+          "ts": "2026-09-28T23:25:28.140Z"
+        },
+        {
+          "type": "exec_output",
+          "step": "forced-on",
+          "exit_code": 0,
+          "stdout_tail": "{\"errors\":\"true\"}",
+          "ts": "2026-09-28T23:25:28.231Z"
+        },
+        {
+          "type": "node_complete",
+          "step": "forced-on",
+          "duration_ms": 85,
+          "ts": "2026-09-28T23:25:28.231Z"
+        },
+        {
+          "type": "exec_output",
+          "step": "forced-off",
+          "exit_code": 0,
+          "stdout_tail": "{\"errors\":\"false\"}",
+          "ts": "2026-09-28T23:25:28.233Z"
+        },
+        {
+          "type": "node_complete",
+          "step": "forced-off",
+          "duration_ms": 87,
+          "ts": "2026-09-28T23:25:28.233Z"
+        },
+        {
+          "type": "exec_output",
+          "step": "resolve-scope",
+          "exit_code": 0,
+          "stdout_tail": "{\"errors\":\"true\"}",
+          "ts": "2026-09-28T23:25:28.238Z"
+        },
+        {
+          "type": "node_complete",
+          "step": "resolve-scope",
+          "duration_ms": 94,
+          "ts": "2026-09-28T23:25:28.239Z"
+        },
+        {
+          "type": "workflow_complete",
+          "ts": "2026-09-28T23:25:28.241Z"
+        }
+      ]
+    },
+    "laya_pr9": {
+      "run_id": "cbab83cea4eeb374060b29ba154dc1bd",
+      "events": [
+        {
+          "type": "exec_output",
+          "step": "classify",
+          "exit_code": 0,
+          "stdout_tail": "{\"status\": \"input_rejected\", \"requires_fallback\": true, \"rejection\": \"input lost tokens or encoding changed; shorten inputs or review the pinned adapter\"}",
+          "ts": "2026-09-28T23:26:06.275Z"
+        },
+        {
+          "type": "node_complete",
+          "step": "classify",
+          "duration_ms": 7831,
+          "ts": "2026-09-28T23:26:06.278Z"
+        },
+        {
+          "type": "node_skipped",
+          "step": "forced-on",
+          "ts": "2026-09-28T23:26:06.282Z"
+        },
+        {
+          "type": "node_skipped",
+          "step": "resolve-scope",
+          "ts": "2026-09-28T23:26:06.282Z"
+        },
+        {
+          "type": "node_skipped",
+          "step": "forced-off",
+          "ts": "2026-09-28T23:26:06.282Z"
+        },
+        {
+          "type": "workflow_complete",
+          "ts": "2026-09-28T23:26:06.287Z"
+        }
+      ]
+    }
+  },
+  "source_sha256": {
+    "review_probe.py": "b219969e35c41b1b07f871ce216e48759a2f5401fc4a3a5a6d43fa7ebef5e9af",
+    "prepare_review_probe.py": "c500c5112ddb61816658e130007f903251c89c3034de489d2aa6ff3c8ad2f14d",
+    "routing.py": "21bef727e4dd5227585a1c326ca45e1faaaea09a9ed3dc3f775c592461a3467d"
+  },
+  "upstream_sha256": {
+    "archon-deliver.yaml": "0c3699c5bedf971ab55a506bfaff01c900c12bb46cb475825c945e91320213ed",
+    "commands/classify-review-scope.md": "66f2e0128183251ed0edce3dc4a825552296d3e4d5a4c89404bc8674ef97c04d",
+    "scripts/resolve-review-scope.py": "557718afe533aa1d62de0b29d578877834a0f6a34b6ebd0c6ef9c2082f930180"
+  },
+  "runtime": {
+    "python": "3.12.3",
+    "bun": "1.4.0",
+    "uv": "uv 0.12.19 (x86_64-unknown-linux-gnu)",
+    "archon_package_version": "0.10.1",
+    "archon_engine_requirements": {
+      "bun": "1.4.2"
+    }
+  }
+}
