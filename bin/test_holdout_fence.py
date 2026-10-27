@@ -63,6 +63,13 @@ class FenceTests(unittest.TestCase):
         self.assertEqual(self.hook("Agent", {"subagent_type": "general-purpose", "prompt": "read .factory/holdout"}), 2)
         self.assertEqual(self.hook("Agent", {"subagent_type": "holdout-verifier", "prompt": "run .factory/holdout"}), 0)
 
+    def test_the_verifier_tools_are_fenced_like_the_scenarios(self) -> None:
+        tool = str(Path.home() / ".archon/holdout-tools/owner-repo/H-07/run.py")
+        self.assertEqual(self.hook("Read", {"file_path": tool}), 2)
+        self.assertEqual(self.bash("ls ~/.archon/holdout-tools/"), 2)
+        self.assertEqual(self.hook("Read", {"file_path": tool}, agent="holdout-verifier"), 0)
+        self.assertEqual(self.hook("Write", {"file_path": tool, "content": "x"}, agent="holdout-writer"), 0)
+
     def test_prose_and_output_tools_pass(self) -> None:
         self.assertEqual(self.bash('gh pr comment 3 --body "the holdouts passed on main"'), 0)
         self.assertEqual(self.hook("StructuredOutput", {"summary": "ran .factory/holdout scenarios"}), 0)
