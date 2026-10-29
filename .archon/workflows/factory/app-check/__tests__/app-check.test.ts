@@ -9,9 +9,9 @@ import { boundDescription, statusCoversBinding } from "../scripts/binding.ts";
 import { configuredHoldoutIds } from "../scripts/holdouts.ts";
 import { bindingIsCurrent } from "../scripts/publish.ts";
 import { finalizePending } from "../scripts/finalize.ts";
-import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 describe("app-check deterministic decisions", () => {
   test("matches anchored frontend globs", () => {
@@ -33,8 +33,10 @@ describe("app-check deterministic decisions", () => {
     expect(statusCoversBinding(statuses, "main", "base-a")).toBe(true);
     expect(statusCoversBinding(statuses, "release", "base-a")).toBe(false);
     expect(statusCoversBinding(statuses, "main", "base-b")).toBe(false);
-    expect(bindingIsCurrent({ state: "OPEN", headRefOid: "head-a", baseRefName: "main", baseRefOid: "base-a" }, "head-a", "main", "base-a")).toBe(true);
-    expect(bindingIsCurrent({ state: "OPEN", headRefOid: "head-b", baseRefName: "main", baseRefOid: "base-a" }, "head-a", "main", "base-a")).toBe(false);
+    expect(bindingIsCurrent({ state: "OPEN", headRefOid: "head-a", baseRefName: "main" }, "base-a", "head-a", "main", "base-a")).toBe(true);
+    expect(bindingIsCurrent({ state: "OPEN", headRefOid: "head-b", baseRefName: "main" }, "base-a", "head-a", "main", "base-a")).toBe(false);
+    expect(bindingIsCurrent({ state: "OPEN", headRefOid: "head-a", baseRefName: "main" }, "base-b", "head-a", "main", "base-a")).toBe(false);
+    expect(bindingIsCurrent({ state: "OPEN", headRefOid: "head-a", baseRefName: "release" }, "base-a", "head-a", "main", "base-a")).toBe(false);
     const now = Date.parse("2026-10-29T12:00:00Z");
     const pending = (created_at: string) => [{ context: "factory/app-check", state: "pending", description: boundDescription("main", "base-a", "running"), created_at }];
     expect(statusCoversBinding(pending("2026-10-29T11:00:00Z"), "main", "base-a", now)).toBe(true);
@@ -77,4 +79,36 @@ describe("app-check deterministic decisions", () => {
     expect(finalizePending(root, (...args) => { calls.push(args); })).toBe(false);
     expect(calls).toHaveLength(1);
   });
+  test("selects and publishes against the current encoded branch ref when the PR base snapshot is stale", () => {
+    const root = mkdtempSync(join(tmpdir(), "factory-current-base-test-"));
+    const fake = join(root, "fake-gh.ts"), log = join(root, "gh.log"), command = join(root, process.platform === "win32" ? "gh.cmd" : "gh");
+    writeFileSync(fake, `import { appendFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(process.env.GH_LOG!, JSON.stringify(args) + "\\n");
+if (args[0] === "pr" && args[1] === "view") console.log(JSON.stringify({ number: 7, isDraft: true, createdAt: "2026-01-01", headRefOid: "head-a", baseRefName: "release/2026", baseRefOid: "stale-pr-base", files: [{ path: "public/app.css" }], body: "", state: "OPEN" }));
+else if (args[0] === "api" && args[1] === "repos/example/shelf/git/ref/heads/release%2F2026") console.log(JSON.stringify({ object: { sha: "current-base" } }));
+else if (args[0] === "api" && args[1] === "repos/example/shelf/issues/7/comments") console.log("[]");
+`);
+    if (process.platform === "win32") writeFileSync(command, `@"${process.execPath}" "${fake}" %*\r\n`);
+    else {
+      writeFileSync(command, `#!/bin/sh\nexec "${process.execPath}" "${fake}" "$@"\n`);
+      chmodSync(command, 0o755);
+    }
+    const common = { ...process.env, PATH: `${root}${delimiter}${process.env.PATH ?? ""}`, GH_LOG: log, INPUTS_REPO_PATH: "example/shelf", INPUTS_PR: "7" };
+    const selected = Bun.spawnSync([process.execPath, join(import.meta.dir, "..", "scripts", "select.ts")], { env: common, stdout: "pipe", stderr: "pipe" });
+    expect(selected.exitCode, selected.stderr.toString()).toBe(0);
+    expect(JSON.parse(selected.stdout.toString())).toMatchObject({ found: true, head: "head-a", base: "release/2026", base_oid: "current-base" });
+
+    const artifacts = join(root, "artifacts");
+    mkdirSync(join(artifacts, "app-check"), { recursive: true });
+    const published = Bun.spawnSync([process.execPath, join(import.meta.dir, "..", "scripts", "publish.ts")], {
+      env: { ...common, ARTIFACTS_DIR: artifacts, INPUTS_HEAD: "head-a", INPUTS_BASE: "release/2026", INPUTS_BASE_OID: "current-base", INPUTS_OVERALL: "PASS", INPUTS_LINES: "[]" },
+      stdout: "pipe", stderr: "pipe",
+    });
+    expect(published.exitCode, published.stderr.toString()).toBe(0);
+    expect(JSON.parse(published.stdout.toString())).toEqual({ state: "success", comment: "created" });
+    const calls = readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line) as string[]);
+    expect(calls.filter(args => args[1] === "repos/example/shelf/git/ref/heads/release%2F2026")).toHaveLength(2);
+    expect(calls.find(args => args.includes("repos/example/shelf/statuses/head-a"))).toContain("state=success");
+  }, 20_000);
 });

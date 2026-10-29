@@ -12,4 +12,4 @@ Then: exact user-visible outcome
 Protects: product rule or defect class
 ```
 
-Scenarios must be orthogonal to the issue's acceptance criteria, black-box, stable, and test a product invariant or adjacent failure class—not implementation details. Never write them into the repository, change existing scenarios, quote their contents in output, or mention them on GitHub. Return only written paths, ids, and a summary naming the protected product rules.
+Scenarios must be orthogonal to the issue's acceptance criteria, black-box, stable, and test a product invariant or adjacent failure class, not implementation details. Never write them into the repository, change existing scenarios, quote their contents in output, or mention them on GitHub. Return only written paths, ids, and a summary naming the protected product rules.

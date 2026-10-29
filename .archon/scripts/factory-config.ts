@@ -1,13 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export type Depth = "auto" | "light" | "normal" | "deep";
 export type AutonomyPreset = "supervised" | "standard" | "autonomous";
-export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+export type Effort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | "persistent";
 
-export interface ModelProfile { model: string; effort?: Effort }
-export interface ScheduleConfig { interval_seconds: number; capacity: number }
+export interface ModelProfile { provider: string; model: string; effort?: Effort }
+export interface ScheduleConfig { interval_seconds: number }
 export interface FactoryConfig {
   project: { repo_host: string; repo_path: string };
   app_check: {
@@ -21,6 +22,7 @@ export interface FactoryConfig {
   autonomy: AutonomyPreset;
   app: { prepare: string; start: string; port_env: string; database_env: string; health_path: string };
   models: {
+    assistant: string;
     tiers: Partial<Record<"small" | "medium" | "large", ModelProfile>>;
     aliases: Record<string, ModelProfile>;
   };
@@ -48,22 +50,21 @@ export const DEFAULTS: FactoryConfig = {
   protected_paths: [".archon/**", ".github/**", "DEPLOY.md"],
   autonomy: "standard",
   app: { prepare: "", start: "", port_env: "PORT", database_env: "", health_path: "/health" },
-  models: { tiers: {}, aliases: {} },
+  models: { assistant: "", tiers: {}, aliases: {} },
   triggers: {
     enabled: false,
     host_id: "",
     run_as_user_id: "",
-    build_queue: { interval_seconds: 1800, capacity: 1 },
-    merge_queue: { interval_seconds: 1800, capacity: 1 },
-    discoveries: { interval_seconds: 14400, capacity: 1 },
-    manager: { interval_seconds: 14400, capacity: 1 },
-    app_check: { interval_seconds: 1800, capacity: 1 },
+    build_queue: { interval_seconds: 1800 },
+    merge_queue: { interval_seconds: 1800 },
+    discoveries: { interval_seconds: 14400 },
+    manager: { interval_seconds: 14400 },
+    app_check: { interval_seconds: 1800 },
   },
 };
 
 type RecordValue = Record<string, unknown>;
-const FACTORY_ALIASES = new Set(["@factory-planner", "@factory-reviewer", "@factory-manager", "@factory-deployer"]);
-const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+const EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent"] as const;
 const TIERS = ["small", "medium", "large"] as const;
 const SCHEDULES = ["build_queue", "merge_queue", "discoveries", "manager", "app_check"] as const;
 
@@ -84,7 +85,10 @@ function exact(value: RecordValue, allowed: readonly string[], path: string): vo
 }
 
 function string(value: unknown, fallback: string, path: string, allowEmpty = true): string {
-  if (value === undefined) return fallback;
+  if (value === undefined) {
+    if (!allowEmpty && !fallback.trim()) fail(path, "expected a non-empty string");
+    return fallback;
+  }
   if (typeof value !== "string" || (!allowEmpty && !value.trim())) fail(path, "expected a non-empty string");
   return value;
 }
@@ -116,10 +120,11 @@ function choice<T extends string>(value: unknown, allowed: readonly T[], fallbac
 
 function profile(value: unknown, path: string): ModelProfile {
   const raw = object(value, path);
-  exact(raw, ["model", "effort"], path);
+  exact(raw, ["provider", "model", "effort"], path);
+  const provider = string(raw.provider, "", `${path}.provider`, false);
   const model = string(raw.model, "", `${path}.model`, false);
   const effort = raw.effort === undefined ? undefined : choice(raw.effort, EFFORTS, "medium", `${path}.effort`);
-  return effort ? { model, effort } : { model };
+  return effort ? { provider, model, effort } : { provider, model };
 }
 
 function profiles(value: unknown, path: string, aliases: boolean): Record<string, ModelProfile> {
@@ -135,10 +140,9 @@ function profiles(value: unknown, path: string, aliases: boolean): Record<string
 
 function schedule(value: unknown, fallback: ScheduleConfig, path: string): ScheduleConfig {
   const raw = value === undefined ? {} : object(value, path);
-  exact(raw, ["interval_seconds", "capacity"], path);
+  exact(raw, ["interval_seconds"], path);
   return {
     interval_seconds: integer(raw.interval_seconds, fallback.interval_seconds, `${path}.interval_seconds`, 0),
-    capacity: integer(raw.capacity, fallback.capacity, `${path}.capacity`, 1),
   };
 }
 
@@ -158,7 +162,7 @@ export function parseFactoryConfig(raw: string): FactoryConfig {
   const app = section(root, "app");
   exact(app, ["prepare", "start", "port_env", "database_env", "health_path"], "app");
   const models = section(root, "models");
-  exact(models, ["tiers", "aliases"], "models");
+  exact(models, ["assistant", "tiers", "aliases"], "models");
   const triggers = section(root, "triggers");
   exact(triggers, ["enabled", "host_id", "run_as_user_id", ...SCHEDULES], "triggers");
 
@@ -187,6 +191,7 @@ export function parseFactoryConfig(raw: string): FactoryConfig {
       health_path: string(app.health_path, DEFAULTS.app.health_path, "app.health_path", false),
     },
     models: {
+      assistant: string(models.assistant, DEFAULTS.models.assistant, "models.assistant"),
       tiers: profiles(models.tiers, "models.tiers", false),
       aliases: profiles(models.aliases, "models.aliases", true),
     },
@@ -213,8 +218,8 @@ export function parseFactoryConfig(raw: string): FactoryConfig {
     if (!config.project.repo_path.trim() || !/^[^/\s]+\/[^/\s]+$/.test(config.project.repo_path))
       fail("project.repo_path", "must be OWNER/REPO when triggers are enabled");
     if (!config.triggers.host_id.trim()) fail("triggers.host_id", "is required when triggers are enabled");
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(config.triggers.run_as_user_id))
-      fail("triggers.run_as_user_id", "must be the UUID printed by archon trigger whoami");
+    if (!config.triggers.run_as_user_id.trim())
+      fail("triggers.run_as_user_id", "is required when triggers are enabled; use the opaque ID printed by archon trigger whoami");
   }
   return config;
 }
@@ -271,8 +276,8 @@ function applyPolicies(root: string, preset: AutonomyPreset): string[] {
   });
 }
 
-function codexProfile(value: ModelProfile): RecordValue {
-  return { provider: "codex", model: value.model, ...(value.effort ? { effort: value.effort } : {}) };
+function archonProfile(value: ModelProfile): RecordValue {
+  return { provider: value.provider, model: value.model, ...(value.effort ? { effort: value.effort } : {}) };
 }
 
 function applyArchonConfig(root: string, factory: FactoryConfig): string {
@@ -282,22 +287,10 @@ function applyArchonConfig(root: string, factory: FactoryConfig): string {
   const tiers = current.tiers === undefined ? {} : object(current.tiers, ".archon/config.yaml tiers");
   for (const tier of TIERS) {
     const configured = factory.models.tiers[tier];
-    if (configured) tiers[tier] = codexProfile(configured);
-    else if (tiers[tier] !== undefined && object(tiers[tier], `tiers.${tier}`).provider !== "codex")
-      throw new Error(`tiers.${tier} must use provider codex or be removed; factory workflows cannot execute another provider`);
+    if (configured) tiers[tier] = archonProfile(configured);
   }
-  for (const name of FACTORY_ALIASES) {
-    const configured = factory.models.aliases[name];
-    if (configured) aliases[name] = codexProfile(configured);
-    else if (aliases[name] !== undefined && object(aliases[name], `aliases.${name}`).provider !== "codex")
-      throw new Error(`aliases.${name} must use provider codex or be removed`);
-  }
-  for (const [name, configured] of Object.entries(factory.models.aliases)) aliases[name] = codexProfile(configured);
-  for (const [name, value] of Object.entries(tiers))
-    if (object(value, `tiers.${name}`).provider !== "codex") throw new Error(`tiers.${name} must use provider codex`);
-  for (const [name, value] of Object.entries(aliases))
-    if (object(value, `aliases.${name}`).provider !== "codex") throw new Error(`aliases.${name} must use provider codex`);
-  current.assistant = "codex";
+  for (const [name, configured] of Object.entries(factory.models.aliases)) aliases[name] = archonProfile(configured);
+  if (factory.models.assistant) current.assistant = factory.models.assistant;
   if (Object.keys(tiers).length) current.tiers = tiers;
   if (Object.keys(aliases).length) current.aliases = aliases;
   mkdirSync(join(root, ".archon"), { recursive: true });
@@ -327,8 +320,14 @@ function triggerDefinitions(config: FactoryConfig): TimerDefinition[] {
   ];
 }
 
+function projectBindingPrefix(root: string, config: FactoryConfig): string {
+  const target = process.platform === "win32" ? resolve(root).toLowerCase() : resolve(root);
+  const identity = JSON.stringify([target, config.project.repo_host, config.project.repo_path]);
+  return `factory-${createHash("sha256").update(identity).digest("hex").slice(0, 16)}`;
+}
+
 function applyTriggers(root: string, config: FactoryConfig): string[] {
-  const directory = join(root, ".archon", "triggers"), written: string[] = [];
+  const directory = join(root, ".archon", "triggers"), written: string[] = [], projectId = projectBindingPrefix(root, config);
   for (const definition of triggerDefinitions(config)) {
     const path = join(directory, `${definition.binding}.json`), schedule = config.triggers[definition.key];
     if (!config.triggers.enabled || schedule.interval_seconds === 0) {
@@ -338,14 +337,14 @@ function applyTriggers(root: string, config: FactoryConfig): string[] {
     mkdirSync(directory, { recursive: true });
     const document = {
       version: 1,
-      sourceInstanceId: `${config.project.repo_path.replace(/[^A-Za-z0-9_-]+/g, "-")}-${definition.binding}`,
+      sourceInstanceId: `${projectId}-${definition.binding}`,
       binding: {
         bindingId: definition.binding,
         bindingRevision: null,
         hostId: config.triggers.host_id,
         runAsUserId: config.triggers.run_as_user_id,
         resource: definition.resource,
-        capacity: schedule.capacity,
+        capacity: 1,
         overlap: definition.overlap,
         launch: {
           cwd: resolve(root),
@@ -364,8 +363,18 @@ function applyTriggers(root: string, config: FactoryConfig): string[] {
 
 export interface ApplyResult { config: string; policies: string[]; triggers: string[]; autonomy: AutonomyPreset }
 
+export function assertHoldoutsOutsideRoot(root: string, factory: FactoryConfig): void {
+  if (!factory.holdouts.enabled) return;
+  const checkout = resolve(root);
+  const holdouts = resolve(factory.holdouts.path.replace(/^~(?=[/\\]|$)/, homedir()));
+  const boundary = relative(checkout, holdouts);
+  if (boundary === "" || (boundary !== ".." && !boundary.startsWith(`..${sep}`) && !isAbsolute(boundary)))
+    fail("holdouts.path", "must resolve outside the target checkout");
+}
+
 export function applyFactoryConfig(root = resolve(".")): ApplyResult {
   const factory = readFactoryConfig(join(root, ".archon", "factory.yaml"));
+  assertHoldoutsOutsideRoot(root, factory);
   const config = applyArchonConfig(root, factory);
   const policies = applyPolicies(root, factory.autonomy);
   const triggers = applyTriggers(root, factory);

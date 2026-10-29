@@ -1,18 +1,19 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { currentBranchOid } from "./base.ts";
 import { boundDescription } from "./binding.ts";
 import { env, ghJson, jsonEnv, postStatus, run } from "../../.shared/utils.ts";
 
-interface CurrentPull { state: string; headRefOid: string; baseRefName: string; baseRefOid: string }
-export function bindingIsCurrent(current: CurrentPull, head: string, base: string, baseOid: string): boolean {
-  return current.state === "OPEN" && current.headRefOid === head && current.baseRefName === base && current.baseRefOid === baseOid;
+interface CurrentPull { state: string; headRefOid: string; baseRefName: string }
+export function bindingIsCurrent(current: CurrentPull, currentBaseOid: string, head: string, base: string, baseOid: string): boolean {
+  return current.state === "OPEN" && current.headRefOid === head && current.baseRefName === base && currentBaseOid === baseOid;
 }
 
 if (import.meta.main) {
   const repo = env("repo_path"), head = env("head"), base = env("base"), baseOid = env("base_oid"), pr = env("pr"), overall = env("overall");
   const lines = jsonEnv<string[]>("lines", []);
-  const current = ghJson(["pr", "view", pr, "--repo", repo, "--json", "state,headRefOid,baseRefName,baseRefOid"]) as CurrentPull;
-  const fresh = bindingIsCurrent(current, head, base, baseOid);
+  const current = ghJson(["pr", "view", pr, "--repo", repo, "--json", "state,headRefOid,baseRefName"]) as CurrentPull;
+  const fresh = bindingIsCurrent(current, currentBranchOid(repo, current.baseRefName), head, base, baseOid);
   const state = overall === "PASS" && fresh ? "success" : "failure";
   const message = !fresh ? "stale: pull request head/base changed" : overall === "PASS" ? "black-box app check passed" : "black-box app check failed";
   postStatus(repo, head, state, "factory/app-check", boundDescription(base, baseOid, message));

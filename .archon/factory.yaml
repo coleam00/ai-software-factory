@@ -24,21 +24,22 @@ app:
   database_env: ""
   health_path: /health
 
-# Profiles omit provider because factory-setup always writes provider: codex.
-# Add only model identifiers supported by your Codex account.
+# Leave assistant empty to inherit Archon's selected provider. Configured profiles
+# require an explicit provider and model supported by the Archon installation.
 models:
+  assistant: ""
   tiers: {}
   aliases: {}
   # aliases:
-  #   '@factory-manager': { model: YOUR_CODEX_MODEL, effort: high }
+  #   '@factory-manager': { provider: YOUR_PROVIDER, model: YOUR_MODEL, effort: high }
 
 # Generation writes current Archon timer-binding JSON only. It never installs or fires a timer.
 triggers:
   enabled: false
   host_id: ""
   run_as_user_id: ""
-  build_queue: { interval_seconds: 1800, capacity: 1 }
-  merge_queue: { interval_seconds: 1800, capacity: 1 }
-  discoveries: { interval_seconds: 14400, capacity: 1 }
-  manager: { interval_seconds: 14400, capacity: 1 }
-  app_check: { interval_seconds: 1800, capacity: 1 }
+  build_queue: { interval_seconds: 1800 }
+  merge_queue: { interval_seconds: 1800 }
+  discoveries: { interval_seconds: 14400 }
+  manager: { interval_seconds: 14400 }
+  app_check: { interval_seconds: 1800 }

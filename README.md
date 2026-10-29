@@ -19,9 +19,9 @@ progress.
 Use an Archon checkout containing baseline commit `395b8e96b` plus these three Windows
 compatibility fixes:
 
-- `0bdc3a888` — SDLC PR description matching on Bun before 1.4
-- `6a09dd0ad` — empty bunfig handling for the Windows job broker
-- `aceae89bd` — stream inline Bun scripts over stdin
+- `0bdc3a888`: SDLC PR description matching on Bun before 1.4
+- `6a09dd0ad`: empty bunfig handling for the Windows job broker
+- `aceae89bd`: stream inline Bun scripts over stdin
 
 The tested sandbox tip is `aceae89bd`. Confirm the baseline with:
 
@@ -29,10 +29,11 @@ The tested sandbox tip is `aceae89bd`. Confirm the baseline with:
 git -C /path/to/Archon merge-base --is-ancestor 395b8e96b aceae89bd
 ```
 
-Archon, Bun, Git, and authenticated `gh` are prerequisites. Configure Codex credentials
-through Archon. `.archon/config.yaml` pins the project assistant to `codex`; setup
-refuses non-Codex bindings for any factory alias or tier it uses.
-When app checks are enabled, the scheduled Codex environment must also provide the
+Archon, Bun, Git, and authenticated `gh` are prerequisites. Configure a supported
+Archon provider and its credentials through Archon. Factory workflows inherit the
+operator's selected provider and tier defaults unless `factory.yaml` explicitly sets
+an assistant or provider-qualified tier/alias profile.
+When app checks are enabled, the scheduled environment must also provide the
 `agent-browser` command used by the sourced black-box check; setup does not install it.
 
 ## Packaging limitation
@@ -67,12 +68,13 @@ attention, and trigger commands.
    git diff -- .archon
    ```
 
-Setup validates malformed and unknown settings. It writes `assistant: codex` and any
-configured Codex tiers/aliases into the supported `.archon/config.yaml` fields. It
-maps `supervised`, `standard`, or `autonomous` into marked blocks in the project
-triage/build/merge policy files. Text outside those blocks is preserved. The mapping
-never expands product scope: agents judge policy prose, while the setup script only
-selects the preset's fixed lines.
+Setup validates malformed and unknown settings. It writes only an explicitly configured
+`models.assistant` and provider-qualified tier/alias profiles into the supported
+`.archon/config.yaml` fields. Existing assistant selection and unrelated profiles are
+preserved. It maps `supervised`, `standard`, or `autonomous` into marked blocks in the
+project triage/build/merge policy files. Text outside those blocks is preserved. The
+mapping never expands product scope: agents judge policy prose, while the setup script
+only selects the preset's fixed lines.
 
 The app configuration is deliberately generic:
 
@@ -82,10 +84,10 @@ The app configuration is deliberately generic:
 - `app.database_env`: optional variable receiving a fresh database path
 - `app.health_path`: HTTP health path
 
-No start command, port, database variable, holdout path, model ID, credential, cloud,
-or deployment destination is assumed. Add project paths to `protected_paths`. Add
-only Codex model identifiers supported by the operator's account under `models.tiers`
-or `models.aliases`.
+No start command, port, database variable, holdout path, provider, model ID, credential,
+cloud, or deployment destination is assumed. Add project paths to `protected_paths`.
+Leave `models.assistant` empty to inherit Archon. Every configured tier or alias must
+name both its Archon provider and model explicitly.
 
 ## Native queues and triggers
 
@@ -117,12 +119,15 @@ Archon SDLC pack. This package does not synthesize that binding because a timer 
 supply the issue event fields.
 
 For timer queues, get the execution identity with `archon trigger whoami`, then set
-`triggers.host_id`, `triggers.run_as_user_id`, intervals, and capacities in
+`triggers.host_id`, the opaque `triggers.run_as_user_id`, and intervals in
 `factory.yaml`. Set `triggers.enabled: true` and rerun `factory-setup`. It generates
 version-1 timer files under `.archon/triggers/` using the current binding schema,
-including absolute `cwd`, explicit isolation, resource, capacity, overlap, host, and
-run-as user. An interval of `0` disables that generated binding. Setup never installs
-or fires a timer, and it never edits legacy `.factory/trigger.json`.
+including absolute `cwd`, explicit isolation, resource, overlap, host, and run-as user.
+Native capacity is fixed at `1`; app-check cannot be configured above one concurrent
+launch. Binding identities are stable per configured project so separate projects in
+one Archon home do not collide. An interval of `0` disables that generated binding.
+Setup never installs or fires a timer, and it never edits legacy
+`.factory/trigger.json`.
 
 After a successful manual pass, installation is an explicit operator action:
 
@@ -153,19 +158,21 @@ fails if its head or base changed. A pending status older than two hours is stal
 does not suppress another check. Evidence must be newer than preparation, every check
 line must cite a real file, and `INCOMPLETE` is failure.
 
-Configure `factory/app-check` as a required status where this gate is required. A
-green status for another base, an older head, or an expired pending check is not fresh
-evidence. Archon's merge queue independently pins review, CI, and merge to the exact PR
-head; project merge policy should name every required check. Protected-path changes
-fail closed unless the app-check input carries an exact operator grant for that head
-and the complete matched path set.
+GitHub branch protection must require the repository CI check, `factory/app-check`, and
+`factory/policy`, with strict "Require branches to be up to date before merging"
+enabled. A green status for another base, an older head, or an expired pending check is
+not fresh evidence. Archon's merge queue independently pins review, CI, and merge to the
+exact PR head; project merge policy should name every required check. Protected-path
+changes fail closed unless the app-check input carries an exact operator grant for that
+head and the complete matched path set.
 
 ## External holdouts
 
 Optional holdouts live at the absolute, project-specific external path in
 `holdouts.path`; there is no repository default. The writer and normal/deep app-check
 nodes receive that path, while ordinary builders do not. Public reports contain IDs
-and visible outcomes, not scenario text.
+and visible outcomes, not scenario text. Setup normalizes the configured path and
+rejects the checkout itself or any path inside it without reading scenario contents.
 
 This is context separation, not an operating-system security boundary. A process with
 filesystem permission can still read the directory. Use a separate account, ACLs,
@@ -190,18 +197,15 @@ revision. No deployment is performed by this repository's validation.
 
 ## Validate the package
 
-Use the matching sandbox environment so every model-bearing validation resolves to
-Codex. Workflow fixtures are stubbed and make no provider call:
+Use the matching sandbox environment and its configured Archon provider. Workflow
+fixtures are stubbed and make no provider call:
 
 ```bash
 source /path/to/v1test-runtime/env.sh
-bun test .archon/workflows/factory/app-check/__tests__/*.test.ts \
-  .archon/workflows/factory/backlog/__tests__/*.test.ts \
-  .archon/workflows/factory/deploy/__tests__/*.test.ts
-archon workflow test factory-app-check
-archon workflow test factory-backlog
-archon workflow test factory-setup
-archon workflow test factory-deploy
+bun test ./.archon/workflows/factory/app-check/__tests__/*.test.ts \
+  ./.archon/workflows/factory/backlog/__tests__/*.test.ts \
+  ./.archon/workflows/factory/deploy/__tests__/*.test.ts
+archon workflow test .archon/workflows/factory
 archon validate workflows
 ```
 
@@ -216,7 +220,7 @@ deployment. Those remain operator acceptance steps.
 ```text
 .archon/
   factory.yaml                  operator-owned factory settings
-  config.yaml                   Codex project invariant and generated bindings
+  config.yaml                   inherited Archon defaults and generated bindings
   scripts/factory-config.ts     strict parser and mechanical setup
   skills/factory-setup/         setup guidance; delegates queue use to archon-cli
   skills/factory-manager/       policy-only attention tending

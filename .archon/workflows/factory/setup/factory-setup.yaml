@@ -1,5 +1,5 @@
 name: factory-setup
-description: Validate factory.yaml and mechanically apply Codex bindings, autonomy policy blocks, and native trigger files without installing or firing timers.
+description: Validate factory.yaml and mechanically apply configured model profiles, autonomy policy blocks, and native trigger files without installing or firing timers.
 returns: apply
 worktree: { enabled: false }
 mutates_checkout: true

@@ -1,3 +1,2 @@
-# Project-level invariant: every factory agent uses Codex. factory-setup adds optional
-# Codex tiers and @factory-* aliases from factory.yaml while preserving other keys.
-assistant: codex
+# Factory workflows inherit Archon's selected provider and tier defaults.
+# factory-setup adds only profiles explicitly configured in factory.yaml.
