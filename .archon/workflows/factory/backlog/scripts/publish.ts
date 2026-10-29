@@ -1,7 +1,6 @@
-import { readFileSync } from "node:fs";
-import { emit, env, ghJson, run } from "../../.shared/utils.ts";
+import { emit, env, ghJson, readJsonFile, run } from "../../.shared/utils.ts";
 
-const repo = env("repo_path"), tickets = JSON.parse(readFileSync(`${process.env.ARTIFACTS_DIR}/backlog.json`, "utf8"));
+const repo = env("repo_path"), tickets = readJsonFile<any[]>(`${process.env.ARTIFACTS_DIR}/backlog.json`);
 const listed = ghJson(["issue", "list", "--repo", repo, "--state", "all", "--limit", "1000", "--json", "number,url,body"]) as any[];
 const created: string[] = [], existing: string[] = [], numbers = new Map<string, number>();
 for (const ticket of tickets) {

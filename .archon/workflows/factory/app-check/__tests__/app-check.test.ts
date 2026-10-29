@@ -67,6 +67,30 @@ describe("app-check deterministic decisions", () => {
     const holdout = "H-01  PASS  Private invariant holds.  evidence: shot.txt";
     expect(evidenceProblems({ overall: "PASS", lines: [line, holdout] }, `${line}\n${holdout}`, root, preparedAt, ["H-01"])).toEqual([]);
   });
+  test("evidence entrypoint accepts one leading BOM without relaxing JSON parsing", () => {
+    const artifacts = mkdtempSync(join(tmpdir(), "factory-evidence-entrypoint-test-"));
+    const root = join(artifacts, "app-check");
+    mkdirSync(root, { recursive: true });
+    const preparedAt = Date.now() - 10_000;
+    const line = "C1  PASS  Add\uFEFFflow works.  evidence: shot.txt";
+    writeFileSync(join(root, "shot.txt"), "observed");
+    writeFileSync(join(root, "report.md"), line);
+    const resultPath = join(root, "result.json");
+    writeFileSync(resultPath, `\uFEFF${JSON.stringify({ overall: "PASS", lines: [line], summary: "observed" })}`);
+    const script = join(import.meta.dir, "..", "scripts", "evidence.ts");
+    const env = { ...process.env, ARTIFACTS_DIR: artifacts, INPUTS_PREPARED_AT: String(preparedAt), INPUTS_EXPECTED_HOLDOUTS: "[]" };
+    const accepted = Bun.spawnSync([process.execPath, script], { env, stdout: "pipe", stderr: "pipe" });
+    expect(accepted.exitCode, accepted.stderr.toString()).toBe(0);
+    expect(JSON.parse(accepted.stdout.toString()).lines).toEqual([line]);
+
+    writeFileSync(resultPath, `\uFEFF\uFEFF${JSON.stringify({ overall: "PASS", lines: [line], summary: "observed" })}`);
+    const doubled = Bun.spawnSync([process.execPath, script], { env, stdout: "pipe", stderr: "pipe" });
+    expect(doubled.exitCode).not.toBe(0);
+
+    writeFileSync(resultPath, '\uFEFF{"overall":');
+    const malformed = Bun.spawnSync([process.execPath, script], { env, stdout: "pipe", stderr: "pipe" });
+    expect(malformed.exitCode).not.toBe(0);
+  });
   test("turns an abandoned pending check into failure", () => {
     const root = mkdtempSync(join(tmpdir(), "factory-finalize-test-"));
     mkdirSync(root, { recursive: true });

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import { emit, env, jsonEnv } from "../../.shared/utils.ts";
+import { emit, env, jsonEnv, readJsonFile } from "../../.shared/utils.ts";
 
 export const LINE = /^(C\d+|H-[A-Za-z0-9_-]+)\s{2}(PASS|FAIL|INCOMPLETE)\s{2}(.+?)\s{2}evidence:\s+(.+)$/;
 export function evidenceProblems(result: any, report: string, root: string, preparedAt: number, expectedHoldouts: string[] = []): string[] {
@@ -38,7 +38,7 @@ if (import.meta.main) {
   if (!existsSync(resultPath) || !existsSync(reportPath)) throw new Error("check must write app-check/result.json and app-check/report.md");
   const preparedAt = Number(env("prepared_at"));
   if (statSync(resultPath).mtimeMs < preparedAt || statSync(reportPath).mtimeMs < preparedAt) throw new Error("result.json and report.md must be written after prepare");
-  const result = JSON.parse(readFileSync(resultPath, "utf8")), report = readFileSync(reportPath, "utf8");
+  const result = readJsonFile<any>(resultPath), report = readFileSync(reportPath, "utf8");
   const problems = evidenceProblems(result, report, root, preparedAt, jsonEnv<string[]>("expected_holdouts", []));
   if (problems.length) throw new Error(problems.join("\n"));
   emit({ overall: result.overall, lines: result.lines, report });

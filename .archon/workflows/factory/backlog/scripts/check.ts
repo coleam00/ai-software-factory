@@ -1,5 +1,4 @@
-import { readFileSync } from "node:fs";
-import { emit } from "../../.shared/utils.ts";
+import { emit, readJsonFile } from "../../.shared/utils.ts";
 
 const REQUIRED = ["Problem", "Why", "Why now", "Outcome", "Invariants", "Acceptance"];
 export function validateBacklog(value: unknown): string[] {
@@ -28,7 +27,7 @@ export function validateBacklog(value: unknown): string[] {
 }
 
 if (import.meta.main) {
-  const tickets = JSON.parse(readFileSync(`${process.env.ARTIFACTS_DIR}/backlog.json`, "utf8"));
+  const tickets = readJsonFile<any[]>(`${process.env.ARTIFACTS_DIR}/backlog.json`);
   const errors = validateBacklog(tickets); if (errors.length) throw new Error(errors.join("\n"));
   emit({ count: tickets.length, keys: tickets.map((ticket: any) => ticket.key) });
 }

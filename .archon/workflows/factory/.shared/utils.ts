@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 export function globRegex(pattern: string): RegExp {
   let source = "";
   for (let i = 0; i < pattern.length; i++) {
@@ -20,6 +22,10 @@ export const matchingFiles = (files: string[], patterns: string[]) => {
 
 export function env(name: string, fallback = ""): string { return process.env[`INPUTS_${name.toUpperCase()}`]?.trim() || fallback; }
 export function jsonEnv<T>(name: string, fallback: T): T { const value = env(name); return value ? JSON.parse(value) as T : fallback; }
+export function readJsonFile<T = unknown>(path: string): T {
+  const text = readFileSync(path, "utf8");
+  return JSON.parse(text.startsWith("\uFEFF") ? text.slice(1) : text) as T;
+}
 export function emit(value: unknown): void { console.log(JSON.stringify(value)); }
 
 export function run(command: string[], options: { cwd?: string; allowFailure?: boolean } = {}): string {
