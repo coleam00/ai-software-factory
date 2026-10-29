@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
+import { installFakeCommand, isolatedCommandEnv } from "../../.shared/test-command.ts";
 import { validateBacklog } from "../scripts/check.ts";
 
 const body = (key: string) => `## Problem\nA real problem.\n## Why\nUser value.\n## Why now\nNeeded now.\n## Outcome\nA running outcome.\n## Invariants\n- Keep data.\n## Acceptance\n- [ ] Observable result\n\n<!-- factory-backlog: ${key} -->`;
@@ -28,21 +29,23 @@ describe("backlog check", () => {
     expect(checked.exitCode, checked.stderr.toString()).toBe(0);
     expect(JSON.parse(checked.stdout.toString())).toEqual({ count: 1, keys: ["first-run"] });
 
-    const fake = join(artifacts, "fake-gh.ts");
-    const command = join(artifacts, process.platform === "win32" ? "gh.cmd" : "gh");
-    writeFileSync(fake, 'if (process.argv[2] === "issue" && process.argv[3] === "list") console.log("[]");\n');
-    if (process.platform === "win32") writeFileSync(command, `@"${process.execPath}" "${fake}" %*\r\n`);
-    else {
-      writeFileSync(command, `#!/bin/sh\nexec "${process.execPath}" "${fake}" "$@"\n`);
-      chmodSync(command, 0o755);
-    }
+    const log = join(artifacts, "gh.log");
+    installFakeCommand(artifacts, "gh", `import { appendFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(process.env.GH_LOG!, JSON.stringify(args) + "\\n");
+if (args[0] === "issue" && args[1] === "list") console.log("[]");
+else throw new Error("unexpected gh arguments: " + JSON.stringify(args));
+`);
     writeFileSync(backlogPath, "\uFEFF[]");
     const published = Bun.spawnSync([process.execPath, join(import.meta.dir, "..", "scripts", "publish.ts")], {
-      env: { ...env, PATH: `${artifacts}${delimiter}${process.env.PATH ?? ""}`, INPUTS_REPO_PATH: "example/widgets" },
+      env: isolatedCommandEnv(artifacts, { ARTIFACTS_DIR: artifacts, GH_LOG: log, INPUTS_REPO_PATH: "example/widgets" }),
       stdout: "pipe", stderr: "pipe",
     });
     expect(published.exitCode, published.stderr.toString()).toBe(0);
     expect(JSON.parse(published.stdout.toString())).toEqual({ published: true, created: [], existing: [] });
+    const calls = readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line) as string[]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.slice(0, 2)).toEqual(["issue", "list"]);
 
     writeFileSync(backlogPath, '\uFEFF[{"key":');
     const malformed = Bun.spawnSync([process.execPath, join(import.meta.dir, "..", "scripts", "check.ts")], { env, stdout: "pipe", stderr: "pipe" });

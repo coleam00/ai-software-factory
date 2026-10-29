@@ -16,18 +16,24 @@ This is an early v1 package for review and soak testing. It is not production-re
 and it makes no claim that ten unattended laps have passed. That soak is still in
 progress.
 
-Use an Archon checkout containing baseline commit `395b8e96b` plus these three Windows
-compatibility fixes:
+Use an Archon checkout containing baseline commit `395b8e96b` plus these compatibility
+fixes:
 
 - `0bdc3a888`: SDLC PR description matching on Bun before 1.4
 - `6a09dd0ad`: empty bunfig handling for the Windows job broker
 - `aceae89bd`: stream inline Bun scripts over stdin
+- `e3f8fe39c`: refactor the ratchet checks
+- `f47aa2bbf`: bound the Codex pipe drain
 
-The tested sandbox tip is `aceae89bd`. Confirm the baseline with:
+The current tested engine tip is `f47aa2bbf`. Confirm the baseline with:
 
 ```bash
-git -C /path/to/Archon merge-base --is-ancestor 395b8e96b aceae89bd
+git -C /path/to/Archon merge-base --is-ancestor 395b8e96b f47aa2bbf
 ```
+
+Bun 1.4.2 has passed an actual native-trigger detached-Git smoke test and 49 SDLC
+fixtures. A historical detached-Git issue on Windows was not reproduced in that smoke
+test, but this does not disprove the earlier report.
 
 Archon, Bun, Git, and authenticated `gh` are prerequisites. Configure a supported
 Archon provider and its credentials through Archon. Factory workflows inherit the
@@ -54,9 +60,11 @@ attention, and trigger commands.
 
 1. Edit `.archon/factory.yaml` in the target project.
 2. Leave `triggers.enabled: false` until manual queue runs are understood.
-3. Run setup from the target project:
+3. Install the matching engine's `archon-cli` skill into the target project, then run
+   setup. Do this before setup or any queue operation:
 
    ```bash
+   archon skill add .
    archon workflow run factory-setup --detach
    ```
 

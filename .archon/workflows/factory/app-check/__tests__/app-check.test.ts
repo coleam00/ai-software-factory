@@ -9,9 +9,10 @@ import { boundDescription, statusCoversBinding } from "../scripts/binding.ts";
 import { configuredHoldoutIds } from "../scripts/holdouts.ts";
 import { bindingIsCurrent } from "../scripts/publish.ts";
 import { finalizePending } from "../scripts/finalize.ts";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { installFakeCommand, isolatedCommandEnv } from "../../.shared/test-command.ts";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 
 describe("app-check deterministic decisions", () => {
   test("matches anchored frontend globs", () => {
@@ -105,20 +106,19 @@ describe("app-check deterministic decisions", () => {
   });
   test("selects and publishes against the current encoded branch ref when the PR base snapshot is stale", () => {
     const root = mkdtempSync(join(tmpdir(), "factory-current-base-test-"));
-    const fake = join(root, "fake-gh.ts"), log = join(root, "gh.log"), command = join(root, process.platform === "win32" ? "gh.cmd" : "gh");
-    writeFileSync(fake, `import { appendFileSync } from "node:fs";
+    const log = join(root, "gh.log");
+    installFakeCommand(root, "gh", `import { appendFileSync } from "node:fs";
 const args = process.argv.slice(2);
 appendFileSync(process.env.GH_LOG!, JSON.stringify(args) + "\\n");
 if (args[0] === "pr" && args[1] === "view") console.log(JSON.stringify({ number: 7, isDraft: true, createdAt: "2026-01-01", headRefOid: "head-a", baseRefName: "release/2026", baseRefOid: "stale-pr-base", files: [{ path: "public/app.css" }], body: "", state: "OPEN" }));
 else if (args[0] === "api" && args[1] === "repos/example/shelf/git/ref/heads/release%2F2026") console.log(JSON.stringify({ object: { sha: "current-base" } }));
 else if (args[0] === "api" && args[1] === "repos/example/shelf/issues/7/comments") console.log("[]");
+else if (args[0] === "api" && args[1] === "--method" && args[2] === "POST" && ["repos/example/shelf/statuses/head-a", "repos/example/shelf/issues/7/comments"].includes(args[3])) {}
+else throw new Error("unexpected gh arguments: " + JSON.stringify(args));
 `);
-    if (process.platform === "win32") writeFileSync(command, `@"${process.execPath}" "${fake}" %*\r\n`);
-    else {
-      writeFileSync(command, `#!/bin/sh\nexec "${process.execPath}" "${fake}" "$@"\n`);
-      chmodSync(command, 0o755);
-    }
-    const common = { ...process.env, PATH: `${root}${delimiter}${process.env.PATH ?? ""}`, GH_LOG: log, INPUTS_REPO_PATH: "example/shelf", INPUTS_PR: "7" };
+    const common = isolatedCommandEnv(root, { GH_LOG: log, INPUTS_REPO_PATH: "example/shelf", INPUTS_PR: "7" });
+    expect(Object.keys(common).filter(key => key.toUpperCase() === "PATH")).toEqual(["PATH"]);
+    expect(common.PATH).toBe(root);
     const selected = Bun.spawnSync([process.execPath, join(import.meta.dir, "..", "scripts", "select.ts")], { env: common, stdout: "pipe", stderr: "pipe" });
     expect(selected.exitCode, selected.stderr.toString()).toBe(0);
     expect(JSON.parse(selected.stdout.toString())).toMatchObject({ found: true, head: "head-a", base: "release/2026", base_oid: "current-base" });
