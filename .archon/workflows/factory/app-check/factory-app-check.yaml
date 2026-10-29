@@ -1,0 +1,183 @@
+name: factory-app-check
+description: Test the oldest unchecked pull request merged with current main through the running app, then seal and publish the evidence.
+inputs:
+  repo_path:
+    required: true
+    description: GitHub owner/name.
+  pr:
+    default: ""
+    description: Optional pull request number; empty selects the oldest eligible pull request.
+  protected_grant:
+    default: ""
+    description: JSON operator grant with exact head and protected paths; empty denies protected changes.
+returns: publish
+worktree:
+  enabled: false
+mutates_checkout: false
+nodes:
+  - id: config
+    script: config
+    runtime: bun
+    output_format: { type: object }
+
+  - id: select
+    script: select
+    runtime: bun
+    depends_on: [config]
+    with: { repo_path: "$INPUTS.repo_path", pr: "$INPUTS.pr" }
+    output_format:
+      type: object
+      properties:
+        found: { type: boolean }
+        pr: { type: [integer, 'null'] }
+        head: { type: string }
+        files: { type: array, items: { type: string } }
+        base: { type: string }
+        base_oid: { type: string }
+        issue: { type: [integer, 'null'] }
+        issue_body: { type: string }
+        issue_labels: { type: array, items: { type: string } }
+      required: [found, pr, head, files, base, base_oid, issue, issue_body, issue_labels]
+
+  - id: pending
+    script: pending
+    runtime: bun
+    depends_on: [select]
+    when: "$select.output.found == true"
+    with: { repo_path: "$INPUTS.repo_path", head: "$select.output.head", base: "$select.output.base", base_oid: "$select.output.base_oid" }
+    output_format:
+      type: object
+      properties: { posted: { type: boolean } }
+      required: [posted]
+
+  - id: scope
+    script: scope
+    runtime: bun
+    depends_on: [config, select, pending]
+    when: "$select.output.found == true"
+    with:
+      config: "$config.output"
+      files: "$select.output.files"
+      labels: "$select.output.issue_labels"
+      repo_path: "$INPUTS.repo_path"
+      head: "$select.output.head"
+      base: "$select.output.base"
+      base_oid: "$select.output.base_oid"
+    output_format:
+      type: object
+      properties: { run: { type: boolean }, depth: { type: string, enum: [light, normal, deep] }, reason: { type: string } }
+      required: [run, depth, reason]
+
+  - id: policy
+    script: policy
+    runtime: bun
+    depends_on: [config, select, scope]
+    when: "$select.output.found == true"
+    with:
+      config: "$config.output"
+      files: "$select.output.files"
+      grant: "$INPUTS.protected_grant"
+      repo_path: "$INPUTS.repo_path"
+      head: "$select.output.head"
+    output_format:
+      type: object
+      properties:
+        ok: { type: boolean }
+        protected_files: { type: array, items: { type: string } }
+        description: { type: string }
+      required: [ok, protected_files, description]
+
+  - id: holdouts
+    script: holdouts
+    runtime: bun
+    depends_on: [config, scope]
+    when: "$scope.output.run == true"
+    with: { config: "$config.output", depth: "$scope.output.depth" }
+    output_format:
+      type: object
+      properties: { ids: { type: array, items: { type: string } } }
+      required: [ids]
+
+  - id: prepare
+    script: prepare
+    runtime: bun
+    depends_on: [scope, holdouts]
+    when: "$scope.output.run == true"
+    with: { base: "$select.output.base", base_oid: "$select.output.base_oid", head: "$select.output.head", pr: "$select.output.pr" }
+    output_format:
+      type: object
+      properties: { temp: { type: string }, merged: { type: string }, prepared_at: { type: integer } }
+      required: [temp, merged, prepared_at]
+
+  - id: check
+    command: check
+    depends_on: [prepare]
+    when: "$scope.output.run == true"
+    model: ['@factory-reviewer', large]
+    mutates_checkout: false
+    with:
+      checkout: "$prepare.output.temp"
+      merged: "$prepare.output.merged"
+      depth: "$scope.output.depth"
+      issue: "$select.output.issue"
+      issue_body: "$select.output.issue_body"
+      files: "$select.output.files"
+      config: "$config.output"
+      expected_holdouts: "$holdouts.output.ids"
+    output_format:
+      type: object
+      properties:
+        overall: { type: string, enum: [PASS, FAIL] }
+        lines: { type: array, items: { type: string } }
+        summary: { type: string }
+      required: [overall, lines, summary]
+
+  - id: evidence
+    script: evidence
+    runtime: bun
+    depends_on: [check, prepare]
+    with: { prepared_at: "$prepare.output.prepared_at", expected_holdouts: "$holdouts.output.ids" }
+    output_format:
+      type: object
+      properties:
+        overall: { type: string, enum: [PASS, FAIL] }
+        lines: { type: array, items: { type: string } }
+        report: { type: string }
+      required: [overall, lines, report]
+
+  - id: publish
+    script: publish
+    runtime: bun
+    depends_on: [evidence, policy]
+    with:
+      repo_path: "$INPUTS.repo_path"
+      pr: "$select.output.pr"
+      head: "$select.output.head"
+      base: "$select.output.base"
+      base_oid: "$select.output.base_oid"
+      overall: "$evidence.output.overall"
+      lines: "$evidence.output.lines"
+    output_format:
+      type: object
+      properties: { state: { type: string, enum: [success, failure] }, comment: { type: string, enum: [created, updated] } }
+      required: [state, comment]
+
+  - id: finalize
+    script: finalize
+    runtime: bun
+    depends_on: [select, pending, scope, policy, holdouts, prepare, check, evidence, publish]
+    trigger_rule: all_done
+    output_format:
+      type: object
+      properties: { recovered: { type: boolean } }
+      required: [recovered]
+
+  - id: cleanup
+    script: cleanup
+    runtime: bun
+    depends_on: [select, scope, policy, holdouts, prepare, check, evidence, publish, finalize]
+    trigger_rule: all_done
+    output_format:
+      type: object
+      properties: { cleaned: { type: boolean }, pid_file: { type: boolean } }
+      required: [cleaned, pid_file]

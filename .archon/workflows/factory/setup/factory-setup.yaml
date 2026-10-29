@@ -1,0 +1,17 @@
+name: factory-setup
+description: Validate factory.yaml and mechanically apply Codex bindings, autonomy policy blocks, and native trigger files without installing or firing timers.
+returns: apply
+worktree: { enabled: false }
+mutates_checkout: true
+nodes:
+  - id: apply
+    script: apply
+    runtime: bun
+    output_format:
+      type: object
+      properties:
+        config: { type: string }
+        policies: { type: array, items: { type: string } }
+        triggers: { type: array, items: { type: string } }
+        autonomy: { type: string, enum: [supervised, standard, autonomous] }
+      required: [config, policies, triggers, autonomy]

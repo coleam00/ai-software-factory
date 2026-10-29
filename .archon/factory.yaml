@@ -1,0 +1,44 @@
+# Project-owned factory settings. Run factory-setup after editing.
+project:
+  repo_host: github.com
+  repo_path: ""
+
+app_check:
+  enabled: false
+  trigger: frontend
+  frontend_paths: ["app/**", "public/**", "src/**/*.css", "src/**/*.html", "src/**/*.tsx", "src/**/*.jsx"]
+  depth: auto
+
+# Keep private scenarios outside the repository. Supply an absolute project-specific path.
+holdouts:
+  enabled: false
+  path: ""
+
+protected_paths: [".archon/**", ".github/**", "DEPLOY.md"]
+autonomy: standard
+
+app:
+  prepare: ""
+  start: ""
+  port_env: PORT
+  database_env: ""
+  health_path: /health
+
+# Profiles omit provider because factory-setup always writes provider: codex.
+# Add only model identifiers supported by your Codex account.
+models:
+  tiers: {}
+  aliases: {}
+  # aliases:
+  #   '@factory-manager': { model: YOUR_CODEX_MODEL, effort: high }
+
+# Generation writes current Archon timer-binding JSON only. It never installs or fires a timer.
+triggers:
+  enabled: false
+  host_id: ""
+  run_as_user_id: ""
+  build_queue: { interval_seconds: 1800, capacity: 1 }
+  merge_queue: { interval_seconds: 1800, capacity: 1 }
+  discoveries: { interval_seconds: 14400, capacity: 1 }
+  manager: { interval_seconds: 14400, capacity: 1 }
+  app_check: { interval_seconds: 1800, capacity: 1 }

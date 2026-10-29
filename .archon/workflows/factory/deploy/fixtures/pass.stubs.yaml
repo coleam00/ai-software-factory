@@ -1,0 +1,16 @@
+preflight: { revision: 0123456789abcdef0123456789abcdef01234567, deploy_doc: /project/DEPLOY.md, started_at: 1000 }
+deploy:
+  requested_revision: 0123456789abcdef0123456789abcdef01234567
+  deployed_revision: 0123456789abcdef0123456789abcdef01234567
+  health_status: healthy
+  evidence_files: [/artifacts/deploy/report.md, /artifacts/deploy/health.txt, /artifacts/deploy/revision.txt]
+  summary: The documented deployment and readback matched.
+verify:
+  deployed: true
+  revision: 0123456789abcdef0123456789abcdef01234567
+  health: healthy
+  evidence_files: [/artifacts/deploy/report.md, /artifacts/deploy/health.txt, /artifacts/deploy/revision.txt]
+fixture:
+  inputs: { revision: 0123456789abcdef0123456789abcdef01234567 }
+  expect: completed
+  reached: [preflight, deploy, verify]

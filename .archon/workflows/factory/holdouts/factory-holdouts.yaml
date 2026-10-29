@@ -1,0 +1,32 @@
+name: factory-holdouts
+description: Privately write one to three user-visible black-box holdout scenarios for an issue.
+inputs:
+  repo_path: { required: true, description: GitHub owner/name. }
+  number: { required: true, description: Issue number. }
+returns: write
+worktree: { enabled: false }
+mutates_checkout: false
+nodes:
+  - id: config
+    script: config
+    runtime: bun
+    output_format:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        dir: { type: string }
+      required: [enabled, dir]
+  - id: write
+    command: write
+    depends_on: [config]
+    when: "$config.output.enabled == true"
+    model: ['@factory-reviewer', large]
+    mutates_checkout: false
+    with: { repo_path: "$INPUTS.repo_path", number: "$INPUTS.number", holdout_dir: "$config.output.dir" }
+    output_format:
+      type: object
+      properties:
+        files: { type: array, items: { type: string } }
+        ids: { type: array, items: { type: string } }
+        summary: { type: string }
+      required: [files, ids, summary]

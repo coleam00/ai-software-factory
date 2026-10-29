@@ -1,0 +1,1 @@
+Read and follow `.archon/skills/factory-manager/SKILL.md` in periodic mode for `$INPUTS.repo_path`. Return its report, answered item ids, stuck run ids, and policy suggestions. Do not edit policy or kill runs.

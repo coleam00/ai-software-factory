@@ -1,446 +1,227 @@
-# AI Software Factory
+# AI Software Factory v1
 
-You plan the release. The factory builds it. You test it in staging and anything
-off goes back in.
+This repository is a small project-scoped factory layer for Archon's current SDLC
+pack. Archon supplies the engine, durable state documents, attention queue, aliases,
+native triggers, and the intake/build/merge/discoveries queues. The `.archon` package
+here adds project configuration, black-box app checks, private scenario writing,
+backlog slicing, a policy-bound manager, and explicit deployment.
 
-You start with a PRD for the next release: a proof of concept for something new,
-or a small epic for an app that already exists. The factory splits it into linked
-issues, works out what can run in parallel, and loops on them: an agent picks one,
-builds it, and two reviewers that did not write it decide whether it merges. Merged
-work lands in staging, where you use the whole release like a customer would.
-Anything that is off becomes a new issue, and the factory picks it up.
+Rasmus deserves credit for Archon's engine and SDLC architecture. This repository is
+a consumer layer on that architecture, not a fork or replacement for it. It does not
+override bundled SDLC workflows or modify the engine.
 
-This is not a dark factory. The middle runs on its own, but you stay at the two
-places a human adds the most: deciding what to build, and judging whether what got
-built is right. No plan captures all of your intent up front, and staging is where
-the gaps show up.
+## Status and prerequisite
 
-The automation is the easy half. Being able to trust a merge you did not read is
-the hard half, and most of what is in here exists for that.
+This is an early v1 package for review and soak testing. It is not production-ready,
+and it makes no claim that ten unattended laps have passed. That soak is still in
+progress.
 
-All AI work runs through [Archon's SDLC pack](https://github.com/coleam00/Archon).
-This repo supplies the setup, scheduling, project context and ordinary app resources.
-Archon workflows handle every agent, from triage through verification and merge.
+Use an Archon checkout containing baseline commit `395b8e96b` plus these three Windows
+compatibility fixes:
 
----
+- `0bdc3a888` — SDLC PR description matching on Bun before 1.4
+- `6a09dd0ad` — empty bunfig handling for the Windows job broker
+- `aceae89bd` — stream inline Bun scripts over stdin
 
-## Set it up
-
-Paste this to your coding agent, in the repo you want the factory in:
-
-```text
-Help me set up my own AI software factory in this repo using this GitHub repo:
-https://github.com/coleam00/ai-software-factory
-
-Read its README and follow the "Instructions for the agent" section.
-Run the installer for me, then help me write the mission and validation journeys
-based on this project. Configure Archon with my chosen coding agent and model tiers.
-Every AI step must use the shared Archon SDLC workflows.
-Leave scheduling off until we have watched one issue go through the factory.
-```
-
-That is the install. It clones this, runs the installer, then walks you through
-the three files nobody can write for you.
-
-**You need:** git, Python 3.10+, [`gh`](https://cli.github.com) authenticated with the
-`workflow` scope (`gh auth login -s workflow`, then `gh auth setup-git` so git itself
-can push, including CI workflow files), a GitHub remote, a coding agent,
-[`bun`](https://bun.sh) and [`uv`](https://docs.astral.sh/uv/).
-Your agent can help install the missing tools. The installer brings its own pinned
-Archon source, including the shared workflows; you do not need to check out Archon
-or merge its PRs yourself.
-
-**Current status:** the default pins exact Archon revision
-`1cfb8fc541580fe5edf15e9a504b572bc9bb45bb` on the `factory/sdlc-on-dev` branch (Archon
-dev plus the SDLC pack's factory workflows). `archon-loop` is the recommended scheduled workflow: each lap picks one move and routes it to an in-loop builder or to `archon-ship`, then a black-box app check (tested on the merge with the default branch, with probes, a defects-seen record and evidence the next step verifies by script) and a reviewer decide, and a deterministic merge gate merges only what that record supports; the scheduler starts a lap only when there is workable work for it; `archon-manager` steps back on a slower schedule and also keeps the loop itself healthy (runs that never started, runs that failed on infrastructure, leftover app instances, empty laps). Its pack also supports dependency-aware intake,
-reviewed delivery, scoped validation reuse, runtime and optional holdout verification,
-bounded repair, discovery handling, a merge queue that reads required checks and protected paths and seals its plan by script,
-deterministic deployment, closing the worked issue once its pull requests are confirmed
-merged, tolerance for byte-order marks and unescaped Windows paths in agent-written JSON, and scheduling through Archon native triggers. The pin and
-`pack.json` must name the same revision.
-
----
-
-## Instructions for the agent
-
-> This section is addressed to the coding agent. Run the setup for the user.
-
-**1. Install it.**
-
-Read the application repo first. Check its GitHub remote, existing configuration,
-toolchain and authentication. Reuse working logins and ask the user to complete any
-interactive sign-in that is missing. Do not print credentials.
-
-Clone the factory outside the application repo, or update an existing clean clone
-with `git pull --ff-only`:
+The tested sandbox tip is `aceae89bd`. Confirm the baseline with:
 
 ```bash
-git clone https://github.com/coleam00/ai-software-factory ~/ai-software-factory
+git -C /path/to/Archon merge-base --is-ancestor 395b8e96b aceae89bd
 ```
 
-Then, from the root of the **application repo**:
+Archon, Bun, Git, and authenticated `gh` are prerequisites. Configure Codex credentials
+through Archon. `.archon/config.yaml` pins the project assistant to `codex`; setup
+refuses non-Codex bindings for any factory alias or tier it uses.
+When app checks are enabled, the scheduled Codex environment must also provide the
+`agent-browser` command used by the sourced black-box check; setup does not install it.
+
+## Packaging limitation
+
+Packaging is currently a project copy. Copy this repository's `.archon` directory into
+the target project and review the diff. There is no installer, registry package, live
+factory update, or production deployment in this branch. Updating a project means
+reconciling a newer `.archon` copy with that project's configuration and policy prose.
+
+Only `workflows/factory/*` belongs to this layer. Leave Archon's bundled SDLC pack in
+the engine checkout; do not copy or override it in a project.
+
+## Configure and apply
+
+Use the `factory-setup` skill together with Archon's own `archon-cli` skill. The former
+covers factory settings; the latter remains authoritative for queue operation,
+attention, and trigger commands.
+
+1. Edit `.archon/factory.yaml` in the target project.
+2. Leave `triggers.enabled: false` until manual queue runs are understood.
+3. Run setup from the target project:
+
+   ```bash
+   archon workflow run factory-setup --detach
+   ```
+
+4. Read the completed run and review the repository diff:
+
+   ```bash
+   archon workflow attention --json
+   archon workflow get <run-id> --json
+   git diff -- .archon
+   ```
+
+Setup validates malformed and unknown settings. It writes `assistant: codex` and any
+configured Codex tiers/aliases into the supported `.archon/config.yaml` fields. It
+maps `supervised`, `standard`, or `autonomous` into marked blocks in the project
+triage/build/merge policy files. Text outside those blocks is preserved. The mapping
+never expands product scope: agents judge policy prose, while the setup script only
+selects the preset's fixed lines.
+
+The app configuration is deliberately generic:
+
+- `app.prepare`: optional exact preparation command
+- `app.start`: required when app checks are enabled
+- `app.port_env`: environment variable receiving a free port
+- `app.database_env`: optional variable receiving a fresh database path
+- `app.health_path`: HTTP health path
+
+No start command, port, database variable, holdout path, model ID, credential, cloud,
+or deployment destination is assumed. Add project paths to `protected_paths`. Add
+only Codex model identifiers supported by the operator's account under `models.tiers`
+or `models.aliases`.
+
+## Native queues and triggers
+
+Archon's bundled queues remain the core factory:
+
+| Purpose | Workflow |
+| --- | --- |
+| Intake and triage issue events | `archon-intake` |
+| Build a triaged item to a reviewed PR | `archon-build-queue` |
+| Merge policy-approved, fresh reviewed heads | `archon-merge-queue` |
+| Drain verified discoveries | `archon-discoveries` |
+| Slice a PRD into deduplicated issues | `factory-backlog` |
+| Check the oldest eligible PR through the app | `factory-app-check` |
+| Tend only policy-settled attention waits | `factory-manager` |
+| Write external private scenarios | `factory-holdouts` |
+| Deploy one exact documented revision | `factory-deploy` |
+
+Run a first queue pass manually using the inputs shown by
+`archon workflow list <name> --full`; do not rely on remembered flags. A typical build
+queue launch is:
 
 ```bash
-python ~/ai-software-factory/bin/factory.py init
+archon workflow run archon-build-queue \
+  --input repo_host=github.com --input repo_path=OWNER/REPO --detach
 ```
 
-Use `python3` if that is the Python command on the machine. If the user's repo lives
-on a server, run the installation and configuration there over SSH.
+Intake is event-driven and needs the GitHub event binding documented by the matching
+Archon SDLC pack. This package does not synthesize that binding because a timer cannot
+supply the issue event fields.
 
-The installer writes the factory and project templates and installs the pinned
-Archon source. It preserves project configuration on upgrades. It does not configure
-provider authentication, change model tiers or start a schedule.
-It also adds one pointer to `factory/WORKFLOW_POLICY.md` in the project's root
-`engineering.md`, the conventions file the shared workflows read, without replacing
-existing guidance. That policy supplies the
-factory-specific bootstrap, runtime, review and state-label requirements that the
-general-purpose shared workflows intentionally do not assume.
+For timer queues, get the execution identity with `archon trigger whoami`, then set
+`triggers.host_id`, `triggers.run_as_user_id`, intervals, and capacities in
+`factory.yaml`. Set `triggers.enabled: true` and rerun `factory-setup`. It generates
+version-1 timer files under `.archon/triggers/` using the current binding schema,
+including absolute `cwd`, explicit isolation, resource, capacity, overlap, host, and
+run-as user. An interval of `0` disables that generated binding. Setup never installs
+or fires a timer, and it never edits legacy `.factory/trigger.json`.
 
-**2. Configure Archon.**
+After a successful manual pass, installation is an explicit operator action:
 
-Read the installed source's configuration documentation and configure the user's
-chosen provider through native Archon settings. Preserve existing working settings.
-For Claude Code, Sonnet for small/medium and Opus for large is a useful starting
-point; use model identifiers supported by the installed provider and the user's account.
+- macOS: `archon trigger schedule install --config <absolute-trigger-json>` installs
+  Archon's per-user launchd job. Remove it with `archon trigger schedule remove` using
+  the same config. The user must be logged in; sleep and missed intervals follow
+  launchd behavior.
+- Windows: Archon does not install the scheduler task. Configure Task Scheduler under
+  the intended user to run the absolute executable with
+  `trigger fire --config <absolute-trigger-json>`, plus the correct working directory
+  and `ARCHON_HOME`. Disable or remove that task to stop future starts. Test it as the
+  scheduled user.
+- Linux: point a user systemd timer or cron entry at the same absolute `archon trigger
+  fire --config ...` command.
 
-All factory AI work must run through the shared SDLC workflows. Do not add direct
-coding-agent subprocesses to factory scripts or create factory-local workflow copies.
+Stopping the scheduler prevents future requests but does not cancel accepted work.
+Use `archon trigger list`, `archon trigger inspect <id>`, `archon workflow attention
+--json`, and `archon workflow get <run-id> --json` for status. Cancel a run only when
+ending its current work is intended; follow the `archon-cli` skill for lifecycle
+operations.
 
-**3. Write the three files with them.**
+## App-check freshness and protected changes
 
-The repo holds either an application or only a product document (a PRD). The
-interview is the same either way; a PRD answers what the code would have.
+`factory-app-check` tests the selected PR head merged with the current base head. It
+publishes the `factory/app-check` commit status and binds the status description to a
+hash of the exact base branch name and base commit. Publication rereads the PR and
+fails if its head or base changed. A pending status older than two hours is stale and
+does not suppress another check. Evidence must be newer than preparation, every check
+line must cite a real file, and `INCOMPLETE` is failure.
 
-Read the repo FIRST. The language, the test command, the start command, the entry
-point and the routes are all in there, or the PRD is. Then ask at most four
-questions, each with your proposed answer already filled in so the cheapest reply
-is "yes". Every question the repo already answered is a reason to regret starting.
+Configure `factory/app-check` as a required status where this gate is required. A
+green status for another base, an older head, or an expired pending check is not fresh
+evidence. Archon's merge queue independently pins review, CI, and merge to the exact PR
+head; project merge policy should name every required check. Protected-path changes
+fail closed unless the app-check input carries an exact operator grant for that head
+and the complete matched path set.
 
-| File | What you are writing |
-|---|---|
-| `MISSION.md` | What this product is, and the list of things it must **never** become |
-| `harness/END-TO-END.md` | Two to five journeys, in plain English, that a real user takes |
-| `.factory/holdout/HOLDOUT.md` | Independent scenarios that combine the product's behavior |
+## External holdouts
 
-**The out-of-scope list in `MISSION.md` is the one that decides whether any of this
-works.** It is how the factory recognises that a plausible, well-argued, easy
-request is drift rather than a good idea. Do not ask the user to produce it from
-nothing. Propose seven entries yourself from what you read, make them things a
-reasonable person would actually ask for, and have them strike the wrong ones.
+Optional holdouts live at the absolute, project-specific external path in
+`holdouts.path`; there is no repository default. The writer and normal/deep app-check
+nodes receive that path, while ordinary builders do not. Public reports contain IDs
+and visible outcomes, not scenario text.
 
-Do not draft the holdout yourself: you are a builder, and the fence refuses you the
-folder. Dispatch the `holdout-writer` subagent with the product document, relay its
-one-line summary per scenario, and tell the user to review the file in their editor.
+This is context separation, not an operating-system security boundary. A process with
+filesystem permission can still read the directory. Use a separate account, ACLs,
+container boundary, or host appropriate to the threat model. Never put credentials in
+scenario files or rely on prompt instructions as access control.
 
-Journeys describe what the product **does today**, never what it should do. A
-journey for behaviour that does not exist yet leaves the gate red before the first
-lap, and nothing can merge, including the change that would make it pass. A PRD is
-the exception: it is the one document that describes behaviour before the code
-exists, so when the repo holds only a PRD, write all three files from it now, plus
-the harness commands (the interview decides the stack, so the declared gate has
-something to run). Replace the installed example journeys entirely; a merge
-assessor that finds task-service journeys in a pastebin holds the PR. Only the
-runtime host waits, for the start command the first ticket declares (step 5).
+## Deployment is separate and explicit
 
-Configure the project's static/unit commands and translate the journeys into the
-runtime scenario inputs required by the shared workflows. Follow the installed
-`factory/RUNTIME_HOST.md` for ordinary app startup, fresh state and candidate
-resources. Bind preparation and start to the delivering commit, then run the
-documented calibration: baseline verified, a relevant deliberate fault failed,
-and a wrong-identity check inconclusive. Assertions must exercise real transitions
-and nonempty/nonzero user value rather than directly seeding the final state. The
-agent handles this wiring; the user supplies the product intent.
-
-**4. Check the installation and hand it back.**
+Setup never enables deployment and no trigger is generated for it. A target project
+must provide `DEPLOY.md` documenting the exact revision-aware deploy command, health
+check, and deployed-revision readback. Then an operator may explicitly run:
 
 ```bash
-python factory/consumer.py doctor
-python factory/consumer.py list
+archon workflow run factory-deploy \
+  --input revision=<exact-40-character-commit> --detach
 ```
 
-Show any failures and what remains to configure. Doctor checks the installation
-and available workflows; it does not prove a live agent can sign in or complete a run.
+The deploy agent may execute only commands documented in `DEPLOY.md`. It cannot infer a
+cloud, destination, credential, service, or fallback. The workflow fails if health is
+not healthy, evidence is missing, or the read-back revision differs from the requested
+revision. No deployment is performed by this repository's validation.
 
-**5. Ask the one question that picks the path: existing codebase, or a PRD?**
+## Validate the package
 
-*Existing codebase.* The user files issues. Have them write holdouts for the area
-first (`python factory/consumer.py run archon-holdouts --input source=<docs>`), then
-give them the exact command for one lap on one issue:
-`python factory/consumer.py run archon-loop --input merge=approve`. With `merge=approve`
-the reviewer approves instead of merging, so the user sees a whole lap before any
-merge is automatic.
-
-*A PRD.* Write the holdouts from it first, then slice it into a backlog:
+Use the matching sandbox environment so every model-bearing validation resolves to
+Codex. Workflow fixtures are stubbed and make no provider call:
 
 ```bash
-python factory/consumer.py run archon-holdouts --input source=<path to the PRD>
-python factory/consumer.py run archon-backlog --input prd=<path to the PRD> --input publication=approve
+source /path/to/v1test-runtime/env.sh
+bun test .archon/workflows/factory/app-check/__tests__/*.test.ts \
+  .archon/workflows/factory/backlog/__tests__/*.test.ts \
+  .archon/workflows/factory/deploy/__tests__/*.test.ts
+archon workflow test factory-app-check
+archon workflow test factory-backlog
+archon workflow test factory-setup
+archon workflow test factory-deploy
+archon validate workflows
 ```
 
-The holdout writer reads only the PRD and writes `.factory/holdout/HOLDOUT.md`; no
-builder ever sees it. The backlog workflow slices the document into ordered issues the
-way an engineering lead would, the first one making the product runnable end to end
-(start command, health check, build-identity endpoint, tests, CI). Re-running it never
-duplicates an issue. The first ticket's body names the exact start command and the
-health and build-id paths, so write the runtime instructions from it now, before
-anything is built. Then every ticket, the first included, goes through `archon-loop`:
-the app check verifies the skeleton against the journeys before it merges, which is
-also the first proof the journeys are right.
-
-**6. Stop there.** Leave scheduling off until the user has watched a lap complete.
-If they already asked you to run that first lap, continue within that scope.
-
----
-
-## The three files that are yours
-
-**`MISSION.md`** is what the product is, and what it must never become. The
-out-of-scope list is the part that does work: it is how an agent recognises that a
-plausible, well-argued, easy request is drift. Without it every request is arguably
-in scope, because almost every feature is defensible on its own. Aim for at least
-five, and make them things a reasonable person would actually ask for.
-
-**`harness/END-TO-END.md`** is two to five journeys in plain English. Name
-the value you expect. "The page loads" passes against an app that returns an empty
-body forever. The setup agent turns those journeys into inputs for Archon's runtime
-verification workflow, which drives the running app and records what it observes.
-
-**`.factory/holdout/HOLDOUT.md`** checks the same product through different
-combinations and edge cases, written from the product document rather than the
-issues. It is committed, so the team shares it, and fenced, so no builder reads it:
-
-- `.factory/hooks/holdout_fence.py`, registered in `.claude/settings.json`, refuses
-  every agent except the `holdout-writer` and `holdout-verifier` subagents any call
-  that would show it a scenario: naming the folder, a recursive search that covers
-  it, or a git diff, log or show that would print one of its files (git is asked
-  first, so nothing else is refused). Nothing may change the fence but you.
-- `.ignore` keeps the Grep and Glob tools out of the folder.
-- The app check and the manager run the scenarios through the verifier, which
-  returns a verdict and what a user sees, never the scenario. The manager adds
-  scenarios through the writer: for each defect that got past review, and before a
-  new section of the product is built.
-- After every call the hook checks what came back for scenario text and appends any
-  hit to `holdout-exposures.jsonl` in the repository's git directory, so a leak it
-  did not foresee is counted.
-- `factory doctor` runs the hook itself and reports whether the fence holds and
-  whether it is committed (lap checkouts only carry what is pushed).
-
-The fence is a Claude Code hook. A factory running Codex or Pi has no fence: keep its
-holdout outside the repository and pass that path as the `holdout` input instead.
-
----
-
-## Where the AI steps come from
-
-The factory writes none of them. Every AI step is a workflow or command in Archon's
-shared SDLC pack. You can run the workflows individually or use the full composition.
-
-| What you want | Shared Archon workflow |
-|---|---|
-| Turn a PRD into an ordered backlog of issues | `archon-backlog` |
-| Write holdout scenarios no builder sees, from the PRD or an escaped defect | `archon-holdouts` |
-| Take an issue through triage, planning, delivery rounds and review to a PR | `archon-ship-block` |
-| Run project checks | `archon-validate` |
-| Exercise a running app and record evidence | `archon-verify-runtime` |
-| Check a baseline and whether verification catches deliberate defects | `archon-verify-runtime-suite` |
-| Re-test existing behavior and diagnose regressions | `archon-regress` |
-| Recheck discoveries, deduplicate them and optionally publish issues | `archon-discoveries` |
-| Check PRs and CI, then merge according to the selected approval mode | `archon-merge-queue` |
-| Roll the default branch onto a running service and read the revision back | `archon-deploy` |
-| Keep a backlog moving unattended, one move per lap, with parallel laps if wanted | `archon-loop` |
-| Step back on a slower schedule: steer the backlog, unstick work, record metrics | `archon-manager` |
-
-**Ship runs its own triage.** You do not have to run triage first. Deliver can use
-an existing run's worktree to repair the same PR. Lifecycle connects the shared
-workflows; factory Python does not dispatch their individual stages.
-
-The agents use the GitHub CLI inside these workflows for issue publication, CI
-checks and merging. Configure GitHub branch protection for the checks and reviews
-your project requires.
-
-The source revision lives in [`pack.json`](template/factory/pack.json). Once the
-workflow PRs merge upstream, updating that pin moves new installs to the merged
-version. Existing installations update by pulling this repo and rerunning `init`.
-Workflow improvements belong in Archon's SDLC pack.
-Neutral standalone Archon users do not need `MISSION.md`,
-`factory/WORKFLOW_POLICY.md` or any other factory file; those are guidance and
-inputs supplied by this consumer.
-
----
-
-## Commands
-
-Run these from the application repo after installation:
-
-```bash
-python factory/consumer.py doctor
-python factory/consumer.py list
-python factory/consumer.py run archon-ship --input target=https://github.com/OWNER/REPO/issues/1 --detach --json
-python factory/consumer.py get <run-id> --json --events
-python factory/consumer.py status --all --json
-python factory/consumer.py approve <run-id> --comment "Approved"
-python factory/consumer.py cancel <run-id>
-python factory/consumer.py halt
-```
-
-`halt` blocks new launches and continuations. Cancel an active run explicitly;
-`unhalt` allows launches again. Runtime-host runs stay in the foreground.
-`pause` only stops the timer from starting laps: it keeps waking runs that wait on CI,
-and explicit `run` commands still launch. `unpause` resumes scheduled launches. Use it
-instead of disabling the host timer, which would leave an in-flight lap paused forever.
-
-After the first successful lap, ask your agent to configure
-`.factory/schedule.json` with a shared workflow and its inputs, then:
-
-```bash
-python factory/consumer.py schedule install            # writes .factory/trigger.json, prints the timer
-python factory/consumer.py schedule install --apply    # also registers the OS timer
-python factory/consumer.py schedule status             # Archon's trigger receipts
-python factory/consumer.py schedule remove --apply     # unregisters the timer
-```
-
-Scheduling is Archon's. `schedule install` writes an Archon trigger binding for the
-scheduled workflow. Each timer tick runs `python factory/consumer.py schedule fire`,
-which calls `archon trigger fire` and then `archon workflow wake`:
-
-- Archon admits the start on one resource per repository and workflow, holding at most
-  `parallel` laps at once (a top-level number in `schedule.json`, 1 to 8, default 1). A
-  tick that arrives while every lap is busy is skipped; the next tick starts the next
-  lap, so ticks never pile up behind a long lap.
-- Only set `parallel` above 1 for a workflow that keeps parallel laps off each other's
-  work. `archon-loop` does: each lap claims its work item with a comment, the oldest
-  claim holds it, and pick stays out of the areas other laps have claimed. The app's
-  runtime scripts must also let several checkouts run at once (a port and pid file per
-  checkout, never one fixed port).
-- `workflow wake` resumes runs paused on a pending CI check or a provider usage limit.
-
-On macOS Archon installs its own launchd jobs. On Windows the timer is a hidden Task
-Scheduler task that runs `pythonw` (no console window) only while you are logged on, and
-writes each tick's output to `.factory/schedule.log`. On Linux it is a systemd user timer.
-`halt` makes `schedule fire` start nothing.
-`schedule install` refuses a `runtime_host` entry, because a trigger cannot wrap the
-runtime host. Run the host as its own service instead (`python factory/runtime_host.py
-serve`) and point the scenarios at its connection file.
-
-**Merge policy.** Free private GitHub repositories cannot report branch protection, so
-the merge queue needs the project to say which CI checks a merge requires. Set
-`required_checks` in `harness/harness.config.json` to the CI job names (for example
-`"tests"`), or to `"none"`. The factory passes it to `archon-merge-queue`. Left empty, the merge queue reads GitHub, and on a free private
-repository it holds every PR with a reason that names this setting.
-
-**Protected paths.** Review does not reliably notice an agent editing the files that
-govern it (a reviewed delivery once rewrote `engineering.md` and merged). Set
-`protected_paths` in `harness/harness.config.json` to comma-separated path patterns,
-anchored at the repository root (`*` within one segment, `**` across segments, a
-trailing `/` for a directory). The factory passes it to `archon-loop`, whose merge
-gate refuses any PR that touches a match and says the owner must make that change,
-and to `archon-merge-queue`. New installs protect `MISSION.md`, `FACTORY.md`,
-`FACTORY_RULES.md`, `harness/**`, `.factory/**` (the holdouts and their fence),
-`factory/**`, `.claude/settings.json` and `.ignore`; add the project's
-own governance documents. An existing project's harness configuration is never
-overwritten, so add the key by hand.
-
-The scheduler never selects work itself: each `archon-loop` lap's pick agent reads the
-whole board and chooses one move (finish an open PR, build a simple item, ship a
-complex one), and parallel laps claim their item with a comment so they never collide.
-A schedule names the workflow, its inputs and how many laps may run at once:
-
-```json
-{
-  "workflow": "archon-loop",
-  "parallel": 3,
-  "inputs": {
-    "runtime": "/private/runtime/scenario.json",
-    "merge": "auto"
-  }
-}
-```
-
-The factory adds `holdout=.factory/holdout/HOLDOUT.md` and the project's
-`protected_paths` unless the schedule names them. Run `archon-manager` on a slower
-schedule (every few hours) above the loop.
-
-`publish_holds` does not authorize merging, has no effect when `merge_mode` is
-`preview`, and is deliberately absent from the default example.
-
----
-
-## Running it on a server
-
-A factory that only runs while your laptop is open is a demo. It wants a Linux box
-that never sleeps. Any provider. Use the same setup prompt and tell your agent
-which server and application repo to use. [`docs/server-cheat-sheet.md`](docs/server-cheat-sheet.md)
-has every prompt for the whole server setup, in order, from the SSH key to the timer.
-
-For Ubuntu, the agent can inspect and run [`bin/bootstrap-ubuntu.sh`](bin/bootstrap-ubuntu.sh)
-to install the toolchain, then help with GitHub and provider sign-in. Run the
-installer in the application repo on that server.
-
-Watch one issue become a PR, verify the running app, and approve its merge before
-installing the timer. The timer needs the same tool paths and authentication as the
-successful manual run. Installation does not start it for you.
-
-**The timer on Linux.** `schedule install` prints a systemd user service and timer,
-and `--apply` writes and enables them. They carry what a manual run had and a timer
-does not get on its own:
-
-- `PATH`: `bun`, `uv` and `claude` live under the user's home, not `/usr/bin`. It is
-  captured from the shell that ran `schedule install`.
-- `IS_SANDBOX=1`: Claude Code refuses to run unattended as root without it.
-- `EnvironmentFile=-%h/.factory-env`: keep the Claude Code token in this mode-600 file,
-  never in the unit or the repository.
-
-A root user timer needs `loginctl enable-linger root` to keep running after logout.
-Stop launching new laps with `python factory/consumer.py halt`, or remove the timer
-with `schedule remove --apply`.
-
-A run paused on a pending GitHub check resumes on the next tick, through
-`archon workflow wake`.
-
-Deployment is project-specific: the setup agent wires the service (systemd, a
-reverse proxy, DNS) and gives the loop its `deploy` and `health`
-commands. With those set, a confirmed merge runs the shared `archon-deploy`
-workflow, which rolls the default branch onto the service and reads the deployed
-revision back. Without them, a merge is only a merge.
-
----
-
-## What it does not do
-
-**It does not judge taste.** A green gate never means the product is good. It means
-the layer a machine can check is intact.
-
-**It does not invent a backlog.** The backlog comes from you: issues you file, or
-a PRD you wrote that `archon-backlog` slices into issues you approve. Intake only
-picks up what is there. Discovery can publish verified findings; that is different
-from deciding what the product should become.
-
-**It does not maintain a second set of AI workflows.** Factory runs the pinned
-shared SDLC source. Changes to agent behavior belong there.
-
----
-
-## Cost
-
-Instrument your tokens on day one. Start with one small issue and watch the model
-calls before enabling a loop. Use medium models for routine work and large models
-where the workflow needs the extra reasoning.
-
----
+Also run `archon workflow list --json` and confirm the factory workflows are discovered
+beside, not instead of, the bundled SDLC workflows. Validation proves parsing, fixture
+outcomes, and deterministic boundaries; it does not prove provider login, GitHub
+permissions, a scheduled user environment, external holdout isolation, or a real
+deployment. Those remain operator acceptance steps.
 
 ## Layout
 
 ```text
-bin/factory.py                install and CLI entry point
-template/                    what init copies into your repo
-  factory/consumer.py        invokes shared Archon workflows and shows their state
-  factory/pack.json          shared source revision and required workflows
-  factory/WORKFLOW_POLICY.md factory requirements read through engineering.md
-  factory/RUNTIME_HOST.md    app startup and runtime scenario configuration
-  harness/                   project checks and END-TO-END.md
-docs/first-hour.md            what to do after setup
-docs/server-cheat-sheet.md    every prompt for a server install, in order
-docs/incidents.md             historical failures and lessons
+.archon/
+  factory.yaml                  operator-owned factory settings
+  config.yaml                   Codex project invariant and generated bindings
+  scripts/factory-config.ts     strict parser and mechanical setup
+  skills/factory-setup/         setup guidance; delegates queue use to archon-cli
+  skills/factory-manager/       policy-only attention tending
+  sdlc/policy/                  project additions, not bundled-pack overrides
+  workflows/factory/            factory-named project workflows only
 ```
 
-To upgrade an installed factory, see [`factory/MIGRATION.md`](template/factory/MIGRATION.md).
+Licensed under the MIT License; see `LICENSE`.

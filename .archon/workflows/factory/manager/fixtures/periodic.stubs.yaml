@@ -1,0 +1,9 @@
+manage:
+  report: No attention item had an unambiguous policy answer.
+  answered: []
+  stuck: []
+  policy_suggestions: [Define who may choose the documented retry option.]
+fixture:
+  inputs: { repo_path: example/widgets }
+  expect: completed
+  reached: [manage]

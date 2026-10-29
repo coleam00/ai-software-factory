@@ -1,0 +1,3 @@
+# Project-level invariant: every factory agent uses Codex. factory-setup adds optional
+# Codex tiers and @factory-* aliases from factory.yaml while preserving other keys.
+assistant: codex

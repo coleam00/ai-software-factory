@@ -1,0 +1,21 @@
+name: factory-manager
+description: Periodically answer only SDLC attention items covered by written project policy and report everything else.
+inputs:
+  repo_path: { required: true, description: GitHub owner/name used for report context. }
+returns: manage
+worktree: { enabled: false }
+mutates_checkout: false
+nodes:
+  - id: manage
+    command: manage
+    model: ['@factory-manager', medium]
+    mutates_checkout: false
+    with: { repo_path: "$INPUTS.repo_path" }
+    output_format:
+      type: object
+      properties:
+        report: { type: string }
+        answered: { type: array, items: { type: string } }
+        stuck: { type: array, items: { type: string } }
+        policy_suggestions: { type: array, items: { type: string } }
+      required: [report, answered, stuck, policy_suggestions]

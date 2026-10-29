@@ -1,0 +1,28 @@
+config:
+  app_check: { enabled: true, trigger: frontend, frontend_paths: ["public/**"], depth: auto }
+  holdouts: { enabled: true, path: "C:/private/project-holdouts" }
+  protected_paths: [".archon/**"]
+  autonomy: standard
+  app: { prepare: "npm ci", start: "npm start", port_env: PORT, database_env: APP_DATABASE_PATH, health_path: "/health" }
+select: { found: true, pr: 8, head: bad123, files: ["src/views.ts"], base: main, base_oid: base123, issue: 12, issue_body: "## Acceptance\n- [ ] works", issue_labels: [archon-size-l] }
+pending: { posted: true }
+scope: { run: true, depth: deep, reason: selected }
+policy: { ok: true, protected_files: [], description: policy clear }
+holdouts: { ids: [H-01] }
+prepare: { temp: "/tmp/factory-fail", merged: bad456, prepared_at: 1000 }
+check:
+  overall: FAIL
+  lines: ["C1  FAIL  Remove does not update the list.  evidence: remove.png", "H-01  PASS  The private invariant holds.  evidence: holdout.png"]
+  summary: Remove failed.
+evidence:
+  overall: FAIL
+  lines: ["C1  FAIL  Remove does not update the list.  evidence: remove.png", "H-01  PASS  The private invariant holds.  evidence: holdout.png"]
+  report: "# App check\nC1  FAIL  Remove does not update the list.  evidence: remove.png\nH-01  PASS  The private invariant holds.  evidence: holdout.png"
+publish: { state: failure, comment: updated }
+finalize: { recovered: false }
+cleanup: { cleaned: true, pid_file: true }
+fixture:
+  inputs: { repo_path: example/widgets, pr: "8", protected_grant: "" }
+  expect: completed
+  reached: [config, select, pending, scope, policy, holdouts, prepare, check, evidence, publish, finalize, cleanup]
+exec-code: true

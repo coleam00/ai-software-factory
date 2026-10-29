@@ -1,0 +1,8 @@
+apply:
+  config: /project/.archon/config.yaml
+  policies: [/project/.archon/sdlc/policy/triage.md, /project/.archon/sdlc/policy/build.md, /project/.archon/sdlc/policy/merge.md]
+  triggers: []
+  autonomy: standard
+fixture:
+  expect: completed
+  reached: [apply]

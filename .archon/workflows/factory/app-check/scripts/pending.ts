@@ -1,0 +1,10 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { boundDescription } from "./binding.ts";
+import { env, postStatus } from "../../.shared/utils.ts";
+const repo = env("repo_path"), head = env("head"), base = env("base"), baseOid = env("base_oid");
+postStatus(repo, head, "pending", "factory/app-check", boundDescription(base, baseOid, "black-box app check running"));
+const root = join(process.env.ARTIFACTS_DIR!, "app-check");
+mkdirSync(root, { recursive: true });
+writeFileSync(join(root, "pending.json"), JSON.stringify({ repo, head, base, base_oid: baseOid }));
+console.log(JSON.stringify({ posted: true }));

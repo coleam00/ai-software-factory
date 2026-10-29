@@ -1,0 +1,9 @@
+config: { enabled: true, dir: /private/project-holdouts }
+write:
+  files: [/private/project-holdouts/H-01-adjacent-rule.md]
+  ids: [H-01]
+  summary: Added one scenario protecting an adjacent product rule.
+fixture:
+  inputs: { repo_path: example/widgets, number: "12" }
+  expect: completed
+  reached: [config, write]

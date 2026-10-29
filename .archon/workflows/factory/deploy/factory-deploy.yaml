@@ -1,0 +1,50 @@
+name: factory-deploy
+description: Explicitly deploy one requested commit using only this project's DEPLOY.md, then verify health and read the deployed revision back.
+inputs:
+  revision: { required: true, description: Exact 40-character commit to deploy. }
+returns: verify
+worktree: { enabled: false }
+mutates_checkout: false
+nodes:
+  - id: preflight
+    script: preflight
+    runtime: bun
+    with: { revision: "$INPUTS.revision" }
+    output_format:
+      type: object
+      properties: { revision: { type: string }, deploy_doc: { type: string }, started_at: { type: integer } }
+      required: [revision, deploy_doc, started_at]
+  - id: deploy
+    command: deploy
+    depends_on: [preflight]
+    model: ['@factory-deployer', large]
+    mutates_checkout: false
+    with: { revision: "$preflight.output.revision", deploy_doc: "$preflight.output.deploy_doc" }
+    output_format:
+      type: object
+      properties:
+        requested_revision: { type: string }
+        deployed_revision: { type: string }
+        health_status: { type: string, enum: [healthy, unhealthy] }
+        evidence_files: { type: array, items: { type: string } }
+        summary: { type: string }
+      required: [requested_revision, deployed_revision, health_status, evidence_files, summary]
+  - id: verify
+    script: verify
+    runtime: bun
+    depends_on: [deploy]
+    with:
+      requested_revision: "$preflight.output.revision"
+      reported_requested_revision: "$deploy.output.requested_revision"
+      deployed_revision: "$deploy.output.deployed_revision"
+      health_status: "$deploy.output.health_status"
+      evidence_files: "$deploy.output.evidence_files"
+      started_at: "$preflight.output.started_at"
+    output_format:
+      type: object
+      properties:
+        deployed: { type: boolean }
+        revision: { type: string }
+        health: { type: string }
+        evidence_files: { type: array, items: { type: string } }
+      required: [deployed, revision, health, evidence_files]

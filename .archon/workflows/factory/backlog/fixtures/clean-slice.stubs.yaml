@@ -1,0 +1,9 @@
+read: { source: "https://github.com/example/widgets/issues/3", path: "/tmp/artifacts/backlog-prd.md", characters: 900 }
+slice: { count: 2, summary: "First establishes the runnable path; second adds filtering." }
+check: { count: 2, keys: [runnable-app, filter-items] }
+publish: { published: true, created: ["https://github.com/example/widgets/issues/4"], existing: ["https://github.com/example/widgets/issues/5"] }
+fixture:
+  inputs: { repo_path: example/widgets, number: "3", prd_path: "" }
+  expect: completed
+  reached: [read, slice, check, publish]
+exec-code: true

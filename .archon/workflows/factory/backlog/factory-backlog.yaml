@@ -1,0 +1,48 @@
+name: factory-backlog
+description: Slice a PRD issue or checked-in PRD into ordered SDLC-ready issues and publish each once.
+inputs:
+  repo_path: { required: true, description: GitHub owner/name. }
+  number: { default: "", description: Issue number whose body is the PRD. }
+  prd_path: { default: "", description: PRD path inside this checkout. }
+returns: publish
+worktree: { enabled: false }
+mutates_checkout: false
+nodes:
+  - id: read
+    script: read
+    runtime: bun
+    with: { repo_path: "$INPUTS.repo_path", number: "$INPUTS.number", prd_path: "$INPUTS.prd_path" }
+    output_format:
+      type: object
+      properties: { source: { type: string }, path: { type: string }, characters: { type: integer } }
+      required: [source, path, characters]
+  - id: slice
+    command: slice
+    depends_on: [read]
+    model: ['@factory-planner', large]
+    mutates_checkout: false
+    with: { prd: "$read.output.path", repo_path: "$INPUTS.repo_path" }
+    output_format:
+      type: object
+      properties: { count: { type: integer }, summary: { type: string } }
+      required: [count, summary]
+  - id: check
+    script: check
+    runtime: bun
+    depends_on: [slice]
+    output_format:
+      type: object
+      properties: { count: { type: integer }, keys: { type: array, items: { type: string } } }
+      required: [count, keys]
+  - id: publish
+    script: publish
+    runtime: bun
+    depends_on: [check]
+    with: { repo_path: "$INPUTS.repo_path" }
+    output_format:
+      type: object
+      properties:
+        published: { type: boolean }
+        created: { type: array, items: { type: string } }
+        existing: { type: array, items: { type: string } }
+      required: [published, created, existing]
