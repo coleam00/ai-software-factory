@@ -9,10 +9,29 @@ import { boundDescription, statusCoversBinding } from "../scripts/binding.ts";
 import { configuredHoldoutIds } from "../scripts/holdouts.ts";
 import { bindingIsCurrent } from "../scripts/publish.ts";
 import { finalizePending } from "../scripts/finalize.ts";
+import { appProcessRecordPath, inspectAppProcessIdentity, recordAppProcess, stopRecordedApp } from "../scripts/app-process.ts";
 import { installFakeCommand, isolatedCommandEnv } from "../../.shared/test-command.ts";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+function spawnTestChild(): Bun.Subprocess {
+  return Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], { stdin: "ignore", stdout: "ignore", stderr: "ignore", windowsHide: true });
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function stopTestChild(child: Bun.Subprocess): Promise<void> {
+  if (processIsAlive(child.pid)) child.kill();
+  await child.exited;
+}
 
 describe("app-check deterministic decisions", () => {
   test("matches anchored frontend globs", () => {
@@ -103,6 +122,100 @@ describe("app-check deterministic decisions", () => {
     expect(existsSync(join(root, "terminal.json"))).toBe(true);
     expect(finalizePending(root, (...args) => { calls.push(args); })).toBe(false);
     expect(calls).toHaveLength(1);
+  });
+  test("rejects missing, malformed, and legacy numeric-only ownership records", async () => {
+    if (process.platform !== "win32") return;
+    const artifacts = mkdtempSync(join(tmpdir(), "factory-app-process-invalid-test-"));
+    const recordPath = appProcessRecordPath(artifacts);
+    const child = spawnTestChild();
+    try {
+      const legacyPath = join(artifacts, "app-check", "app.pid");
+      mkdirSync(join(artifacts, "app-check"), { recursive: true });
+      writeFileSync(legacyPath, String(child.pid));
+      expect(stopRecordedApp(recordPath)).toEqual({ status: "no-record" });
+      expect(existsSync(legacyPath)).toBe(false);
+      expect(processIsAlive(child.pid)).toBe(true);
+      writeFileSync(recordPath, String(child.pid));
+      expect(stopRecordedApp(recordPath).status).toBe("invalid-record");
+      expect(processIsAlive(child.pid)).toBe(true);
+      writeFileSync(recordPath, "{not-json");
+      expect(stopRecordedApp(recordPath).status).toBe("invalid-record");
+      expect(processIsAlive(child.pid)).toBe(true);
+    } finally {
+      rmSync(recordPath, { force: true });
+      await stopTestChild(child);
+    }
+  });
+  test("retires the identity record when the owned process already exited", async () => {
+    if (process.platform !== "win32") return;
+    const artifacts = mkdtempSync(join(tmpdir(), "factory-app-process-exited-test-"));
+    const recordPath = appProcessRecordPath(artifacts);
+    const child = spawnTestChild();
+    recordAppProcess(child.pid, inspectAppProcessIdentity(child.pid), recordPath);
+    await stopTestChild(child);
+    expect(stopRecordedApp(recordPath)).toEqual({ status: "already-exited" });
+    expect(existsSync(recordPath)).toBe(false);
+  });
+  test("a stale identity cannot stop an unrelated live child", async () => {
+    if (process.platform !== "win32") return;
+    const artifacts = mkdtempSync(join(tmpdir(), "factory-app-process-stale-test-"));
+    const recordPath = appProcessRecordPath(artifacts);
+    const child = spawnTestChild();
+    try {
+      const launcherIdentity = inspectAppProcessIdentity(child.pid);
+      const staleLauncherIdentity = (BigInt(launcherIdentity) + 1n).toString();
+      expect(() => recordAppProcess(child.pid, staleLauncherIdentity, recordPath)).toThrow("no longer matches");
+      expect(existsSync(recordPath)).toBe(false);
+      expect(processIsAlive(child.pid)).toBe(true);
+
+      const record = recordAppProcess(child.pid, launcherIdentity, recordPath);
+      writeFileSync(recordPath, JSON.stringify({ ...record, identity: (BigInt(record.identity) + 1n).toString() }));
+      expect(stopRecordedApp(recordPath).status).toBe("identity-mismatch");
+      expect(processIsAlive(child.pid)).toBe(true);
+      expect(existsSync(recordPath)).toBe(true);
+    } finally {
+      rmSync(recordPath, { force: true });
+      await stopTestChild(child);
+    }
+  });
+  test("stops an owned live child and repeated cleanup cannot act on a later child", async () => {
+    if (process.platform !== "win32") return;
+    const artifacts = mkdtempSync(join(tmpdir(), "factory-app-process-owned-test-"));
+    const recordPath = appProcessRecordPath(artifacts);
+    const owned = spawnTestChild();
+    recordAppProcess(owned.pid, inspectAppProcessIdentity(owned.pid), recordPath);
+    expect(stopRecordedApp(recordPath)).toEqual({ status: "stopped" });
+    await owned.exited;
+    expect(processIsAlive(owned.pid)).toBe(false);
+    expect(existsSync(recordPath)).toBe(false);
+
+    const later = spawnTestChild();
+    try {
+      expect(stopRecordedApp(recordPath)).toEqual({ status: "no-record" });
+      expect(processIsAlive(later.pid)).toBe(true);
+    } finally {
+      await stopTestChild(later);
+    }
+  });
+  test("workflow cleanup uses the shared identity helper after checker failure", async () => {
+    if (process.platform !== "win32") return;
+    const artifacts = mkdtempSync(join(tmpdir(), "factory-app-process-finalizer-test-"));
+    const recordPath = appProcessRecordPath(artifacts);
+    const child = spawnTestChild();
+    try {
+      recordAppProcess(child.pid, inspectAppProcessIdentity(child.pid), recordPath);
+      const cleanup = Bun.spawnSync([process.execPath, join(import.meta.dir, "..", "scripts", "cleanup.ts")], {
+        env: { ...process.env, ARTIFACTS_DIR: artifacts },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(cleanup.exitCode, cleanup.stderr.toString()).toBe(0);
+      expect(JSON.parse(cleanup.stdout.toString())).toEqual({ cleaned: false, app_record: false, app_cleanup: "stopped" });
+      await child.exited;
+      expect(processIsAlive(child.pid)).toBe(false);
+    } finally {
+      if (processIsAlive(child.pid)) await stopTestChild(child);
+    }
   });
   test("selects and publishes against the current encoded branch ref when the PR base snapshot is stale", () => {
     const root = mkdtempSync(join(tmpdir(), "factory-current-base-test-"));

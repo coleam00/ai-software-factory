@@ -20,7 +20,7 @@ evidence:
   report: "# App check\nC1  FAIL  Remove does not update the list.  evidence: remove.png\nH-01  PASS  The private invariant holds.  evidence: holdout.png"
 publish: { state: failure, comment: updated }
 finalize: { recovered: false }
-cleanup: { cleaned: true, pid_file: true }
+cleanup: { cleaned: true, app_record: false, app_cleanup: stopped }
 fixture:
   inputs: { repo_path: example/widgets, pr: "8", protected_grant: "" }
   expect: completed

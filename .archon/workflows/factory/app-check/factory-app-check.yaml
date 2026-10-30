@@ -179,5 +179,8 @@ nodes:
     trigger_rule: all_done
     output_format:
       type: object
-      properties: { cleaned: { type: boolean }, pid_file: { type: boolean } }
-      required: [cleaned, pid_file]
+      properties:
+        cleaned: { type: boolean }
+        app_record: { type: boolean }
+        app_cleanup: { type: string, enum: [stopped, already-exited, no-record, invalid-record, identity-mismatch, unsupported-platform, stop-failed] }
+      required: [cleaned, app_record, app_cleanup]

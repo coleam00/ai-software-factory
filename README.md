@@ -97,6 +97,17 @@ cloud, or deployment destination is assumed. Add project paths to `protected_pat
 Leave `models.assistant` empty to inherit Archon. Every configured tier or alias must
 name both its Archon provider and model explicitly.
 
+App-process cleanup is identity-bound on Windows. The checker retains the native
+launcher handle and supplies its Windows creation time; the helper verifies that value
+through a newly opened handle before recording it. Both checker cleanup and workflow
+cleanup then use the same helper to reopen one OS process handle, verify creation time,
+terminate through that handle, and wait for exit before retiring the record. Missing,
+malformed, legacy numeric-only, exited, or mismatched records never authorize a
+PID-only kill.
+Race-free identity cleanup is currently unsupported on macOS and Linux, so app checks
+fail before starting the app on those platforms rather than claiming a process-control
+security boundary.
+
 ## Native queues and triggers
 
 Archon's bundled queues remain the core factory:
