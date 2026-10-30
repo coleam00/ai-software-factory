@@ -20,7 +20,7 @@ evidence:
   report: "# App check\nC1  PASS  The add flow works.  evidence: add.png\nH-01  PASS  The private invariant holds.  evidence: holdout.png"
 publish: { state: success, comment: created }
 finalize: { recovered: false }
-cleanup: { cleaned: true, app_record: false, app_cleanup: no-record }
+cleanup: { cleaned: true, app_record: false, app_cleanup: no-record, teardown: none }
 fixture:
   inputs: { repo_path: example/widgets, pr: "7", protected_grant: "" }
   expect: completed

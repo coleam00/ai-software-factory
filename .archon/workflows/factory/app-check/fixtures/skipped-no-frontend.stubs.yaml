@@ -9,7 +9,7 @@ pending: { posted: true }
 scope: { run: false, depth: light, reason: "skipped: no front-end change" }
 policy: { ok: true, protected_files: [], description: policy clear }
 finalize: { recovered: false }
-cleanup: { cleaned: false, app_record: false, app_cleanup: no-record }
+cleanup: { cleaned: false, app_record: false, app_cleanup: no-record, teardown: none }
 fixture:
   inputs: { repo_path: example/widgets, pr: "9", protected_grant: "" }
   expect: completed
