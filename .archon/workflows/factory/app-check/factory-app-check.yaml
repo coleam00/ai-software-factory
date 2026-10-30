@@ -177,10 +177,12 @@ nodes:
     runtime: bun
     depends_on: [select, scope, policy, holdouts, prepare, check, evidence, publish, finalize]
     trigger_rule: all_done
+    with: { config: "$config.output" }
     output_format:
       type: object
       properties:
         cleaned: { type: boolean }
         app_record: { type: boolean }
         app_cleanup: { type: string, enum: [stopped, already-exited, no-record, invalid-record, identity-mismatch, unsupported-platform, stop-failed] }
-      required: [cleaned, app_record, app_cleanup]
+        teardown: { type: string, enum: [ok, failed, none] }
+      required: [cleaned, app_record, app_cleanup, teardown]

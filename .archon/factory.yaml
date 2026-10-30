@@ -23,6 +23,10 @@ app:
   port_env: PORT
   database_env: ""
   health_path: /health
+  # Apps a browser cannot drive (a game behind a harness): absolute path to the owner's
+  # runtime instructions, and the teardown cleanup runs from the checkout.
+  runtime: ""
+  teardown: ""
 
 # Leave assistant empty to inherit Archon's selected provider. Configured profiles
 # require an explicit provider and model supported by the Archon installation.

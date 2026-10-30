@@ -20,7 +20,7 @@ export interface FactoryConfig {
   holdouts: { enabled: boolean; path: string };
   protected_paths: string[];
   autonomy: AutonomyPreset;
-  app: { prepare: string; start: string; port_env: string; database_env: string; health_path: string };
+  app: { prepare: string; start: string; port_env: string; database_env: string; health_path: string; runtime: string; teardown: string };
   models: {
     assistant: string;
     tiers: Partial<Record<"small" | "medium" | "large", ModelProfile>>;
@@ -49,7 +49,7 @@ export const DEFAULTS: FactoryConfig = {
   holdouts: { enabled: false, path: "" },
   protected_paths: [".archon/**", ".github/**", "DEPLOY.md"],
   autonomy: "standard",
-  app: { prepare: "", start: "", port_env: "PORT", database_env: "", health_path: "/health" },
+  app: { prepare: "", start: "", port_env: "PORT", database_env: "", health_path: "/health", runtime: "", teardown: "" },
   models: { assistant: "", tiers: {}, aliases: {} },
   triggers: {
     enabled: false,
@@ -160,7 +160,7 @@ export function parseFactoryConfig(raw: string): FactoryConfig {
   const holdouts = section(root, "holdouts");
   exact(holdouts, ["enabled", "path"], "holdouts");
   const app = section(root, "app");
-  exact(app, ["prepare", "start", "port_env", "database_env", "health_path"], "app");
+  exact(app, ["prepare", "start", "port_env", "database_env", "health_path", "runtime", "teardown"], "app");
   const models = section(root, "models");
   exact(models, ["assistant", "tiers", "aliases"], "models");
   const triggers = section(root, "triggers");
@@ -189,6 +189,8 @@ export function parseFactoryConfig(raw: string): FactoryConfig {
       port_env: string(app.port_env, DEFAULTS.app.port_env, "app.port_env", false),
       database_env: string(app.database_env, DEFAULTS.app.database_env, "app.database_env"),
       health_path: string(app.health_path, DEFAULTS.app.health_path, "app.health_path", false),
+      runtime: string(app.runtime, DEFAULTS.app.runtime, "app.runtime"),
+      teardown: string(app.teardown, DEFAULTS.app.teardown, "app.teardown"),
     },
     models: {
       assistant: string(models.assistant, DEFAULTS.models.assistant, "models.assistant"),
@@ -208,7 +210,10 @@ export function parseFactoryConfig(raw: string): FactoryConfig {
   };
 
   if (!config.app.health_path.startsWith("/")) fail("app.health_path", "must start with /");
-  if (config.app_check.enabled && !config.app.start.trim()) fail("app.start", "is required when app_check.enabled is true");
+  if (config.app_check.enabled && !config.app.start.trim() && !config.app.runtime.trim())
+    fail("app.start", "or app.runtime is required when app_check.enabled is true");
+  if (config.app.runtime.trim() && !isAbsolute(config.app.runtime.replace(/^~(?=[/\\]|$)/, homedir())))
+    fail("app.runtime", "must be an absolute path to the runtime instructions (or start with ~)");
   if (config.holdouts.enabled) {
     if (!config.holdouts.path.trim()) fail("holdouts.path", "is required when holdouts.enabled is true");
     const expanded = config.holdouts.path.replace(/^~(?=[/\\]|$)/, homedir());

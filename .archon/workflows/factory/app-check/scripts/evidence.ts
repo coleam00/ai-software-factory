@@ -2,7 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { emit, env, jsonEnv, readJsonFile } from "../../.shared/utils.ts";
 
-export const LINE = /^(C\d+|H-[A-Za-z0-9_-]+)\s{2}(PASS|FAIL|INCOMPLETE)\s{2}(.+?)\s{2}evidence:\s+(.+)$/;
+export const LINE = /^(C\d+|P\d+|A\d+|H-[A-Za-z0-9_-]+)\s{2}(PASS|FAIL|INCOMPLETE)\s{2}(.+?)\s{2}evidence:\s+(.+)$/;
 export function evidenceProblems(result: any, report: string, root: string, preparedAt: number, expectedHoldouts: string[] = []): string[] {
   const problems: string[] = [], lines = Array.isArray(result?.lines) ? result.lines : [];
   if (!lines.length) problems.push("result has no check lines");
@@ -15,7 +15,7 @@ export function evidenceProblems(result: any, report: string, root: string, prep
     if (seen.has(id)) problems.push(`duplicate check id: ${id}`);
     seen.add(id);
     if (id.startsWith("C")) criteria++;
-    else actualHoldouts.add(id);
+    else if (id.startsWith("H-")) actualHoldouts.add(id);
     if (match[2] !== "PASS") blocked = true;
     const cited = match[4]!.trim();
     const path = isAbsolute(cited) ? cited : resolve(root, cited);

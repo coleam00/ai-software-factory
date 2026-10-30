@@ -91,6 +91,11 @@ The app configuration is deliberately generic:
 - `app.port_env`: environment variable receiving a free port
 - `app.database_env`: optional variable receiving a fresh database path
 - `app.health_path`: HTTP health path
+- `app.runtime`: optional absolute path to owner runtime instructions (setup, start,
+  driver, teardown, assertions) for apps a browser cannot drive, such as a game behind
+  a harness. When set, the checker follows that file instead of `app.start`.
+- `app.teardown`: command the cleanup node runs from the prepared checkout to stop a
+  runtime-mode app if the checker exits early
 
 No start command, port, database variable, holdout path, provider, model ID, credential,
 cloud, or deployment destination is assumed. Add project paths to `protected_paths`.

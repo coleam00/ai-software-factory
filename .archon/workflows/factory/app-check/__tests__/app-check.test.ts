@@ -87,6 +87,31 @@ describe("app-check deterministic decisions", () => {
     const holdout = "H-01  PASS  Private invariant holds.  evidence: shot.txt";
     expect(evidenceProblems({ overall: "PASS", lines: [line, holdout] }, `${line}\n${holdout}`, root, preparedAt, ["H-01"])).toEqual([]);
   });
+  test("runtime mode accepts probe and assertion lines without counting them as holdouts", () => {
+    const root = mkdtempSync(join(tmpdir(), "factory-evidence-runtime-test-"));
+    const preparedAt = Date.now();
+    writeFileSync(join(root, "state.json"), "{}");
+    utimesSync(join(root, "state.json"), new Date(preparedAt + 1000), new Date(preparedAt + 1000));
+    const lines = ["C1  PASS  Hero moves.  evidence: state.json", "P1  PASS  Dodge while moving.  evidence: state.json", "A1  PASS  health-and-identity holds.  evidence: state.json"];
+    expect(evidenceProblems({ overall: "PASS", lines }, lines.join("\n"), root, preparedAt)).toEqual([]);
+    const surprise = "P2  FAIL  Hero froze after a click.  evidence: state.json";
+    expect(evidenceProblems({ overall: "PASS", lines: [lines[0], surprise] }, `${lines[0]}\n${surprise}`, root, preparedAt)).toContain("overall must be FAIL");
+    expect(evidenceProblems({ overall: "PASS", lines: [lines[1]] }, lines[1], root, preparedAt)).toContain("result has no acceptance/core check lines");
+  });
+  test("cleanup runs the configured runtime teardown from the prepared checkout", () => {
+    const artifacts = mkdtempSync(join(tmpdir(), "factory-teardown-test-"));
+    const checkout = mkdtempSync(join(tmpdir(), "factory-app-check-teardown-"));
+    const marker = join(artifacts, "teardown-ran.txt");
+    mkdirSync(join(artifacts, "app-check"), { recursive: true });
+    writeFileSync(join(artifacts, "app-check", "temp-path.txt"), checkout);
+    const config = JSON.stringify({ ...DEFAULTS, app: { ...DEFAULTS.app, teardown: `pwd > '${marker.replace(/\\/g, "/")}'` } });
+    const cleanup = Bun.spawnSync([process.execPath, join(import.meta.dir, "..", "scripts", "cleanup.ts")], {
+      env: { ...process.env, ARTIFACTS_DIR: artifacts, INPUTS_CONFIG: config }, cwd: artifacts, stdout: "pipe", stderr: "pipe",
+    });
+    expect(cleanup.exitCode, cleanup.stderr.toString()).toBe(0);
+    expect(JSON.parse(cleanup.stdout.toString()).teardown).toBe("ok");
+    expect(existsSync(marker)).toBe(true);
+  });
   test("evidence entrypoint accepts one leading BOM without relaxing JSON parsing", () => {
     const artifacts = mkdtempSync(join(tmpdir(), "factory-evidence-entrypoint-test-"));
     const root = join(artifacts, "app-check");
@@ -210,7 +235,7 @@ describe("app-check deterministic decisions", () => {
         stderr: "pipe",
       });
       expect(cleanup.exitCode, cleanup.stderr.toString()).toBe(0);
-      expect(JSON.parse(cleanup.stdout.toString())).toEqual({ cleaned: false, app_record: false, app_cleanup: "stopped" });
+      expect(JSON.parse(cleanup.stdout.toString())).toEqual({ cleaned: false, app_record: false, app_cleanup: "stopped", teardown: "none" });
       await child.exited;
       expect(processIsAlive(child.pid)).toBe(false);
     } finally {
