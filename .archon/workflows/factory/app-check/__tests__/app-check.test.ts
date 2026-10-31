@@ -47,6 +47,7 @@ describe("app-check deterministic decisions", () => {
     const checked = row(1, "2026-01-01");
     expect(oldestUnchecked([row(2, "2026-02-01"), checked, row(3, "2025-01-01", true)], new Set([candidateBinding(checked)]))?.number).toBe(3);
     expect(oldestUnchecked([{ ...checked, baseRefOid: "base-b" }], new Set([candidateBinding(checked)]))?.number).toBe(1);
+    expect(oldestUnchecked([{ ...row(4, "2024-01-01"), mergeable: "CONFLICTING" }, row(5, "2026-03-01")], new Set())?.number).toBe(5);
   });
   test("binds statuses and publication freshness to the exact base and head", () => {
     const statuses = [{ context: "factory/app-check", state: "success", description: boundDescription("main", "base-a", "passed") }];

@@ -2,13 +2,14 @@ import { emit, env, ghJson, linkedIssue } from "../../.shared/utils.ts";
 import { currentBranchOid } from "./base.ts";
 import { appCheckBinding, statusCoversBinding, type CommitStatus } from "./binding.ts";
 
-export interface Candidate { number: number; isDraft: boolean; createdAt: string; headRefOid: string; baseRefName: string; baseRefOid: string; files: { path: string }[]; body: string; state?: string }
+export interface Candidate { number: number; isDraft: boolean; createdAt: string; headRefOid: string; baseRefName: string; baseRefOid: string; files: { path: string }[]; body: string; state?: string; mergeable?: string }
 type PullCandidate = Omit<Candidate, "baseRefOid"> & { baseRefOid?: string };
 export function candidateBinding(row: Candidate): string {
   return `${row.headRefOid}:${appCheckBinding(row.baseRefName, row.baseRefOid)}`;
 }
 export function oldestUnchecked(rows: Candidate[], coveredBindings: Set<string>): Candidate | null {
-  return rows.filter(row => (!row.state || row.state === "OPEN") && !coveredBindings.has(candidateBinding(row))).sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0] ?? null;
+  // A conflicting pull request cannot be merged with its base for testing; checking it first would starve every newer one.
+  return rows.filter(row => (!row.state || row.state === "OPEN") && row.mergeable !== "CONFLICTING" && !coveredBindings.has(candidateBinding(row))).sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0] ?? null;
 }
 
 function hasCurrentStatus(repo: string, row: Candidate): boolean {
@@ -18,7 +19,7 @@ function hasCurrentStatus(repo: string, row: Candidate): boolean {
 
 if (import.meta.main) {
   const repo = env("repo_path"), requested = env("pr");
-  const fields = "number,isDraft,createdAt,headRefOid,baseRefName,baseRefOid,files,body,state";
+  const fields = "number,isDraft,createdAt,headRefOid,baseRefName,baseRefOid,files,body,state,mergeable";
   const pullRows = requested
     ? [ghJson(["pr", "view", requested, "--repo", repo, "--json", fields]) as PullCandidate]
     : ghJson(["pr", "list", "--repo", repo, "--state", "open", "--limit", "100", "--json", fields]) as PullCandidate[];
