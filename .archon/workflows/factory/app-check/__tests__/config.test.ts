@@ -57,6 +57,7 @@ triggers:
   discoveries: { interval_seconds: 0 }
   manager: { interval_seconds: 900 }
   app_check: { interval_seconds: 900 }
+  holdout_sweep: { interval_seconds: 0 }
 `);
 
     const result = applyFactoryConfig(root);

@@ -16,13 +16,13 @@ export function configuredHoldoutIds(names: string[]): string[] {
 if (import.meta.main) {
   const config = jsonEnv<FactoryConfig>("config", {} as FactoryConfig);
   const depth = env("depth", "light") as "light" | "normal" | "deep";
-  if (!config.holdouts.enabled || depth === "light") emit({ ids: [] });
+  if (!config.holdouts.enabled || depth === "light") emit({ ids: [], count: 0, dir: "" });
   else {
     const configured = config.holdouts.path.replace(/^~(?=[/\\]|$)/, homedir());
     const dir = resolve(configured);
     if (!existsSync(dir)) throw new Error("configured holdout directory does not exist");
     const ids = configuredHoldoutIds(readdirSync(dir, { withFileTypes: true }).filter(entry => entry.isFile()).map(entry => entry.name));
     if (!ids.length) throw new Error("configured holdout directory has no scenarios");
-    emit({ ids });
+    emit({ ids, count: ids.length, dir });
   }
 }

@@ -17,7 +17,7 @@ export interface FactoryConfig {
     frontend_paths: string[];
     depth: Depth;
   };
-  holdouts: { enabled: boolean; path: string };
+  holdouts: { enabled: boolean; path: string; max_per_check: number; sweep_size: number };
   protected_paths: string[];
   autonomy: AutonomyPreset;
   app: { prepare: string; start: string; port_env: string; database_env: string; health_path: string; runtime: string; teardown: string };
@@ -35,6 +35,7 @@ export interface FactoryConfig {
     discoveries: ScheduleConfig;
     manager: ScheduleConfig;
     app_check: ScheduleConfig;
+    holdout_sweep: ScheduleConfig;
   };
 }
 
@@ -46,7 +47,7 @@ export const DEFAULTS: FactoryConfig = {
     frontend_paths: ["app/**", "public/**", "src/**/*.css", "src/**/*.html", "src/**/*.tsx", "src/**/*.jsx"],
     depth: "auto",
   },
-  holdouts: { enabled: false, path: "" },
+  holdouts: { enabled: false, path: "", max_per_check: 8, sweep_size: 10 },
   protected_paths: [".archon/**", ".github/**", "DEPLOY.md"],
   autonomy: "standard",
   app: { prepare: "", start: "", port_env: "PORT", database_env: "", health_path: "/health", runtime: "", teardown: "" },
@@ -60,13 +61,14 @@ export const DEFAULTS: FactoryConfig = {
     discoveries: { interval_seconds: 14400 },
     manager: { interval_seconds: 14400 },
     app_check: { interval_seconds: 1800 },
+    holdout_sweep: { interval_seconds: 7200 },
   },
 };
 
 type RecordValue = Record<string, unknown>;
 const EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent"] as const;
 const TIERS = ["small", "medium", "large"] as const;
-const SCHEDULES = ["build_queue", "merge_queue", "discoveries", "manager", "app_check"] as const;
+const SCHEDULES = ["build_queue", "merge_queue", "discoveries", "manager", "app_check", "holdout_sweep"] as const;
 
 function fail(path: string, message: string): never { throw new Error(`Invalid factory config at ${path}: ${message}`); }
 
@@ -158,7 +160,7 @@ export function parseFactoryConfig(raw: string): FactoryConfig {
   const appCheck = section(root, "app_check");
   exact(appCheck, ["enabled", "trigger", "frontend_paths", "depth"], "app_check");
   const holdouts = section(root, "holdouts");
-  exact(holdouts, ["enabled", "path"], "holdouts");
+  exact(holdouts, ["enabled", "path", "max_per_check", "sweep_size"], "holdouts");
   const app = section(root, "app");
   exact(app, ["prepare", "start", "port_env", "database_env", "health_path", "runtime", "teardown"], "app");
   const models = section(root, "models");
@@ -180,6 +182,8 @@ export function parseFactoryConfig(raw: string): FactoryConfig {
     holdouts: {
       enabled: boolean(holdouts.enabled, DEFAULTS.holdouts.enabled, "holdouts.enabled"),
       path: string(holdouts.path, DEFAULTS.holdouts.path, "holdouts.path"),
+      max_per_check: integer(holdouts.max_per_check, DEFAULTS.holdouts.max_per_check, "holdouts.max_per_check", 1),
+      sweep_size: integer(holdouts.sweep_size, DEFAULTS.holdouts.sweep_size, "holdouts.sweep_size", 1),
     },
     protected_paths: strings(root.protected_paths, DEFAULTS.protected_paths, "protected_paths"),
     autonomy: choice(root.autonomy, ["supervised", "standard", "autonomous"], DEFAULTS.autonomy, "autonomy"),
@@ -206,6 +210,7 @@ export function parseFactoryConfig(raw: string): FactoryConfig {
       discoveries: schedule(triggers.discoveries, DEFAULTS.triggers.discoveries, "triggers.discoveries"),
       manager: schedule(triggers.manager, DEFAULTS.triggers.manager, "triggers.manager"),
       app_check: schedule(triggers.app_check, DEFAULTS.triggers.app_check, "triggers.app_check"),
+      holdout_sweep: schedule(triggers.holdout_sweep, DEFAULTS.triggers.holdout_sweep, "triggers.holdout_sweep"),
     },
   };
 
@@ -322,6 +327,7 @@ function triggerDefinitions(config: FactoryConfig): TimerDefinition[] {
     { key: "discoveries", workflow: "archon-discoveries", binding: "discoveries", resource: `discoveries:${repo}`, overlap: "skip", inputs, isolation: "default" },
     { key: "manager", workflow: "factory-manager", binding: "factory-manager", resource: `factory:${repo}:manager`, overlap: "skip", inputs: { repo_path: config.project.repo_path }, isolation: "default" },
     { key: "app_check", workflow: "factory-app-check", binding: "factory-app-check", resource: `factory:${repo}:app-check`, overlap: "skip", inputs: { repo_path: config.project.repo_path }, isolation: "default" },
+    { key: "holdout_sweep", workflow: "factory-holdout-sweep", binding: "factory-holdout-sweep", resource: `factory:${repo}:holdout-sweep`, overlap: "skip", inputs: { repo_path: config.project.repo_path }, isolation: "default" },
   ];
 }
 

@@ -9,9 +9,17 @@ export function bindingIsCurrent(current: CurrentPull, currentBaseOid: string, h
   return current.state === "OPEN" && current.headRefOid === head && current.baseRefName === base && currentBaseOid === baseOid;
 }
 
+/** Say what did not run and why, so a skipped scenario is visible rather than silently gone. */
+export function holdoutNote(skipped: string[], overBudget: string[]): string {
+  if (!skipped.length) return "";
+  const budget = overBudget.length ? ` ${overBudget.length} of them (${overBudget.join(", ")}) would have run but were over the limit for one check.` : "";
+  return `\n\nHoldouts not run on this pull request: ${skipped.length}. The rolling sweep covers them on the default branch.${budget}`;
+}
+
 if (import.meta.main) {
   const repo = env("repo_path"), head = env("head"), base = env("base"), baseOid = env("base_oid"), pr = env("pr"), overall = env("overall");
   const lines = jsonEnv<string[]>("lines", []);
+  const skipped = jsonEnv<string[]>("skipped", []), overBudget = jsonEnv<string[]>("over_budget", []);
   const current = ghJson(["pr", "view", pr, "--repo", repo, "--json", "state,headRefOid,baseRefName"]) as CurrentPull;
   const fresh = bindingIsCurrent(current, currentBranchOid(repo, current.baseRefName), head, base, baseOid);
   const state = overall === "PASS" && fresh ? "success" : "failure";
@@ -19,7 +27,7 @@ if (import.meta.main) {
   postStatus(repo, head, state, "factory/app-check", boundDescription(base, baseOid, message));
   const marker = "<!-- factory-app-check -->";
   const freshness = `Tested head \`${head}\` against \`${base}\` at \`${baseOid}\`.${fresh ? "" : " The pull request changed before publication; this result is a failure."}`;
-  const body = `${marker}\n## Factory app check: ${state === "success" ? "PASS" : "FAIL"}\n\n${freshness}\n\n${lines.join("\n")}`;
+  const body = `${marker}\n## Factory app check: ${state === "success" ? "PASS" : "FAIL"}\n\n${freshness}\n\n${lines.join("\n")}${holdoutNote(skipped, overBudget)}`;
   const comments = ghJson(["api", `repos/${repo}/issues/${pr}/comments`, "--paginate"]) as { id: number; body: string }[];
   const prior = comments.find(comment => comment.body.includes(marker));
   const root = join(process.env.ARTIFACTS_DIR!, "app-check"), file = join(root, "comment.json");

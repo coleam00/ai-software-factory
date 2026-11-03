@@ -7,7 +7,8 @@ import { protectedGrantAllows } from "../scripts/policy.ts";
 import { evidenceProblems } from "../scripts/evidence.ts";
 import { boundDescription, statusCoversBinding } from "../scripts/binding.ts";
 import { configuredHoldoutIds } from "../scripts/holdouts.ts";
-import { bindingIsCurrent } from "../scripts/publish.ts";
+import { bindingIsCurrent, holdoutNote } from "../scripts/publish.ts";
+import { scopeHoldouts } from "../scripts/scoped.ts";
 import { finalizePending } from "../scripts/finalize.ts";
 import { appProcessRecordPath, inspectAppProcessIdentity, recordAppProcess, stopRecordedApp } from "../scripts/app-process.ts";
 import { installFakeCommand, isolatedCommandEnv } from "../../.shared/test-command.ts";
@@ -32,6 +33,29 @@ async function stopTestChild(child: Bun.Subprocess): Promise<void> {
   if (processIsAlive(child.pid)) child.kill();
   await child.exited;
 }
+
+describe("holdout selection", () => {
+  const all = ["H-01", "H-02", "H-03", "H-04"];
+  test("runs only what the selector chose and accounts for every other scenario", () => {
+    expect(scopeHoldouts(all, ["H-03", "H-01"], 8)).toEqual({ run: ["H-03", "H-01"], skipped: ["H-02", "H-04"], over_budget: [] });
+  });
+  test("a selector that chose nothing runs nothing, and a skipped selector does the same", () => {
+    expect(scopeHoldouts(all, [], 8)).toEqual({ run: [], skipped: all, over_budget: [] });
+    expect(scopeHoldouts([], [], 8)).toEqual({ run: [], skipped: [], over_budget: [] });
+  });
+  test("the limit keeps the most relevant and reports the rest", () => {
+    expect(scopeHoldouts(all, ["H-04", "H-02", "H-01"], 2)).toEqual({ run: ["H-04", "H-02"], skipped: ["H-01", "H-03"], over_budget: ["H-01"] });
+  });
+  test("refuses an id that does not exist or is named twice", () => {
+    expect(() => scopeHoldouts(all, ["H-99"], 8)).toThrow("does not exist");
+    expect(() => scopeHoldouts(all, ["H-01", "H-01"], 8)).toThrow("twice");
+  });
+  test("says what did not run", () => {
+    expect(holdoutNote([], [])).toBe("");
+    expect(holdoutNote(["H-01", "H-02"], ["H-02"])).toContain("not run on this pull request: 2");
+    expect(holdoutNote(["H-01", "H-02"], ["H-02"])).toContain("(H-02)");
+  });
+});
 
 describe("app-check deterministic decisions", () => {
   test("matches anchored frontend globs", () => {
@@ -87,6 +111,13 @@ describe("app-check deterministic decisions", () => {
     expect(evidenceProblems({ overall: "PASS", lines: [line] }, line, root, preparedAt, ["H-01"])).toContain("missing configured holdout result: H-01");
     const holdout = "H-01  PASS  Private invariant holds.  evidence: shot.txt";
     expect(evidenceProblems({ overall: "PASS", lines: [line, holdout] }, `${line}\n${holdout}`, root, preparedAt, ["H-01"])).toEqual([]);
+    const known = "H-01  KNOWN  Still fails as tracked in #41.  evidence: shot.png".replace("shot.png", line.split("evidence: ")[1]!);
+    const report = `${line}\n${known}`;
+    expect(evidenceProblems({ overall: "PASS", lines: [line, known] }, report, root, preparedAt, ["H-01"], { known: { "H-01": 41 } })).toEqual([]);
+    expect(evidenceProblems({ overall: "PASS", lines: [line, known] }, report, root, preparedAt, ["H-01"], { known: {} })).toContain("H-01 is KNOWN but the default branch has no recorded failure for it");
+    expect(evidenceProblems({ overall: "PASS", lines: [line, known] }, report, root, preparedAt, ["H-01"], { known: { "H-01": 99 } })).toContain("H-01 is KNOWN but does not name its issue #99");
+    const swept = holdout;
+    expect(evidenceProblems({ overall: "PASS", lines: [swept] }, swept, root, preparedAt, ["H-01"], { requireCriteria: false })).toEqual([]);
   });
   test("runtime mode accepts probe and assertion lines without counting them as holdouts", () => {
     const root = mkdtempSync(join(tmpdir(), "factory-evidence-runtime-test-"));

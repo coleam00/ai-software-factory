@@ -203,6 +203,32 @@ filesystem permission can still read the directory. Use a separate account, ACLs
 container boundary, or host appropriate to the threat model. Never put credentials in
 scenario files or rely on prompt instructions as access control.
 
+
+### Which holdouts run on a pull request
+
+Holdouts grow and are expensive: each costs minutes of a running app. A pull request therefore
+faces only the scenarios it exercises:
+
+- `holdouts` lists the scenario ids. Light depth lists none.
+- `choose`, a small agent, reads the scenarios and returns the ids this issue's criteria create or
+  change, most relevant first. At deep depth it adds what the changed files could affect. It
+  returns ids only, so the scenarios stay private. Set `@factory-holdout-selector` to change its model.
+- `scoped`, a script, checks the answer and applies `holdouts.max_per_check` (default 8). Every id
+  ends up run or skipped, and the pull request's comment says how many were skipped.
+
+Skipping is only safe because of the backstop. `factory-holdout-sweep` runs on its own timer
+(`triggers.holdout_sweep`) and checks `holdouts.sweep_size` scenarios (default 10) against the
+default branch, never-checked ones first, then the ones checked longest ago. It stops once every
+scenario is checked at the current commit. Its verdicts go to `.ledger.json` beside the scenarios
+(ids, verdicts and issue numbers only). A failure is filed as an issue describing what a user sees,
+which enters through intake like any other ticket.
+
+A scenario with a recorded failure and an open issue does not hold up unrelated pull requests: the
+check reports it as `KNOWN` and names the issue, and `evidence` refuses `KNOWN` for anything the
+ledger does not record. A new or worse failure is still `FAIL`.
+
+To retire a scenario, move its file out of the top level of the holdouts folder.
+
 ## Deployment is separate and explicit
 
 Setup never enables deployment and no trigger is generated for it. A target project

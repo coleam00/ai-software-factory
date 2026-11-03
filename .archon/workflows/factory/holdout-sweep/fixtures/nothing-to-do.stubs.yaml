@@ -1,0 +1,8 @@
+config: { holdouts: { enabled: false, path: "", max_per_check: 8, sweep_size: 10 } }
+plan: { run: false, ids: [], base: "", head: "", holdout_dir: "", reason: holdouts are disabled }
+cleanup: { cleaned: false, app_record: false, app_cleanup: no-record, teardown: none }
+fixture:
+  inputs: { repo_path: example/widgets }
+  expect: completed
+  reached: [config, plan, cleanup]
+exec-code: true

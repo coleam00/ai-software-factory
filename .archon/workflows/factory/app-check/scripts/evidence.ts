@@ -1,9 +1,11 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { emit, env, jsonEnv, readJsonFile } from "../../.shared/utils.ts";
+import { knownFailures, readLedger } from "./ledger.ts";
 
-export const LINE = /^(C\d+|P\d+|A\d+|H-[A-Za-z0-9_-]+)\s{2}(PASS|FAIL|INCOMPLETE)\s{2}(.+?)\s{2}evidence:\s+(.+)$/;
-export function evidenceProblems(result: any, report: string, root: string, preparedAt: number, expectedHoldouts: string[] = []): string[] {
+export const LINE = /^(C\d+|P\d+|A\d+|H-[A-Za-z0-9_-]+)\s{2}(PASS|FAIL|INCOMPLETE|KNOWN)\s{2}(.+?)\s{2}evidence:\s+(.+)$/;
+export function evidenceProblems(result: any, report: string, root: string, preparedAt: number, expectedHoldouts: string[] = [], options: { known?: Record<string, number>; requireCriteria?: boolean } = {}): string[] {
+  const known = options.known ?? {};
   const problems: string[] = [], lines = Array.isArray(result?.lines) ? result.lines : [];
   if (!lines.length) problems.push("result has no check lines");
   let blocked = false, criteria = 0;
@@ -16,14 +18,19 @@ export function evidenceProblems(result: any, report: string, root: string, prep
     seen.add(id);
     if (id.startsWith("C")) criteria++;
     else if (id.startsWith("H-")) actualHoldouts.add(id);
-    if (match[2] !== "PASS") blocked = true;
+    if (match[2] === "KNOWN") {
+      // Only a failure the sweep already recorded on the default branch, with its open issue named, may not block.
+      const issue = known[id];
+      if (issue === undefined) problems.push(`${id} is KNOWN but the default branch has no recorded failure for it`);
+      else if (!new RegExp(`#${issue}\\b`).test(match[3]!)) problems.push(`${id} is KNOWN but does not name its issue #${issue}`);
+    } else if (match[2] !== "PASS") blocked = true;
     const cited = match[4]!.trim();
     const path = isAbsolute(cited) ? cited : resolve(root, cited);
     if (!existsSync(path) || !statSync(path).isFile()) problems.push(`${match[1]} cites a missing file: ${cited}`);
     else if (statSync(path).mtimeMs < preparedAt) problems.push(`${match[1]} cites evidence older than prepare: ${cited}`);
     if (!report.includes(raw)) problems.push(`${match[1]} is absent from report.md`);
   }
-  if (criteria === 0) problems.push("result has no acceptance/core check lines");
+  if (options.requireCriteria !== false && criteria === 0) problems.push("result has no acceptance/core check lines");
   const expected = new Set(expectedHoldouts);
   if (expected.size !== expectedHoldouts.length || expectedHoldouts.some(id => !/^H-[A-Za-z0-9_-]+$/.test(id))) problems.push("expected holdout ids are invalid or duplicated");
   for (const id of expected) if (!actualHoldouts.has(id)) problems.push(`missing configured holdout result: ${id}`);
@@ -39,7 +46,9 @@ if (import.meta.main) {
   const preparedAt = Number(env("prepared_at"));
   if (statSync(resultPath).mtimeMs < preparedAt || statSync(reportPath).mtimeMs < preparedAt) throw new Error("result.json and report.md must be written after prepare");
   const result = readJsonFile<any>(resultPath), report = readFileSync(reportPath, "utf8");
-  const problems = evidenceProblems(result, report, root, preparedAt, jsonEnv<string[]>("expected_holdouts", []));
+  const holdoutConfig = jsonEnv<{ holdouts?: { enabled?: boolean; path?: string } }>("config", {}).holdouts;
+  const known = holdoutConfig?.enabled && holdoutConfig.path ? knownFailures(readLedger(holdoutConfig.path)) : {};
+  const problems = evidenceProblems(result, report, root, preparedAt, jsonEnv<string[]>("expected_holdouts", []), { known });
   if (problems.length) throw new Error(problems.join("\n"));
   emit({ overall: result.overall, lines: result.lines, report });
 }
