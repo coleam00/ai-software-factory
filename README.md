@@ -97,7 +97,7 @@ The app configuration is deliberately generic:
 - `app.teardown`: command the cleanup node runs from the prepared checkout to stop a
   runtime-mode app if the checker exits early
 
-No start command, port, database variable, holdout path, provider, model ID, credential,
+No start command, port, database variable, provider, model ID, credential,
 cloud, or deployment destination is assumed. Add project paths to `protected_paths`.
 Leave `models.assistant` empty to inherit Archon. Every configured tier or alias must
 name both its Archon provider and model explicitly.
@@ -126,7 +126,6 @@ Archon's bundled queues remain the core factory:
 | Slice a PRD into deduplicated issues | `factory-backlog` |
 | Check the oldest eligible PR through the app | `factory-app-check` |
 | Tend only policy-settled attention waits | `factory-manager` |
-| Write external private scenarios | `factory-holdouts` |
 | Deploy one exact documented revision | `factory-deploy` |
 
 Run a first queue pass manually using the inputs shown by
@@ -190,45 +189,6 @@ exact PR head; project merge policy should name every required check. Protected-
 changes fail closed unless the app-check input carries an exact operator grant for that
 head and the complete matched path set.
 
-## External holdouts
-
-Optional holdouts live at the absolute, project-specific external path in
-`holdouts.path`; there is no repository default. The writer and normal/deep app-check
-nodes receive that path, while ordinary builders do not. Public reports contain IDs
-and visible outcomes, not scenario text. Setup normalizes the configured path and
-rejects the checkout itself or any path inside it without reading scenario contents.
-
-This is context separation, not an operating-system security boundary. A process with
-filesystem permission can still read the directory. Use a separate account, ACLs,
-container boundary, or host appropriate to the threat model. Never put credentials in
-scenario files or rely on prompt instructions as access control.
-
-
-### Which holdouts run on a pull request
-
-Holdouts grow and are expensive: each costs minutes of a running app. A pull request therefore
-faces only the scenarios it exercises:
-
-- `holdouts` lists the scenario ids. Light depth lists none.
-- `choose`, a small agent, reads the scenarios and returns the ids this issue's criteria create or
-  change, most relevant first. At deep depth it adds what the changed files could affect. It
-  returns ids only, so the scenarios stay private. Set `@factory-holdout-selector` to change its model.
-- `scoped`, a script, checks the answer and applies `holdouts.max_per_check` (default 8). Every id
-  ends up run or skipped, and the pull request's comment says how many were skipped.
-
-Skipping is only safe because of the backstop. `factory-holdout-sweep` runs on its own timer
-(`triggers.holdout_sweep`) and checks `holdouts.sweep_size` scenarios (default 10) against the
-default branch, never-checked ones first, then the ones checked longest ago. It stops once every
-scenario is checked at the current commit. Its verdicts go to `.ledger.json` beside the scenarios
-(ids, verdicts and issue numbers only). A failure is filed as an issue describing what a user sees,
-which enters through intake like any other ticket.
-
-A scenario with a recorded failure and an open issue does not hold up unrelated pull requests: the
-check reports it as `KNOWN` and names the issue, and `evidence` refuses `KNOWN` for anything the
-ledger does not record. A new or worse failure is still `FAIL`.
-
-To retire a scenario, move its file out of the top level of the holdouts folder.
-
 ## Deployment is separate and explicit
 
 Setup never enables deployment and no trigger is generated for it. A target project
@@ -262,7 +222,7 @@ archon validate workflows
 Also run `archon workflow list --json` and confirm the factory workflows are discovered
 beside, not instead of, the bundled SDLC workflows. Validation proves parsing, fixture
 outcomes, and deterministic boundaries; it does not prove provider login, GitHub
-permissions, a scheduled user environment, external holdout isolation, or a real
+permissions, a scheduled user environment, or a real
 deployment. Those remain operator acceptance steps.
 
 ## Layout

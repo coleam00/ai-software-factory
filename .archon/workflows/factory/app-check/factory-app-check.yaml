@@ -1,5 +1,5 @@
 name: factory-app-check
-description: Test the oldest unchecked pull request merged with current main through the running app, then seal and publish the evidence.
+description: Test the oldest pull request with no result at its head, merged with current main, through the running app, then seal and publish the evidence.
 inputs:
   repo_path:
     required: true
@@ -87,68 +87,10 @@ nodes:
         description: { type: string }
       required: [ok, protected_files, description]
 
-  - id: holdouts
-    script: holdouts
-    runtime: bun
-    depends_on: [config, scope]
-    when: "$scope.output.run == true"
-    with: { config: "$config.output", depth: "$scope.output.depth" }
-    output_format:
-      type: object
-      properties: { ids: { type: array, items: { type: string } }, count: { type: integer }, dir: { type: string } }
-      required: [ids, count, dir]
-
-  - id: choose
-    command: choose
-    depends_on: [holdouts]
-    when: "$holdouts.output.count > 0"
-    model: ['@factory-holdout-selector', medium]
-    mutates_checkout: false
-    with:
-      issue: "$select.output.issue"
-      issue_body: "$select.output.issue_body"
-      files: "$select.output.files"
-      depth: "$scope.output.depth"
-      ids: "$holdouts.output.ids"
-      holdout_dir: "$holdouts.output.dir"
-    output_format:
-      type: object
-      properties: { run: { type: array, items: { type: string } }, reason: { type: string } }
-      required: [run, reason]
-
-  - id: scoped
-    script: scoped
-    runtime: bun
-    depends_on: [holdouts, choose]
-    trigger_rule: none_failed_min_one_success
-    when: "$scope.output.run == true"
-    with:
-      config: "$config.output"
-      ids: "$holdouts.output.ids"
-      chosen: { from: "$choose.output.run", if_skipped: null }
-    output_format:
-      type: object
-      properties:
-        run: { type: array, items: { type: string } }
-        skipped: { type: array, items: { type: string } }
-        over_budget: { type: array, items: { type: string } }
-      required: [run, skipped, over_budget]
-
-  - id: known
-    script: known
-    runtime: bun
-    depends_on: [scoped]
-    when: "$scope.output.run == true"
-    with: { config: "$config.output" }
-    output_format:
-      type: object
-      properties: { issues: { type: object } }
-      required: [issues]
-
   - id: prepare
     script: prepare
     runtime: bun
-    depends_on: [scope, known]
+    depends_on: [scope]
     when: "$scope.output.run == true"
     with: { base: "$select.output.base", base_oid: "$select.output.base_oid", head: "$select.output.head", pr: "$select.output.pr" }
     output_format:
@@ -170,8 +112,6 @@ nodes:
       issue_body: "$select.output.issue_body"
       files: "$select.output.files"
       config: "$config.output"
-      expected_holdouts: "$scoped.output.run"
-      known_holdouts: "$known.output.issues"
     output_format:
       type: object
       properties:
@@ -184,7 +124,7 @@ nodes:
     script: evidence
     runtime: bun
     depends_on: [check, prepare]
-    with: { prepared_at: "$prepare.output.prepared_at", expected_holdouts: "$scoped.output.run", config: "$config.output" }
+    with: { prepared_at: "$prepare.output.prepared_at" }
     output_format:
       type: object
       properties:
@@ -205,8 +145,6 @@ nodes:
       base_oid: "$select.output.base_oid"
       overall: "$evidence.output.overall"
       lines: "$evidence.output.lines"
-      skipped: "$scoped.output.skipped"
-      over_budget: "$scoped.output.over_budget"
     output_format:
       type: object
       properties: { state: { type: string, enum: [success, failure] }, comment: { type: string, enum: [created, updated] } }
@@ -215,7 +153,7 @@ nodes:
   - id: finalize
     script: finalize
     runtime: bun
-    depends_on: [select, pending, scope, policy, holdouts, choose, scoped, known, prepare, check, evidence, publish]
+    depends_on: [select, pending, scope, policy, prepare, check, evidence, publish]
     trigger_rule: all_done
     output_format:
       type: object
@@ -225,7 +163,7 @@ nodes:
   - id: cleanup
     script: cleanup
     runtime: bun
-    depends_on: [select, scope, policy, holdouts, choose, scoped, known, prepare, check, evidence, publish, finalize]
+    depends_on: [select, scope, policy, prepare, check, evidence, publish, finalize]
     trigger_rule: all_done
     with: { config: "$config.output" }
     output_format:

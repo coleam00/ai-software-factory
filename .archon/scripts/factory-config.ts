@@ -17,7 +17,6 @@ export interface FactoryConfig {
     frontend_paths: string[];
     depth: Depth;
   };
-  holdouts: { enabled: boolean; path: string; max_per_check: number; sweep_size: number };
   protected_paths: string[];
   autonomy: AutonomyPreset;
   app: { prepare: string; start: string; port_env: string; database_env: string; health_path: string; runtime: string; teardown: string };
@@ -35,7 +34,6 @@ export interface FactoryConfig {
     discoveries: ScheduleConfig;
     manager: ScheduleConfig;
     app_check: ScheduleConfig;
-    holdout_sweep: ScheduleConfig;
   };
 }
 
@@ -47,7 +45,6 @@ export const DEFAULTS: FactoryConfig = {
     frontend_paths: ["app/**", "public/**", "src/**/*.css", "src/**/*.html", "src/**/*.tsx", "src/**/*.jsx"],
     depth: "auto",
   },
-  holdouts: { enabled: false, path: "", max_per_check: 8, sweep_size: 10 },
   protected_paths: [".archon/**", ".github/**", "DEPLOY.md"],
   autonomy: "standard",
   app: { prepare: "", start: "", port_env: "PORT", database_env: "", health_path: "/health", runtime: "", teardown: "" },
@@ -61,14 +58,13 @@ export const DEFAULTS: FactoryConfig = {
     discoveries: { interval_seconds: 14400 },
     manager: { interval_seconds: 14400 },
     app_check: { interval_seconds: 1800 },
-    holdout_sweep: { interval_seconds: 7200 },
   },
 };
 
 type RecordValue = Record<string, unknown>;
 const EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent"] as const;
 const TIERS = ["small", "medium", "large"] as const;
-const SCHEDULES = ["build_queue", "merge_queue", "discoveries", "manager", "app_check", "holdout_sweep"] as const;
+const SCHEDULES = ["build_queue", "merge_queue", "discoveries", "manager", "app_check"] as const;
 
 function fail(path: string, message: string): never { throw new Error(`Invalid factory config at ${path}: ${message}`); }
 
@@ -153,14 +149,12 @@ export function parseFactoryConfig(raw: string): FactoryConfig {
   try { parsed = Bun.YAML.parse(raw); }
   catch (error) { throw new Error(`Invalid factory config YAML: ${error instanceof Error ? error.message : String(error)}`); }
   const root = object(parsed ?? {}, "root");
-  exact(root, ["project", "app_check", "holdouts", "protected_paths", "autonomy", "app", "models", "triggers"], "root");
+  exact(root, ["project", "app_check", "protected_paths", "autonomy", "app", "models", "triggers"], "root");
 
   const project = section(root, "project");
   exact(project, ["repo_host", "repo_path"], "project");
   const appCheck = section(root, "app_check");
   exact(appCheck, ["enabled", "trigger", "frontend_paths", "depth"], "app_check");
-  const holdouts = section(root, "holdouts");
-  exact(holdouts, ["enabled", "path", "max_per_check", "sweep_size"], "holdouts");
   const app = section(root, "app");
   exact(app, ["prepare", "start", "port_env", "database_env", "health_path", "runtime", "teardown"], "app");
   const models = section(root, "models");
@@ -178,12 +172,6 @@ export function parseFactoryConfig(raw: string): FactoryConfig {
       trigger: choice(appCheck.trigger, ["always", "frontend", "never"], DEFAULTS.app_check.trigger, "app_check.trigger"),
       frontend_paths: strings(appCheck.frontend_paths, DEFAULTS.app_check.frontend_paths, "app_check.frontend_paths"),
       depth: choice(appCheck.depth, ["auto", "light", "normal", "deep"], DEFAULTS.app_check.depth, "app_check.depth"),
-    },
-    holdouts: {
-      enabled: boolean(holdouts.enabled, DEFAULTS.holdouts.enabled, "holdouts.enabled"),
-      path: string(holdouts.path, DEFAULTS.holdouts.path, "holdouts.path"),
-      max_per_check: integer(holdouts.max_per_check, DEFAULTS.holdouts.max_per_check, "holdouts.max_per_check", 1),
-      sweep_size: integer(holdouts.sweep_size, DEFAULTS.holdouts.sweep_size, "holdouts.sweep_size", 1),
     },
     protected_paths: strings(root.protected_paths, DEFAULTS.protected_paths, "protected_paths"),
     autonomy: choice(root.autonomy, ["supervised", "standard", "autonomous"], DEFAULTS.autonomy, "autonomy"),
@@ -210,7 +198,6 @@ export function parseFactoryConfig(raw: string): FactoryConfig {
       discoveries: schedule(triggers.discoveries, DEFAULTS.triggers.discoveries, "triggers.discoveries"),
       manager: schedule(triggers.manager, DEFAULTS.triggers.manager, "triggers.manager"),
       app_check: schedule(triggers.app_check, DEFAULTS.triggers.app_check, "triggers.app_check"),
-      holdout_sweep: schedule(triggers.holdout_sweep, DEFAULTS.triggers.holdout_sweep, "triggers.holdout_sweep"),
     },
   };
 
@@ -219,11 +206,6 @@ export function parseFactoryConfig(raw: string): FactoryConfig {
     fail("app.start", "or app.runtime is required when app_check.enabled is true");
   if (config.app.runtime.trim() && !isAbsolute(config.app.runtime.replace(/^~(?=[/\\]|$)/, homedir())))
     fail("app.runtime", "must be an absolute path to the runtime instructions (or start with ~)");
-  if (config.holdouts.enabled) {
-    if (!config.holdouts.path.trim()) fail("holdouts.path", "is required when holdouts.enabled is true");
-    const expanded = config.holdouts.path.replace(/^~(?=[/\\]|$)/, homedir());
-    if (!isAbsolute(expanded)) fail("holdouts.path", "must be an absolute external path (or start with ~)");
-  }
   if (config.triggers.enabled) {
     if (!config.project.repo_path.trim() || !/^[^/\s]+\/[^/\s]+$/.test(config.project.repo_path))
       fail("project.repo_path", "must be OWNER/REPO when triggers are enabled");
@@ -327,7 +309,6 @@ function triggerDefinitions(config: FactoryConfig): TimerDefinition[] {
     { key: "discoveries", workflow: "archon-discoveries", binding: "discoveries", resource: `discoveries:${repo}`, overlap: "skip", inputs, isolation: "default" },
     { key: "manager", workflow: "factory-manager", binding: "factory-manager", resource: `factory:${repo}:manager`, overlap: "skip", inputs: { repo_path: config.project.repo_path }, isolation: "default" },
     { key: "app_check", workflow: "factory-app-check", binding: "factory-app-check", resource: `factory:${repo}:app-check`, overlap: "skip", inputs: { repo_path: config.project.repo_path }, isolation: "default" },
-    { key: "holdout_sweep", workflow: "factory-holdout-sweep", binding: "factory-holdout-sweep", resource: `factory:${repo}:holdout-sweep`, overlap: "skip", inputs: { repo_path: config.project.repo_path }, isolation: "default" },
   ];
 }
 
@@ -374,18 +355,8 @@ function applyTriggers(root: string, config: FactoryConfig): string[] {
 
 export interface ApplyResult { config: string; policies: string[]; triggers: string[]; autonomy: AutonomyPreset }
 
-export function assertHoldoutsOutsideRoot(root: string, factory: FactoryConfig): void {
-  if (!factory.holdouts.enabled) return;
-  const checkout = resolve(root);
-  const holdouts = resolve(factory.holdouts.path.replace(/^~(?=[/\\]|$)/, homedir()));
-  const boundary = relative(checkout, holdouts);
-  if (boundary === "" || (boundary !== ".." && !boundary.startsWith(`..${sep}`) && !isAbsolute(boundary)))
-    fail("holdouts.path", "must resolve outside the target checkout");
-}
-
 export function applyFactoryConfig(root = resolve(".")): ApplyResult {
   const factory = readFactoryConfig(join(root, ".archon", "factory.yaml"));
-  assertHoldoutsOutsideRoot(root, factory);
   const config = applyArchonConfig(root, factory);
   const policies = applyPolicies(root, factory.autonomy);
   const triggers = applyTriggers(root, factory);

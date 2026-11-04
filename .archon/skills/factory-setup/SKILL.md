@@ -11,9 +11,9 @@ commands. Do not duplicate or improvise its operating instructions here. If it i
 installed, stop and install it from the matching Archon source before operating queues.
 
 1. Read `README.md`, `.archon/factory.yaml`, the existing `.archon/config.yaml`, and the
-   project policy files. Do not read an external holdout directory.
+   project policy files.
 2. Ask only for values the repository cannot supply: `OWNER/REPO`, app preparation/start
-   and health details, a project-specific external holdout path if enabled, optional
+   and health details, optional
    provider and model profiles, and (only when schedules are requested) `host_id` plus
    the opaque ID from `archon trigger whoami`.
 3. Edit `.archon/factory.yaml`. Keep deployment out of setup: `factory-deploy` is a

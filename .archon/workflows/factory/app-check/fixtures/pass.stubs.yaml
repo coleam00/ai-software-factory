@@ -1,6 +1,5 @@
 config: &config
   app_check: { enabled: true, trigger: frontend, frontend_paths: ["public/**"], depth: auto }
-  holdouts: { enabled: true, path: "C:/private/project-holdouts", max_per_check: 8, sweep_size: 10 }
   protected_paths: [".archon/**"]
   autonomy: standard
   app: { prepare: "npm ci", start: "npm start", port_env: PORT, database_env: APP_DATABASE_PATH, health_path: "/health" }
@@ -8,24 +7,20 @@ select: { found: true, pr: 7, head: abc123, files: ["public/app.css"], base: mai
 pending: { posted: true }
 scope: { run: true, depth: normal, reason: selected }
 policy: { ok: true, protected_files: [], description: policy clear }
-holdouts: { ids: [H-01, H-02], count: 2, dir: "C:/private/project-holdouts" }
-choose: { run: [H-01], reason: Only one scenario exercises what this issue changes. }
-scoped: { run: [H-01], skipped: [H-02], over_budget: [] }
-known: { issues: {} }
 prepare: { temp: "/tmp/factory-pass", merged: def456, prepared_at: 1000 }
 check:
   overall: PASS
-  lines: ["C1  PASS  The add flow works.  evidence: add.png", "H-01  PASS  The private invariant holds.  evidence: holdout.png"]
+  lines: ["C1  PASS  The add flow works.  evidence: add.png"]
   summary: Checked the add flow.
 evidence:
   overall: PASS
-  lines: ["C1  PASS  The add flow works.  evidence: add.png", "H-01  PASS  The private invariant holds.  evidence: holdout.png"]
-  report: "# App check\nC1  PASS  The add flow works.  evidence: add.png\nH-01  PASS  The private invariant holds.  evidence: holdout.png"
+  lines: ["C1  PASS  The add flow works.  evidence: add.png"]
+  report: "# App check\nC1  PASS  The add flow works.  evidence: add.png"
 publish: { state: success, comment: created }
 finalize: { recovered: false }
 cleanup: { cleaned: true, app_record: false, app_cleanup: no-record, teardown: none }
 fixture:
   inputs: { repo_path: example/widgets, pr: "7", protected_grant: "" }
   expect: completed
-  reached: [config, select, pending, scope, policy, holdouts, choose, scoped, known, prepare, check, evidence, publish, finalize, cleanup]
+  reached: [config, select, pending, scope, policy, prepare, check, evidence, publish, finalize, cleanup]
 exec-code: true

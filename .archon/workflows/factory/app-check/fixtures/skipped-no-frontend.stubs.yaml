@@ -1,6 +1,5 @@
 config:
   app_check: { enabled: true, trigger: frontend, frontend_paths: ["public/**", "src/views.ts"], depth: auto }
-  holdouts: { enabled: true, path: "C:/private/project-holdouts" }
   protected_paths: [".archon/**"]
   autonomy: standard
   app: { prepare: "npm ci", start: "npm start", port_env: PORT, database_env: APP_DATABASE_PATH, health_path: "/health" }

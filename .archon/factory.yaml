@@ -9,15 +9,6 @@ app_check:
   frontend_paths: ["app/**", "public/**", "src/**/*.css", "src/**/*.html", "src/**/*.tsx", "src/**/*.jsx"]
   depth: auto
 
-# Keep private scenarios outside the repository. Supply an absolute project-specific path.
-holdouts:
-  enabled: false
-  path: ""
-  # A check runs only the scenarios its issue exercises, at most this many. The rest run on the
-  # default branch through the rolling sweep, this many per pass.
-  max_per_check: 8
-  sweep_size: 10
-
 protected_paths: [".archon/**", ".github/**", "DEPLOY.md"]
 autonomy: standard
 
@@ -51,4 +42,3 @@ triggers:
   discoveries: { interval_seconds: 14400 }
   manager: { interval_seconds: 14400 }
   app_check: { interval_seconds: 1800 }
-  holdout_sweep: { interval_seconds: 7200 }

@@ -1,14 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { DEFAULTS } from "../../../../scripts/factory-config.ts";
 import { matchingFiles } from "../../.shared/utils.ts";
-import { candidateBinding, oldestUnchecked } from "../scripts/select.ts";
+import { oldestUnchecked } from "../scripts/select.ts";
 import { scopeDecision } from "../scripts/scope.ts";
 import { protectedGrantAllows } from "../scripts/policy.ts";
 import { evidenceProblems } from "../scripts/evidence.ts";
-import { boundDescription, statusCoversBinding } from "../scripts/binding.ts";
-import { configuredHoldoutIds } from "../scripts/holdouts.ts";
-import { bindingIsCurrent, holdoutNote } from "../scripts/publish.ts";
-import { scopeHoldouts } from "../scripts/scoped.ts";
+import { boundDescription, statusJudgesHead } from "../scripts/binding.ts";
+import { resultIsCurrent } from "../scripts/publish.ts";
 import { finalizePending } from "../scripts/finalize.ts";
 import { appProcessRecordPath, inspectAppProcessIdentity, recordAppProcess, stopRecordedApp } from "../scripts/app-process.ts";
 import { installFakeCommand, isolatedCommandEnv } from "../../.shared/test-command.ts";
@@ -34,32 +32,6 @@ async function stopTestChild(child: Bun.Subprocess): Promise<void> {
   await child.exited;
 }
 
-describe("holdout selection", () => {
-  const all = ["H-01", "H-02", "H-03", "H-04"];
-  test("runs only what the selector chose and accounts for every other scenario", () => {
-    expect(scopeHoldouts(all, ["H-03", "H-01"], 8)).toEqual({ run: ["H-03", "H-01"], skipped: ["H-02", "H-04"], over_budget: [] });
-  });
-  test("a selector that chose nothing runs nothing, and a skipped selector does the same", () => {
-    expect(scopeHoldouts(all, [], 8)).toEqual({ run: [], skipped: all, over_budget: [] });
-    expect(scopeHoldouts([], [], 8)).toEqual({ run: [], skipped: [], over_budget: [] });
-  });
-  test("the limit keeps the most relevant and reports the rest", () => {
-    expect(scopeHoldouts(all, ["H-04", "H-02", "H-01"], 2)).toEqual({ run: ["H-04", "H-02"], skipped: ["H-01", "H-03"], over_budget: ["H-01"] });
-  });
-  test("refuses an id that does not exist", () => {
-    expect(() => scopeHoldouts(all, ["H-99"], 8)).toThrow("does not exist");
-  });
-  test("an id named twice counts once and does not fail the check", () => {
-    expect(scopeHoldouts(all, ["H-03", "H-01", "H-03"], 8)).toEqual({ run: ["H-03", "H-01"], skipped: ["H-02", "H-04"], over_budget: [] });
-    expect(scopeHoldouts(all, ["H-03", "H-03", "H-01"], 1)).toEqual({ run: ["H-03"], skipped: ["H-01", "H-02", "H-04"], over_budget: ["H-01"] });
-  });
-  test("says what did not run", () => {
-    expect(holdoutNote([], [])).toBe("");
-    expect(holdoutNote(["H-01", "H-02"], ["H-02"])).toContain("not run on this pull request: 2");
-    expect(holdoutNote(["H-01", "H-02"], ["H-02"])).toContain("(H-02)");
-  });
-});
-
 describe("app-check deterministic decisions", () => {
   test("matches anchored frontend globs", () => {
     expect(matchingFiles(["src/a/site.css", "app/views.ts", "src/server.ts"], DEFAULTS.app_check.frontend_paths)).toEqual(["src/a/site.css", "app/views.ts"]);
@@ -69,26 +41,28 @@ describe("app-check deterministic decisions", () => {
     expect(scopeDecision(enabled, ["src/server.ts"], ["archon-size-l"])).toEqual({ run: false, depth: "deep", reason: "skipped: no front-end change" });
     expect(scopeDecision(enabled, ["public/app.css"], ["archon-size-s"]).depth).toBe("light");
   });
-  test("selects a draft before delivery marks it ready and skips only the exact tested binding", () => {
-    const row = (number: number, createdAt: string, isDraft = false, baseRefOid = "base-a") => ({ number, createdAt, isDraft, headRefOid: `h${number}`, baseRefName: "main", baseRefOid, files: [], body: "" });
+  test("selects a draft before delivery marks it ready and skips only a head that already has a result", () => {
+    const row = (number: number, createdAt: string, isDraft = false) => ({ number, createdAt, isDraft, headRefOid: `h${number}`, baseRefName: "main", baseRefOid: "base-a", files: [], body: "" });
     const checked = row(1, "2026-01-01");
-    expect(oldestUnchecked([row(2, "2026-02-01"), checked, row(3, "2025-01-01", true)], new Set([candidateBinding(checked)]))?.number).toBe(3);
-    expect(oldestUnchecked([{ ...checked, baseRefOid: "base-b" }], new Set([candidateBinding(checked)]))?.number).toBe(1);
+    expect(oldestUnchecked([row(2, "2026-02-01"), checked, row(3, "2025-01-01", true)], new Set([checked.headRefOid]))?.number).toBe(3);
+    // The base moving does not bring a judged head back.
+    expect(oldestUnchecked([{ ...checked, baseRefOid: "base-b" }], new Set([checked.headRefOid]))).toBeNull();
     expect(oldestUnchecked([{ ...row(4, "2024-01-01"), mergeable: "CONFLICTING" }, row(5, "2026-03-01")], new Set())?.number).toBe(5);
   });
-  test("binds statuses and publication freshness to the exact base and head", () => {
-    const statuses = [{ context: "factory/app-check", state: "success", description: boundDescription("main", "base-a", "passed") }];
-    expect(statusCoversBinding(statuses, "main", "base-a")).toBe(true);
-    expect(statusCoversBinding(statuses, "release", "base-a")).toBe(false);
-    expect(statusCoversBinding(statuses, "main", "base-b")).toBe(false);
-    expect(bindingIsCurrent({ state: "OPEN", headRefOid: "head-a", baseRefName: "main" }, "base-a", "head-a", "main", "base-a")).toBe(true);
-    expect(bindingIsCurrent({ state: "OPEN", headRefOid: "head-b", baseRefName: "main" }, "base-a", "head-a", "main", "base-a")).toBe(false);
-    expect(bindingIsCurrent({ state: "OPEN", headRefOid: "head-a", baseRefName: "main" }, "base-b", "head-a", "main", "base-a")).toBe(false);
-    expect(bindingIsCurrent({ state: "OPEN", headRefOid: "head-a", baseRefName: "release" }, "base-a", "head-a", "main", "base-a")).toBe(false);
+  test("a result stands for its commit, whatever happens to the base", () => {
+    const status = (state: string, message: string, created_at?: string) => [{ context: "factory/app-check", state, description: boundDescription("main", "base-a", message), created_at }];
+    expect(statusJudgesHead(status("success", "passed"))).toBe(true);
+    expect(statusJudgesHead(status("failure", "black-box app check failed"))).toBe(true);
+    expect(statusJudgesHead(status("failure", "app check did not complete"))).toBe(false);
+    expect(statusJudgesHead(status("failure", "stale: pull request head changed"))).toBe(false);
+    expect(statusJudgesHead(status("error", "reset"))).toBe(false);
+    expect(statusJudgesHead([])).toBe(false);
+    expect(resultIsCurrent({ state: "OPEN", headRefOid: "head-a", baseRefName: "main" }, "head-a", "main")).toBe(true);
+    expect(resultIsCurrent({ state: "OPEN", headRefOid: "head-b", baseRefName: "main" }, "head-a", "main")).toBe(false);
+    expect(resultIsCurrent({ state: "OPEN", headRefOid: "head-a", baseRefName: "release" }, "head-a", "main")).toBe(false);
     const now = Date.parse("2026-10-29T12:00:00Z");
-    const pending = (created_at: string) => [{ context: "factory/app-check", state: "pending", description: boundDescription("main", "base-a", "running"), created_at }];
-    expect(statusCoversBinding(pending("2026-10-29T11:00:00Z"), "main", "base-a", now)).toBe(true);
-    expect(statusCoversBinding(pending("2026-10-29T09:00:00Z"), "main", "base-a", now)).toBe(false);
+    expect(statusJudgesHead(status("pending", "running", "2026-10-29T11:00:00Z"), now)).toBe(true);
+    expect(statusJudgesHead(status("pending", "running", "2026-10-29T09:00:00Z"), now)).toBe(false);
   });
   test("requires an exact operator grant and never treats forbidding issue prose as approval", () => {
     const paths = [".archon/factory.yaml", ".github/workflows/ci.yml"];
@@ -96,10 +70,6 @@ describe("app-check deterministic decisions", () => {
     expect(protectedGrantAllows(JSON.stringify({ head: "head-a", paths: [paths[0]] }), "head-a", paths)).toBe(false);
     expect(protectedGrantAllows(JSON.stringify({ head: "head-a", paths, note: "trust me" }), "head-a", paths)).toBe(false);
     expect(protectedGrantAllows("## Current scope (2026-10-29)\nDo NOT change `.archon/factory.yaml`.", "head-a", [paths[0]!])).toBe(false);
-  });
-  test("builds a private id-only holdout manifest from configured filenames", () => {
-    expect(configuredHoldoutIds(["H-02-remove.md", "notes.txt", "H-01-add.md"])).toEqual(["H-01", "H-02"]);
-    expect(() => configuredHoldoutIds(["H-bad.md", "H-bad-other.md"])).toThrow("unique");
   });
   test("seals evidence and rejects incomplete-as-pass", () => {
     const root = mkdtempSync(join(tmpdir(), "factory-evidence-test-"));
@@ -111,18 +81,8 @@ describe("app-check deterministic decisions", () => {
     expect(evidenceProblems({ overall: "PASS", lines: [line] }, line, root, preparedAt)).toEqual([]);
     const incomplete = "C1  INCOMPLETE  Browser stopped.  evidence: shot.txt";
     expect(evidenceProblems({ overall: "PASS", lines: [incomplete] }, incomplete, root, preparedAt)).toContain("overall must be FAIL");
-    expect(evidenceProblems({ overall: "PASS", lines: [line] }, line, root, preparedAt, ["H-01"])).toContain("missing configured holdout result: H-01");
-    const holdout = "H-01  PASS  Private invariant holds.  evidence: shot.txt";
-    expect(evidenceProblems({ overall: "PASS", lines: [line, holdout] }, `${line}\n${holdout}`, root, preparedAt, ["H-01"])).toEqual([]);
-    const known = "H-01  KNOWN  Still fails as tracked in #41.  evidence: shot.png".replace("shot.png", line.split("evidence: ")[1]!);
-    const report = `${line}\n${known}`;
-    expect(evidenceProblems({ overall: "PASS", lines: [line, known] }, report, root, preparedAt, ["H-01"], { known: { "H-01": 41 } })).toEqual([]);
-    expect(evidenceProblems({ overall: "PASS", lines: [line, known] }, report, root, preparedAt, ["H-01"], { known: {} })).toContain("H-01 is KNOWN but the default branch has no recorded failure for it");
-    expect(evidenceProblems({ overall: "PASS", lines: [line, known] }, report, root, preparedAt, ["H-01"], { known: { "H-01": 99 } })).toContain("H-01 is KNOWN but does not name its issue #99");
-    const swept = holdout;
-    expect(evidenceProblems({ overall: "PASS", lines: [swept] }, swept, root, preparedAt, ["H-01"], { requireCriteria: false })).toEqual([]);
   });
-  test("runtime mode accepts probe and assertion lines without counting them as holdouts", () => {
+  test("runtime mode accepts probe and assertion lines ", () => {
     const root = mkdtempSync(join(tmpdir(), "factory-evidence-runtime-test-"));
     const preparedAt = Date.now();
     writeFileSync(join(root, "state.json"), "{}");
@@ -158,7 +118,7 @@ describe("app-check deterministic decisions", () => {
     const resultPath = join(root, "result.json");
     writeFileSync(resultPath, `\uFEFF${JSON.stringify({ overall: "PASS", lines: [line], summary: "observed" })}`);
     const script = join(import.meta.dir, "..", "scripts", "evidence.ts");
-    const env = { ...process.env, ARTIFACTS_DIR: artifacts, INPUTS_PREPARED_AT: String(preparedAt), INPUTS_EXPECTED_HOLDOUTS: "[]" };
+    const env = { ...process.env, ARTIFACTS_DIR: artifacts, INPUTS_PREPARED_AT: String(preparedAt) };
     const accepted = Bun.spawnSync([process.execPath, script], { env, stdout: "pipe", stderr: "pipe" });
     expect(accepted.exitCode, accepted.stderr.toString()).toBe(0);
     expect(JSON.parse(accepted.stdout.toString()).lines).toEqual([line]);
@@ -305,7 +265,7 @@ else throw new Error("unexpected gh arguments: " + JSON.stringify(args));
     expect(published.exitCode, published.stderr.toString()).toBe(0);
     expect(JSON.parse(published.stdout.toString())).toEqual({ state: "success", comment: "created" });
     const calls = readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line) as string[]);
-    expect(calls.filter(args => args[1] === "repos/example/shelf/git/ref/heads/release%2F2026")).toHaveLength(2);
+    expect(calls.filter(args => args[1] === "repos/example/shelf/git/ref/heads/release%2F2026")).toHaveLength(1);
     expect(calls.find(args => args.includes("repos/example/shelf/statuses/head-a"))).toContain("state=success");
   }, 20_000);
 });

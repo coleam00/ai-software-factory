@@ -19,22 +19,12 @@ describe("factory config", () => {
     expect(() => parseFactoryConfig("app_check:\n  enabled: true\n")).toThrow("app.start");
     expect(parseFactoryConfig("app_check:\n  enabled: true\napp:\n  runtime: C:/runtime/scenario.json\n  teardown: bash teardown.sh\n").app.runtime).toBe("C:/runtime/scenario.json");
     expect(() => parseFactoryConfig("app:\n  runtime: relative/scenario.json\n")).toThrow("app.runtime");
-    expect(() => parseFactoryConfig("holdouts:\n  enabled: true\n  path: relative/scenarios\n")).toThrow("absolute external path");
     expect(() => parseFactoryConfig("models:\n  aliases:\n    manager:\n      provider: codex\n      model: x\n")).toThrow("start with @");
     expect(() => parseFactoryConfig("models:\n  aliases:\n    '@manager':\n      model: x\n")).toThrow("provider");
     expect(() => parseFactoryConfig("triggers:\n  manager:\n    capacity: 2\n")).toThrow("unknown setting");
     expect(() => parseFactoryConfig("models:\n  tiers:\n    medium: { provider: codex, model: x, effort: impossible }\n")).toThrow("expected one of");
   });
 
-  test("rejects a normalized holdout path inside the target before writing", () => {
-    const root = mkdtempSync(join(tmpdir(), "factory-config-holdout-test-"));
-    const archon = join(root, ".archon");
-    mkdirSync(archon, { recursive: true });
-    const inCheckout = resolve(root, "private", "..", "holdouts");
-    writeFileSync(join(archon, "factory.yaml"), Bun.YAML.stringify({ holdouts: { enabled: true, path: inCheckout } }));
-    expect(() => applyFactoryConfig(root)).toThrow("outside the target checkout");
-    expect(() => readFileSync(join(archon, "config.yaml"), "utf8")).toThrow();
-  });
 
   test("applies selected providers, current trigger shape, and preserves unrelated profiles and policy prose", () => {
     const root = mkdtempSync(join(tmpdir(), "factory-config-test-"));
@@ -57,7 +47,6 @@ triggers:
   discoveries: { interval_seconds: 0 }
   manager: { interval_seconds: 900 }
   app_check: { interval_seconds: 900 }
-  holdout_sweep: { interval_seconds: 0 }
 `);
 
     const result = applyFactoryConfig(root);
