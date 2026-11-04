@@ -46,9 +46,12 @@ describe("holdout selection", () => {
   test("the limit keeps the most relevant and reports the rest", () => {
     expect(scopeHoldouts(all, ["H-04", "H-02", "H-01"], 2)).toEqual({ run: ["H-04", "H-02"], skipped: ["H-01", "H-03"], over_budget: ["H-01"] });
   });
-  test("refuses an id that does not exist or is named twice", () => {
+  test("refuses an id that does not exist", () => {
     expect(() => scopeHoldouts(all, ["H-99"], 8)).toThrow("does not exist");
-    expect(() => scopeHoldouts(all, ["H-01", "H-01"], 8)).toThrow("twice");
+  });
+  test("an id named twice counts once and does not fail the check", () => {
+    expect(scopeHoldouts(all, ["H-03", "H-01", "H-03"], 8)).toEqual({ run: ["H-03", "H-01"], skipped: ["H-02", "H-04"], over_budget: [] });
+    expect(scopeHoldouts(all, ["H-03", "H-03", "H-01"], 1)).toEqual({ run: ["H-03"], skipped: ["H-01", "H-02", "H-04"], over_budget: ["H-01"] });
   });
   test("says what did not run", () => {
     expect(holdoutNote([], [])).toBe("");

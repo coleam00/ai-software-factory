@@ -10,13 +10,13 @@ export interface HoldoutScope { run: string[]; skipped: string[]; over_budget: s
  * for the rolling sweep to cover on the default branch.
  */
 export function scopeHoldouts(all: string[], chosen: string[], max: number): HoldoutScope {
-  const known = new Set(all), seen = new Set<string>();
+  const known = new Set(all);
   for (const id of chosen) {
     if (!known.has(id)) throw new Error(`the selector named a scenario that does not exist: ${id}`);
-    if (seen.has(id)) throw new Error(`the selector named a scenario twice: ${id}`);
-    seen.add(id);
   }
-  const run = chosen.slice(0, max), over_budget = chosen.slice(max);
+  // An agent listing an id twice changes nothing about what must run, so it does not fail the check.
+  const unique = [...new Set(chosen)];
+  const run = unique.slice(0, max), over_budget = unique.slice(max);
   return { run, skipped: all.filter(id => !run.includes(id)), over_budget };
 }
 
