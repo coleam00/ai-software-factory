@@ -1,5 +1,5 @@
-import { existsSync, statSync } from "node:fs";
-import { basename } from "node:path";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { env, jsonEnv } from "../../.shared/utils.ts";
 
 export function verifyDeployment(requested: string, reported: string, deployed: string, health: string, evidence: string[], startedAt: number) {
@@ -16,7 +16,29 @@ export function verifyDeployment(requested: string, reported: string, deployed: 
   return { deployed: true, revision: deployed, health, evidence_files: evidence };
 }
 
-if (import.meta.main) console.log(JSON.stringify(verifyDeployment(
-  env("requested_revision"), env("reported_requested_revision"), env("deployed_revision"), env("health_status"),
-  jsonEnv<string[]>("evidence_files", []), Number(env("started_at")),
-)));
+/** A failed deployment has no open pull request to return to, so it is recorded for the discoveries workflow to file as new work. */
+export function recordFailedDeployment(artifacts: string, requested: string, reason: string, evidence: string[]): void {
+  const dir = join(artifacts, "discoveries");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "deploy.json"), JSON.stringify([{
+    title: `Deploying ${requested.slice(0, 7) || "the requested revision"} failed`,
+    claim: reason,
+    evidence: [`requested revision: ${requested || "none"}`, ...evidence],
+    relation: "unrelated",
+    source_node: "deploy",
+  }], null, 2));
+}
+
+if (import.meta.main) {
+  const evidence = jsonEnv<string[]>("evidence_files", []);
+  try {
+    console.log(JSON.stringify(verifyDeployment(
+      env("requested_revision"), env("reported_requested_revision"), env("deployed_revision"), env("health_status"),
+      evidence, Number(env("started_at")),
+    )));
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    if (process.env.ARTIFACTS_DIR) recordFailedDeployment(process.env.ARTIFACTS_DIR, env("requested_revision"), reason, evidence);
+    throw error;
+  }
+}

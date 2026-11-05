@@ -24,6 +24,8 @@ Changed files: `$INPUTS.files`. Depth: `$INPUTS.depth`. App config: `$INPUTS.con
 
 4. Save screenshots, logs, and observations under `$ARTIFACTS_DIR/app-check/`. Open every screenshot you cite. Close only browser sessions you opened. Stop the app only with `bun .archon/workflows/factory/app-check/scripts/app-process.ts stop`; it verifies the recorded identity before termination and retires the record only after the owned process has exited. Do not use `kill`, `taskkill`, `Stop-Process`, or any other PID-based fallback. The workflow cleanup node calls the same helper if this checker exits early.
 
+A problem this change causes is a FAIL line. A real problem you can prove that has nothing to do with this change, in something it did not touch, is not a line and never fails this check: preserve it so it becomes new work. Create `$ARTIFACTS_DIR/discoveries/app-check.json` as a JSON array. Each record contains only `title`, `claim`, `evidence` (an array of concrete facts: a file you saved under `$ARTIFACTS_DIR/app-check/`, a `file:line`, or a command's result), `relation` (`unrelated`) and `source_node` (`app-check`). State what you saw, not how to fix it. Write no file when you proved nothing; a slow screen on a loaded machine is not a discovery.
+
 Write `report.md` and `result.json` there. `result.json` is `{ "overall": "PASS|FAIL", "lines": [string...], "summary": string }`. Every line must be exactly:
 
 `C<n>  PASS|FAIL|INCOMPLETE  <one sentence>  evidence: <file>`
