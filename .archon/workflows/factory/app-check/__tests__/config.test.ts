@@ -42,6 +42,7 @@ triggers:
   enabled: true
   host_id: test-host
   run_as_user_id: e58d38eaf1528395ba6abc0da3967127
+  intake: { interval_seconds: 0 }
   build_queue: { interval_seconds: 0 }
   merge_queue: { interval_seconds: 0 }
   discoveries: { interval_seconds: 0 }

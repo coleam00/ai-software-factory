@@ -1,6 +1,8 @@
 apply:
   config: /project/.archon/config.yaml
   policies: [/project/.archon/sdlc/policy/triage.md, /project/.archon/sdlc/policy/build.md, /project/.archon/sdlc/policy/merge.md]
+  maintainers: /project/.archon/sdlc/policy/maintainers.json
+  ci: ""
   triggers: []
   autonomy: standard
 fixture:

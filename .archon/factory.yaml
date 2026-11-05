@@ -3,6 +3,15 @@ project:
   repo_host: github.com
   repo_path: ""
 
+# GitHub logins the factory trusts: their issues get built and their review answers count.
+# Setup fills in your own login when this is empty. Nothing merges without at least one.
+maintainers: []
+
+# The merge queue only merges on green CI. When the repo has no GitHub Actions
+# workflow, setup writes .github/workflows/factory-ci.yml, which runs scripts/test.
+ci:
+  enabled: true
+
 app_check:
   enabled: false
   trigger: frontend
@@ -37,6 +46,8 @@ triggers:
   enabled: false
   host_id: ""
   run_as_user_id: ""
+  # How often the intake poll checks GitHub for new issues and labels (no webhook needed).
+  intake: { interval_seconds: 300 }
   build_queue: { interval_seconds: 1800 }
   merge_queue: { interval_seconds: 1800 }
   discoveries: { interval_seconds: 14400 }

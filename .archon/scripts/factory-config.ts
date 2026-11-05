@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -11,6 +11,10 @@ export interface ModelProfile { provider: string; model: string; effort?: Effort
 export interface ScheduleConfig { interval_seconds: number }
 export interface FactoryConfig {
   project: { repo_host: string; repo_path: string };
+  /** Forge logins the queues trust. Written to .archon/sdlc/policy/maintainers.json. */
+  maintainers: string[];
+  /** When enabled and the repo has no GitHub Actions workflow, setup writes one. */
+  ci: { enabled: boolean };
   app_check: {
     enabled: boolean;
     trigger: "always" | "frontend" | "never";
@@ -29,6 +33,8 @@ export interface FactoryConfig {
     enabled: boolean;
     host_id: string;
     run_as_user_id: string;
+    /** How often the intake poll asks GitHub for new issues and labels. */
+    intake: ScheduleConfig;
     build_queue: ScheduleConfig;
     merge_queue: ScheduleConfig;
     discoveries: ScheduleConfig;
@@ -39,6 +45,8 @@ export interface FactoryConfig {
 
 export const DEFAULTS: FactoryConfig = {
   project: { repo_host: "github.com", repo_path: "" },
+  maintainers: [],
+  ci: { enabled: true },
   app_check: {
     enabled: false,
     trigger: "frontend",
@@ -53,6 +61,7 @@ export const DEFAULTS: FactoryConfig = {
     enabled: false,
     host_id: "",
     run_as_user_id: "",
+    intake: { interval_seconds: 300 },
     build_queue: { interval_seconds: 1800 },
     merge_queue: { interval_seconds: 1800 },
     discoveries: { interval_seconds: 14400 },
@@ -64,7 +73,7 @@ export const DEFAULTS: FactoryConfig = {
 type RecordValue = Record<string, unknown>;
 const EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent"] as const;
 const TIERS = ["small", "medium", "large"] as const;
-const SCHEDULES = ["build_queue", "merge_queue", "discoveries", "manager", "app_check"] as const;
+const SCHEDULES = ["intake", "build_queue", "merge_queue", "discoveries", "manager", "app_check"] as const;
 
 function fail(path: string, message: string): never { throw new Error(`Invalid factory config at ${path}: ${message}`); }
 
@@ -149,10 +158,12 @@ export function parseFactoryConfig(raw: string): FactoryConfig {
   try { parsed = Bun.YAML.parse(raw); }
   catch (error) { throw new Error(`Invalid factory config YAML: ${error instanceof Error ? error.message : String(error)}`); }
   const root = object(parsed ?? {}, "root");
-  exact(root, ["project", "app_check", "protected_paths", "autonomy", "app", "models", "triggers"], "root");
+  exact(root, ["project", "maintainers", "ci", "app_check", "protected_paths", "autonomy", "app", "models", "triggers"], "root");
 
   const project = section(root, "project");
   exact(project, ["repo_host", "repo_path"], "project");
+  const ci = section(root, "ci");
+  exact(ci, ["enabled"], "ci");
   const appCheck = section(root, "app_check");
   exact(appCheck, ["enabled", "trigger", "frontend_paths", "depth"], "app_check");
   const app = section(root, "app");
@@ -167,6 +178,8 @@ export function parseFactoryConfig(raw: string): FactoryConfig {
       repo_host: string(project.repo_host, DEFAULTS.project.repo_host, "project.repo_host", false),
       repo_path: string(project.repo_path, DEFAULTS.project.repo_path, "project.repo_path"),
     },
+    maintainers: strings(root.maintainers, DEFAULTS.maintainers, "maintainers").map(login => login.trim()),
+    ci: { enabled: boolean(ci.enabled, DEFAULTS.ci.enabled, "ci.enabled") },
     app_check: {
       enabled: boolean(appCheck.enabled, DEFAULTS.app_check.enabled, "app_check.enabled"),
       trigger: choice(appCheck.trigger, ["always", "frontend", "never"], DEFAULTS.app_check.trigger, "app_check.trigger"),
@@ -193,6 +206,7 @@ export function parseFactoryConfig(raw: string): FactoryConfig {
       enabled: boolean(triggers.enabled, DEFAULTS.triggers.enabled, "triggers.enabled"),
       host_id: string(triggers.host_id, DEFAULTS.triggers.host_id, "triggers.host_id"),
       run_as_user_id: string(triggers.run_as_user_id, DEFAULTS.triggers.run_as_user_id, "triggers.run_as_user_id"),
+      intake: schedule(triggers.intake, DEFAULTS.triggers.intake, "triggers.intake"),
       build_queue: schedule(triggers.build_queue, DEFAULTS.triggers.build_queue, "triggers.build_queue"),
       merge_queue: schedule(triggers.merge_queue, DEFAULTS.triggers.merge_queue, "triggers.merge_queue"),
       discoveries: schedule(triggers.discoveries, DEFAULTS.triggers.discoveries, "triggers.discoveries"),
@@ -201,6 +215,8 @@ export function parseFactoryConfig(raw: string): FactoryConfig {
     },
   };
 
+  for (const login of config.maintainers)
+    if (/\s/.test(login)) fail("maintainers", `"${login}" is not a forge login`);
   if (!config.app.health_path.startsWith("/")) fail("app.health_path", "must start with /");
   if (config.app_check.enabled && !config.app.start.trim() && !config.app.runtime.trim())
     fail("app.start", "or app.runtime is required when app_check.enabled is true");
@@ -257,15 +273,90 @@ export function replaceManagedPolicy(existing: string, preset: AutonomyPreset, t
   return `${existing.trimEnd()}${existing.trim() ? "\n\n" : ""}${body}\n`;
 }
 
+/** Write text only when it changed, in the line endings the file already uses. */
+function writeIfChanged(path: string, text: string): boolean {
+  const existing = existsSync(path) ? readFileSync(path, "utf8") : null;
+  const output = existing?.includes("\r\n") ? text.replace(/\r?\n/g, "\r\n") : text;
+  if (existing !== null && existing.replace(/\r\n/g, "\n") === output.replace(/\r\n/g, "\n")) return false;
+  writeFileSync(path, output);
+  return true;
+}
+
 function applyPolicies(root: string, preset: AutonomyPreset): string[] {
   const directory = join(root, ".archon", "sdlc", "policy");
   mkdirSync(directory, { recursive: true });
   return (["triage", "build", "merge"] as const).map(topic => {
     const path = join(directory, `${topic}.md`);
-    const existing = existsSync(path) ? readFileSync(path, "utf8") : `# ${topic[0]!.toUpperCase()}${topic.slice(1)} policy\n\n`;
-    writeFileSync(path, replaceManagedPolicy(existing, preset, topic));
+    const existing = existsSync(path) ? readFileSync(path, "utf8").replace(/\r\n/g, "\n") : `# ${topic[0]!.toUpperCase()}${topic.slice(1)} policy\n\n`;
+    writeIfChanged(path, replaceManagedPolicy(existing, preset, topic));
     return path;
   });
+}
+
+export const MAINTAINERS_PATH = join(".archon", "sdlc", "policy", "maintainers.json");
+
+/**
+ * Add the configured logins to the maintainer list the queues trust. Entries already
+ * in the file (including `{ "login", "merge_queue" }` objects) are kept as they are.
+ * Returns the path, or "" when there is nothing to write.
+ */
+export function applyMaintainers(root: string, logins: string[]): string {
+  const path = join(root, MAINTAINERS_PATH);
+  const entries: unknown[] = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : [];
+  if (!Array.isArray(entries)) throw new Error(`${MAINTAINERS_PATH} must be a JSON array`);
+  const known = new Set(entries.map(entry => (typeof entry === "string" ? entry : String((entry as RecordValue)?.login ?? "")).toLowerCase()));
+  for (const login of logins) if (!known.has(login.toLowerCase())) { entries.push(login); known.add(login.toLowerCase()); }
+  if (!entries.length) return "";
+  mkdirSync(join(root, ".archon", "sdlc", "policy"), { recursive: true });
+  writeIfChanged(path, `${JSON.stringify(entries, null, 2)}\n`);
+  return path;
+}
+
+export const CI_PATH = join(".github", "workflows", "factory-ci.yml");
+
+/**
+ * The merge queue merges only when CI is green at the pull request's head, and a
+ * commit with no checks is never green. This workflow is the minimum: it runs
+ * `scripts/test` (the project's one test entry point), else `npm test` when
+ * package.json declares one, else it passes with a visible notice until the first
+ * ticket adds tests.
+ */
+export const CI_WORKFLOW = `# Written by factory-setup. The merge queue merges only on green CI.
+# Keep scripts/test as the one command that runs every test.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Run the tests
+        shell: bash
+        run: |
+          if [ -f scripts/test ]; then
+            bash scripts/test
+          elif [ -f package.json ] && grep -q '"test"' package.json; then
+            npm install --no-audit --no-fund && npm test
+          else
+            echo "::notice::No tests yet. The first ticket adds scripts/test."
+          fi
+`;
+
+/** Write the CI workflow when the repo has no GitHub Actions workflow at all. */
+export function applyCi(root: string, enabled: boolean): string {
+  if (!enabled) return "";
+  const directory = join(root, ".github", "workflows");
+  const existing = existsSync(directory) ? readdirSync(directory).filter(name => /\.ya?ml$/i.test(name)) : [];
+  if (existing.length) return "";
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(root, CI_PATH), CI_WORKFLOW);
+  return join(root, CI_PATH);
 }
 
 function archonProfile(value: ModelProfile): RecordValue {
@@ -275,6 +366,7 @@ function archonProfile(value: ModelProfile): RecordValue {
 function applyArchonConfig(root: string, factory: FactoryConfig): string {
   const path = join(root, ".archon", "config.yaml");
   const current = existsSync(path) ? object(Bun.YAML.parse(readFileSync(path, "utf8")) ?? {}, ".archon/config.yaml") : {};
+  const before = JSON.stringify(current);
   const aliases = current.aliases === undefined ? {} : object(current.aliases, ".archon/config.yaml aliases");
   const tiers = current.tiers === undefined ? {} : object(current.tiers, ".archon/config.yaml tiers");
   for (const tier of TIERS) {
@@ -285,8 +377,10 @@ function applyArchonConfig(root: string, factory: FactoryConfig): string {
   if (factory.models.assistant) current.assistant = factory.models.assistant;
   if (Object.keys(tiers).length) current.tiers = tiers;
   if (Object.keys(aliases).length) current.aliases = aliases;
+  // Nothing configured changes the file: leave it, comments and all.
+  if (existsSync(path) && JSON.stringify(current) === before) return path;
   mkdirSync(join(root, ".archon"), { recursive: true });
-  writeFileSync(path, `${Bun.YAML.stringify(current).trim()}\n`);
+  writeIfChanged(path, `${Bun.YAML.stringify(current).trim()}\n`);
   return path;
 }
 
@@ -304,6 +398,9 @@ function triggerDefinitions(config: FactoryConfig): TimerDefinition[] {
   const repo = `${config.project.repo_host}/${config.project.repo_path}`;
   const inputs = { repo_host: config.project.repo_host, repo_path: config.project.repo_path };
   return [
+    // Fired by .archon/scripts/intake-poll.ts once per new issue or label event, with the
+    // event's values as inputs; Archon dedupes each delivery and queues the runs.
+    { key: "intake", workflow: "archon-intake", binding: "intake", resource: `forge:${repo}:intake`, overlap: "queue", inputs: {}, isolation: "default" },
     { key: "build_queue", workflow: "archon-build-queue", binding: "build-queue", resource: `forge:${repo}:build`, overlap: "skip", inputs, isolation: "worktree" },
     { key: "merge_queue", workflow: "archon-merge-queue", binding: "merge-queue", resource: `forge:${repo}:merge`, overlap: "skip", inputs, isolation: "default" },
     { key: "discoveries", workflow: "archon-discoveries", binding: "discoveries", resource: `discoveries:${repo}`, overlap: "skip", inputs, isolation: "default" },
@@ -353,14 +450,32 @@ function applyTriggers(root: string, config: FactoryConfig): string[] {
   return written;
 }
 
-export interface ApplyResult { config: string; policies: string[]; triggers: string[]; autonomy: AutonomyPreset }
+export interface ApplyResult {
+  config: string;
+  policies: string[];
+  maintainers: string;
+  ci: string;
+  triggers: string[];
+  autonomy: AutonomyPreset;
+}
 
 export function applyFactoryConfig(root = resolve(".")): ApplyResult {
   const factory = readFactoryConfig(join(root, ".archon", "factory.yaml"));
   const config = applyArchonConfig(root, factory);
   const policies = applyPolicies(root, factory.autonomy);
+  const maintainers = applyMaintainers(root, factory.maintainers);
+  const ci = applyCi(root, factory.ci.enabled);
   const triggers = applyTriggers(root, factory);
-  return { config, policies, triggers, autonomy: factory.autonomy };
+  if (triggers.length) ignoreLocalTriggers(root);
+  return { config, policies, maintainers, ci, triggers, autonomy: factory.autonomy };
+}
+
+/** Trigger bindings name this machine's paths and Archon user, so they never get committed. */
+function ignoreLocalTriggers(root: string): void {
+  const path = join(root, ".gitignore"), line = ".archon/triggers/";
+  const existing = existsSync(path) ? readFileSync(path, "utf8") : "";
+  if (existing.split(/\r?\n/).some(entry => entry.trim() === line)) return;
+  writeFileSync(path, `${existing}${existing && !existing.endsWith("\n") ? "\n" : ""}${line}\n`);
 }
 
 if (import.meta.main) {

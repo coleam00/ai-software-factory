@@ -3,12 +3,69 @@
 This repository is a small project-scoped factory layer for Archon's current SDLC
 pack. Archon supplies the engine, durable state documents, attention queue, aliases,
 native triggers, and the intake/build/merge/discoveries queues. The `.archon` package
-here adds project configuration, black-box app checks, private scenario writing,
-backlog slicing, a policy-bound manager, and explicit deployment.
+here adds project configuration, setup (maintainers, CI, timers, a readiness check),
+black-box app checks, backlog slicing, a policy-bound manager, and explicit deployment.
 
 Rasmus deserves credit for Archon's engine and SDLC architecture. This repository is
 a consumer layer on that architecture, not a fork or replacement for it. It does not
 override bundled SDLC workflows or modify the engine.
+
+## Quickstart: a new project
+
+The fast path: clone this repository, open your coding agent (Claude Code, Codex or Pi)
+inside it, and say **"set up the factory for me"**. The `set-up-factory` skill walks the
+steps below, asks you for only your repo name, your app idea and how much the factory
+should ask you, and finishes when `factory-ready` says the factory can merge.
+
+By hand, the same steps:
+
+1. **Prerequisites.** Git, the GitHub CLI signed in (`gh auth login`), a coding agent
+   you're logged in to, and Bun 1.4.2:
+   - Windows: `powershell -c "iex \"& {$(irm https://bun.sh/install.ps1)} -Version 1.4.2\""`
+   - macOS/Linux: `curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.2"`
+2. **Archon at the tested engine.** The fixes this package needs are not in an Archon
+   release yet, so Archon's quick installer is not enough. From source:
+
+   ```bash
+   git clone -b v1/bun13-markdown-fallback https://github.com/coleam00/Archon.git archon-engine
+   cd archon-engine && git checkout f47aa2bbf && bun install && cd packages/cli && bun link
+   ```
+
+   Set your default provider with `archon setup`, or `defaultAssistant: claude` (or
+   `codex`, `pi`) in `~/.archon/config.yaml`. `archon doctor` should show it as usable;
+   a failed line for a provider you don't use is fine.
+3. **Your project.** Create the repo and add the factory layer:
+
+   ```bash
+   gh repo create YOU/my-app --private --clone && cd my-app
+   cp -r ../ai-software-factory/.archon .
+   archon skill add .
+   ```
+
+4. **Configure** `.archon/factory.yaml`: `project.repo_path: YOU/my-app`,
+   `maintainers: [YOU]`, your `autonomy` preset, and, so it runs on its own,
+   `triggers.enabled: true` with `host_id` (any short name for this machine) and
+   `run_as_user_id` from `archon trigger whoami`.
+5. **Apply, push, start the timers:**
+
+   ```bash
+   archon workflow run factory-setup --detach      # then: archon workflow wait <run-id>
+   git add -A && git commit -m "Add the AI Software Factory" && git push -u origin main
+   bun .archon/scripts/factory-schedule.ts install
+   ```
+
+6. **Check it can merge:** `bun .archon/scripts/factory-ready.ts`. Every line must say
+   ok (CI needs a minute after the push). Each failing line says how to fix it.
+7. **Put work in.** Write your idea as `PRD.md` and slice it into issues:
+
+   ```bash
+   archon workflow run factory-backlog --input repo_path=YOU/my-app --input prd_path=PRD.md --detach
+   ```
+
+   Or open an issue yourself. The intake poll hands it to Archon within a few minutes.
+
+The factory works while the machine is on and awake. Stop it with
+`bun .archon/scripts/factory-schedule.ts remove`.
 
 ## Status and prerequisite
 
@@ -59,7 +116,8 @@ covers factory settings; the latter remains authoritative for queue operation,
 attention, and trigger commands.
 
 1. Edit `.archon/factory.yaml` in the target project.
-2. Leave `triggers.enabled: false` until manual queue runs are understood.
+2. Set `maintainers` (your GitHub login at least). Leave `triggers.enabled: false`
+   only if you want to run the queues by hand first.
 3. Install the matching engine's `archon-cli` skill into the target project, then run
    setup. Do this before setup or any queue operation:
 
@@ -83,6 +141,18 @@ preserved. It maps `supervised`, `standard`, or `autonomous` into marked blocks 
 project triage/build/merge policy files. Text outside those blocks is preserved. The
 mapping never expands product scope: agents judge policy prose, while the setup script
 only selects the preset's fixed lines.
+
+Setup also adds `maintainers` to `.archon/sdlc/policy/maintainers.json` (keeping
+existing entries; without a maintainer no issue is trusted and nothing merges), writes
+`.github/workflows/factory-ci.yml` when the repository has no GitHub Actions workflow
+(the merge queue merges only on green CI, and a commit with no checks is never green;
+the workflow runs `scripts/test`, which the first sliced ticket creates), and ignores
+`.archon/triggers/` in `.gitignore`. A `config.yaml` with nothing to change is left
+untouched, and files keep their line endings.
+
+Setup having run is not the same as the factory being able to merge. Check that with
+`bun .archon/scripts/factory-ready.ts`: maintainers and CI on the default branch, CI
+green there, the `archon-cli` skill, a usable provider, intake, and timers.
 
 The app configuration is deliberately generic:
 
@@ -137,9 +207,12 @@ archon workflow run archon-build-queue \
   --input repo_host=github.com --input repo_path=OWNER/REPO --detach
 ```
 
-Intake is event-driven and needs the GitHub event binding documented by the matching
-Archon SDLC pack. This package does not synthesize that binding because a timer cannot
-supply the issue event fields.
+Intake is event-driven. A server with a public URL can use the GitHub event bindings
+documented by the SDLC pack. A laptop has no public URL, so setup also writes an
+`intake` binding and `.archon/scripts/intake-poll.ts` reports new issue activity to it
+with `archon trigger fire --delivery-id` (Archon's documented poll pattern): one
+delivery per issue text and one per intake label added, so Archon dedupes repeats and
+queues the runs. It decides nothing; intake judges everything.
 
 For timer queues, get the execution identity with `archon trigger whoami`, then set
 `triggers.host_id`, the opaque `triggers.run_as_user_id`, and intervals in
@@ -152,7 +225,16 @@ one Archon home do not collide. An interval of `0` disables that generated bindi
 Setup never installs or fires a timer, and it never edits legacy
 `.factory/trigger.json`.
 
-After a successful manual pass, installation is an explicit operator action:
+Install every timer with one command (an explicit operator action):
+
+```bash
+bun .archon/scripts/factory-schedule.ts install    # also: status, remove
+```
+
+On Windows it registers hidden Task Scheduler tasks under `\ArchonFactory\<project>\`;
+on macOS it uses `archon trigger schedule install` for the queues and a launchd job for
+the intake poll; on Linux it writes marked cron lines. Logs go to
+`~/.archon/factory-timers/<project>/`. What it does per platform, by hand:
 
 - macOS: `archon trigger schedule install --config <absolute-trigger-json>` installs
   Archon's per-user launchd job. Remove it with `archon trigger schedule remove` using
@@ -207,14 +289,11 @@ revision. No deployment is performed by this repository's validation.
 
 ## Validate the package
 
-Use the matching sandbox environment and its configured Archon provider. Workflow
-fixtures are stubbed and make no provider call:
+Workflow fixtures are stubbed and make no provider call. The longer timeout is for one
+backlog test that starts subprocesses and takes ~7 s on slower Windows machines:
 
 ```bash
-source /path/to/v1test-runtime/env.sh
-bun test ./.archon/workflows/factory/app-check/__tests__/*.test.ts \
-  ./.archon/workflows/factory/backlog/__tests__/*.test.ts \
-  ./.archon/workflows/factory/deploy/__tests__/*.test.ts
+bun test --timeout 30000 ./.archon/workflows/factory/*/__tests__/*.test.ts
 archon workflow test .archon/workflows/factory
 archon validate workflows
 ```
@@ -232,6 +311,9 @@ deployment. Those remain operator acceptance steps.
   factory.yaml                  operator-owned factory settings
   config.yaml                   inherited Archon defaults and generated bindings
   scripts/factory-config.ts     strict parser and mechanical setup
+  scripts/factory-ready.ts      can this factory take an issue to a merge?
+  scripts/factory-schedule.ts   install, list, remove the OS timers
+  scripts/intake-poll.ts        hands new issues to intake without a webhook
   skills/factory-setup/         setup guidance; delegates queue use to archon-cli
   skills/factory-manager/       policy-only attention tending
   sdlc/policy/                  project additions, not bundled-pack overrides
