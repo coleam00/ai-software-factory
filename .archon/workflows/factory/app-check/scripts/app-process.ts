@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const RECORD_VERSION = 1;
@@ -309,6 +309,37 @@ export function recordAppProcess(pid: number, launcherIdentity: string, path = a
   return record;
 }
 
+// Linux has no launcher handle an agent's shell can retain: a shell with job control puts a
+// background job in its own process group, so setsid forks and the PID it reports is gone.
+// The helper starts the app itself instead, as its own child in a new session, and records it
+// while it is still the parent. The app inherits the environment (port, database) and cwd.
+export function launchAppProcess(command: string, log: string, path = appProcessRecordPath()): AppProcessRecord {
+  if (process.platform !== "linux") throw new Error("launch is for Linux; on Windows retain the Start-Process -PassThru object and use record");
+  const support = appProcessSupport();
+  if (!support.supported) throw new Error(support.limitation);
+  if (!command.trim()) throw new Error("launch needs the app start command");
+  if (existsSync(path)) throw new Error(`app process record already exists: ${path}`);
+  mkdirSync(dirname(log), { recursive: true });
+  const output = openSync(log, "a");
+  let child: Bun.Subprocess;
+  try {
+    // bash runs a lone simple command in its own place, so the PID is the app's; a compound
+    // command keeps bash as the recorded process.
+    child = Bun.spawn(["bash", "-c", command], { detached: true, stdin: "ignore", stdout: output, stderr: output });
+  } finally {
+    closeSync(output);
+  }
+  try {
+    const record = recordAppProcess(child.pid, inspectAppProcessIdentity(child.pid), path);
+    child.unref();
+    return record;
+  } catch (error) {
+    // Still this helper's unreaped child, so the subprocess object names it alone.
+    child.kill("SIGKILL");
+    throw error;
+  }
+}
+
 export function stopRecordedApp(path = appProcessRecordPath()): AppCleanupResult {
   // Old packages wrote only this numeric file. Retire it without reading it or
   // treating it as authority to signal any process.
@@ -351,6 +382,9 @@ if (import.meta.main) {
   const action = process.argv[2];
   if (action === "support") {
     console.log(JSON.stringify(appProcessSupport()));
+  } else if (action === "launch") {
+    const record = launchAppProcess(process.argv[4] || "", process.argv[3] || "");
+    console.log(JSON.stringify({ recorded: true, pid: record.pid, platform: record.platform }));
   } else if (action === "inspect") {
     console.log(inspectAppProcessIdentity(Number(process.argv[3])));
   } else if (action === "record") {
@@ -361,6 +395,6 @@ if (import.meta.main) {
     console.log(JSON.stringify(result));
     if (!["stopped", "already-exited", "no-record"].includes(result.status)) process.exitCode = 1;
   } else {
-    throw new Error("usage: app-process.ts support | inspect <pid> | record <pid> <launcher-identity> | stop");
+    throw new Error("usage: app-process.ts support | launch <log-file> <start-command> | inspect <pid> | record <pid> <launcher-identity> | stop");
   }
 }

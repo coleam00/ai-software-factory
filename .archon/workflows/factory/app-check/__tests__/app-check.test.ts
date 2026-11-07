@@ -281,6 +281,28 @@ describe("app-check deterministic decisions", () => {
     expect(await stubborn.exited).not.toBe(0);
     expect(existsSync(recordPath)).toBe(false);
   }, 20_000);
+  test("Linux launch works from a shell with job control, as the checker's is", () => {
+    if (process.platform !== "linux" || !appProcessSupport().supported) return;
+    const artifacts = mkdtempSync(join(tmpdir(), "factory-app-process-launch-test-"));
+    const helper = join(import.meta.dir, "..", "scripts", "app-process.ts");
+    const log = join(artifacts, "app-check", "app.log");
+    const env = { ...process.env, ARTIFACTS_DIR: artifacts, BUN: process.execPath, HELPER: helper, LOG: log, GREETING: "hello" };
+    const launched = Bun.spawnSync(["bash", "-c", 'set -m; "$BUN" "$HELPER" launch "$LOG" \'echo "$GREETING from $PWD"; exec sleep 60\''], { env, cwd: artifacts, stdout: "pipe", stderr: "pipe" });
+    expect(launched.exitCode, launched.stderr.toString()).toBe(0);
+    const { pid } = JSON.parse(launched.stdout.toString()) as { pid: number };
+    try {
+      expect(processIsAlive(pid)).toBe(true);
+      expect(readFileSync(log, "utf8")).toContain(`hello from ${artifacts}`);
+      const again = Bun.spawnSync([process.execPath, helper, "launch", log, "sleep 60"], { env, stdout: "pipe", stderr: "pipe" });
+      expect(again.exitCode).not.toBe(0);
+      expect(again.stderr.toString()).toContain("already exists");
+      const stopped = Bun.spawnSync([process.execPath, helper, "stop"], { env, stdout: "pipe", stderr: "pipe" });
+      expect(JSON.parse(stopped.stdout.toString())).toEqual({ status: "stopped" });
+      expect(processIsAlive(pid)).toBe(false);
+    } finally {
+      if (processIsAlive(pid)) process.kill(pid);
+    }
+  }, 20_000);
   test("Linux records and stops an app launched by a shell, as the checker does", () => {
     if (process.platform !== "linux" || !appProcessSupport().supported) return;
     const artifacts = mkdtempSync(join(tmpdir(), "factory-app-process-shell-test-"));

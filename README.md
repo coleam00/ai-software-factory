@@ -111,8 +111,9 @@ malformed, legacy numeric-only, exited, or mismatched records never authorize a
 PID-only kill.
 On Linux (5.3 or later, with Python 3.9 or later as `python3`), the helper holds the app
 by a pidfd instead of a handle. Its identity is the start time in `/proc/<pid>/stat`
-together with the boot ID. The checker launches the app and records it in one shell
-command, and the helper refuses a PID that is not that shell's child. Cleanup opens a
+together with the boot ID. The checker starts the app through the helper's `launch`
+action, which spawns it in its own session as the helper's child and records it at once;
+`record` refuses a PID that is not a child of the helper or of the shell that ran it. Cleanup opens a
 pidfd, verifies the start time and boot ID, sends SIGTERM and then SIGKILL through the
 pidfd only, and waits for exit before it retires the record. Race-free identity cleanup is
 currently unsupported on macOS, so app checks fail there before starting the app rather
