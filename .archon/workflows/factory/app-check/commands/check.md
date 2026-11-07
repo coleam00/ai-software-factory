@@ -30,4 +30,4 @@ Write `report.md` and `result.json` there. `result.json` is `{ "overall": "PASS|
 
 `C<n>  PASS|FAIL|INCOMPLETE  <one sentence>  evidence: <file>`
 
-or `P<n>` or `A<n>` in place of `C<n>`. Use one evidence file per line, relative to the app-check artifact folder or absolute. INCOMPLETE means the check could not finish and counts as failure. Overall is PASS only if every line is PASS. Include at least one `C<n>` line. Put the identical lines in report.md. Return the same object.
+or `P<n>` or `A<n>` in place of `C<n>`. Use one evidence file per line, relative to the app-check artifact folder or absolute. Cite only files you wrote during this check: evidence older than preparation fails the whole result, and that includes files in the prepared checkout. To back a criterion about a checkout file, such as a README, save the excerpt you read under `$ARTIFACTS_DIR/app-check/` and cite that. INCOMPLETE means the check could not finish and counts as failure. Overall is PASS only if every line is PASS. Include at least one `C<n>` line. Put the identical lines in report.md. Return the same object.
