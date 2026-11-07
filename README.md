@@ -109,9 +109,14 @@ cleanup then use the same helper to reopen one OS process handle, verify creatio
 terminate through that handle, and wait for exit before retiring the record. Missing,
 malformed, legacy numeric-only, exited, or mismatched records never authorize a
 PID-only kill.
-Race-free identity cleanup is currently unsupported on macOS and Linux, so app checks
-fail before starting the app on those platforms rather than claiming a process-control
-security boundary.
+On Linux (5.3 or later, with Python 3.9 or later as `python3`), the helper holds the app
+by a pidfd instead of a handle. Its identity is the start time in `/proc/<pid>/stat`
+together with the boot ID. The checker launches the app and records it in one shell
+command, and the helper refuses a PID that is not that shell's child. Cleanup opens a
+pidfd, verifies the start time and boot ID, sends SIGTERM and then SIGKILL through the
+pidfd only, and waits for exit before it retires the record. Race-free identity cleanup is
+currently unsupported on macOS, so app checks fail there before starting the app rather
+than claiming a process-control security boundary.
 
 ## Native queues and triggers
 

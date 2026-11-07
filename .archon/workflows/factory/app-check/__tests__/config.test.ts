@@ -17,7 +17,8 @@ describe("factory config", () => {
     expect(() => parseFactoryConfig("autonomy: reckless\n")).toThrow("expected one of");
     expect(() => parseFactoryConfig("mystery: true\n")).toThrow("unknown setting");
     expect(() => parseFactoryConfig("app_check:\n  enabled: true\n")).toThrow("app.start");
-    expect(parseFactoryConfig("app_check:\n  enabled: true\napp:\n  runtime: C:/runtime/scenario.json\n  teardown: bash teardown.sh\n").app.runtime).toBe("C:/runtime/scenario.json");
+    const runtime = process.platform === "win32" ? "C:/runtime/scenario.json" : "/runtime/scenario.json";
+    expect(parseFactoryConfig(`app_check:\n  enabled: true\napp:\n  runtime: ${runtime}\n  teardown: bash teardown.sh\n`).app.runtime).toBe(runtime);
     expect(() => parseFactoryConfig("app:\n  runtime: relative/scenario.json\n")).toThrow("app.runtime");
     expect(() => parseFactoryConfig("models:\n  aliases:\n    manager:\n      provider: codex\n      model: x\n")).toThrow("start with @");
     expect(() => parseFactoryConfig("models:\n  aliases:\n    '@manager':\n      model: x\n")).toThrow("provider");
