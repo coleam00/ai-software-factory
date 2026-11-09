@@ -9,7 +9,10 @@ const artifactRoot = join(process.env.ARTIFACTS_DIR!, "app-check");
 mkdirSync(artifactRoot, { recursive: true });
 writeFileSync(join(artifactRoot, "temp-path.txt"), temp);
 const headRef = `refs/factory/app-check-${pr}`;
-run(["git", "fetch", "origin", `+refs/heads/${base}:refs/remotes/origin/${base}`, `+pull/${pr}/head:${headRef}`]);
+// Fetch the head by the commit select chose, not through refs/pull/<pr>/head: GitHub updates that mirror
+// asynchronously and it can stay on an older commit (2026-11-09, Mission Control PR 542, through a close and
+// reopen). The status is bound to this commit anyway.
+run(["git", "fetch", "origin", `+refs/heads/${base}:refs/remotes/origin/${base}`, `+${head}:${headRef}`]);
 const fetchedBase = run(["git", "rev-parse", `refs/remotes/origin/${base}`]);
 const fetchedHead = run(["git", "rev-parse", headRef]);
 if (fetchedBase !== baseOid || fetchedHead !== head) throw new Error("pull request head/base changed before preparation");
