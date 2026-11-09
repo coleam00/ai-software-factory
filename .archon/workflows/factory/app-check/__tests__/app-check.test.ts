@@ -8,7 +8,7 @@ import { evidenceProblems } from "../scripts/evidence.ts";
 import { boundDescription, statusJudgesHead } from "../scripts/binding.ts";
 import { resultIsCurrent } from "../scripts/publish.ts";
 import { finalizePending } from "../scripts/finalize.ts";
-import { appProcessRecordPath, inspectAppProcessIdentity, recordAppProcess, stopRecordedApp } from "../scripts/app-process.ts";
+import { appProcessRecordPath, appProcessSupport, inspectAppProcessIdentity, recordAppProcess, stopRecordedApp } from "../scripts/app-process.ts";
 import { installFakeCommand, isolatedCommandEnv } from "../../.shared/test-command.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,6 +21,8 @@ function spawnTestChild(): Bun.Subprocess {
 function processIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
+    // An exited child waiting to be reaped still answers signal 0 on Linux.
+    if (process.platform === "linux") return readFileSync(`/proc/${pid}/stat`, "utf8").split(") ")[1]?.[0] !== "Z";
     return true;
   } catch {
     return false;
@@ -144,7 +146,7 @@ describe("app-check deterministic decisions", () => {
     expect(calls).toHaveLength(1);
   });
   test("rejects missing, malformed, and legacy numeric-only ownership records", async () => {
-    if (process.platform !== "win32") return;
+    if (!appProcessSupport().supported) return;
     const artifacts = mkdtempSync(join(tmpdir(), "factory-app-process-invalid-test-"));
     const recordPath = appProcessRecordPath(artifacts);
     const child = spawnTestChild();
@@ -167,7 +169,7 @@ describe("app-check deterministic decisions", () => {
     }
   });
   test("retires the identity record when the owned process already exited", async () => {
-    if (process.platform !== "win32") return;
+    if (!appProcessSupport().supported) return;
     const artifacts = mkdtempSync(join(tmpdir(), "factory-app-process-exited-test-"));
     const recordPath = appProcessRecordPath(artifacts);
     const child = spawnTestChild();
@@ -177,7 +179,7 @@ describe("app-check deterministic decisions", () => {
     expect(existsSync(recordPath)).toBe(false);
   });
   test("a stale identity cannot stop an unrelated live child", async () => {
-    if (process.platform !== "win32") return;
+    if (!appProcessSupport().supported) return;
     const artifacts = mkdtempSync(join(tmpdir(), "factory-app-process-stale-test-"));
     const recordPath = appProcessRecordPath(artifacts);
     const child = spawnTestChild();
@@ -199,7 +201,7 @@ describe("app-check deterministic decisions", () => {
     }
   });
   test("stops an owned live child and repeated cleanup cannot act on a later child", async () => {
-    if (process.platform !== "win32") return;
+    if (!appProcessSupport().supported) return;
     const artifacts = mkdtempSync(join(tmpdir(), "factory-app-process-owned-test-"));
     const recordPath = appProcessRecordPath(artifacts);
     const owned = spawnTestChild();
@@ -218,7 +220,7 @@ describe("app-check deterministic decisions", () => {
     }
   });
   test("workflow cleanup uses the shared identity helper after checker failure", async () => {
-    if (process.platform !== "win32") return;
+    if (!appProcessSupport().supported) return;
     const artifacts = mkdtempSync(join(tmpdir(), "factory-app-process-finalizer-test-"));
     const recordPath = appProcessRecordPath(artifacts);
     const child = spawnTestChild();
@@ -237,6 +239,88 @@ describe("app-check deterministic decisions", () => {
       if (processIsAlive(child.pid)) await stopTestChild(child);
     }
   });
+  test("Linux refuses a PID that is not the launching shell's child", async () => {
+    if (process.platform !== "linux" || !appProcessSupport().supported) return;
+    // The grandchild belongs to sh, which exits; it is nobody's child of ours.
+    const launched = Bun.spawnSync(["sh", "-c", "sleep 30 > /dev/null 2>&1 & echo $!"], { stdout: "pipe" });
+    const pid = Number(launched.stdout.toString().trim());
+    try {
+      expect(() => inspectAppProcessIdentity(pid)).toThrow("not a child");
+      expect(processIsAlive(pid)).toBe(true);
+    } finally {
+      process.kill(pid);
+    }
+  });
+  test("Linux treats a record from another boot as a different process", async () => {
+    if (process.platform !== "linux" || !appProcessSupport().supported) return;
+    const artifacts = mkdtempSync(join(tmpdir(), "factory-app-process-boot-test-"));
+    const recordPath = appProcessRecordPath(artifacts);
+    const child = spawnTestChild();
+    try {
+      const record = recordAppProcess(child.pid, inspectAppProcessIdentity(child.pid), recordPath);
+      expect(record).toMatchObject({ platform: "linux", pid: child.pid });
+      writeFileSync(recordPath, JSON.stringify({ ...record, boot_id: "00000000-0000-0000-0000-000000000000" }));
+      expect(stopRecordedApp(recordPath).status).toBe("identity-mismatch");
+      expect(processIsAlive(child.pid)).toBe(true);
+      writeFileSync(recordPath, JSON.stringify({ ...record, boot_id: undefined }));
+      expect(stopRecordedApp(recordPath).status).toBe("invalid-record");
+      expect(processIsAlive(child.pid)).toBe(true);
+    } finally {
+      rmSync(recordPath, { force: true });
+      await stopTestChild(child);
+    }
+  });
+  test("Linux kills an owned app that ignores SIGTERM", async () => {
+    if (process.platform !== "linux" || !appProcessSupport().supported) return;
+    const artifacts = mkdtempSync(join(tmpdir(), "factory-app-process-sigterm-test-"));
+    const recordPath = appProcessRecordPath(artifacts);
+    const stubborn = Bun.spawn(["python3", "-c", "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('ready', flush=True); time.sleep(60)"], { stdout: "pipe", stderr: "ignore" });
+    await stubborn.stdout.getReader().read();
+    recordAppProcess(stubborn.pid, inspectAppProcessIdentity(stubborn.pid), recordPath);
+    expect(stopRecordedApp(recordPath)).toEqual({ status: "stopped" });
+    expect(await stubborn.exited).not.toBe(0);
+    expect(existsSync(recordPath)).toBe(false);
+  }, 20_000);
+  test("Linux launch works from a shell with job control, as the checker's is", () => {
+    if (process.platform !== "linux" || !appProcessSupport().supported) return;
+    const artifacts = mkdtempSync(join(tmpdir(), "factory-app-process-launch-test-"));
+    const helper = join(import.meta.dir, "..", "scripts", "app-process.ts");
+    const log = join(artifacts, "app-check", "app.log");
+    const env = { ...process.env, ARTIFACTS_DIR: artifacts, BUN: process.execPath, HELPER: helper, LOG: log, GREETING: "hello" };
+    const launched = Bun.spawnSync(["bash", "-c", 'set -m; "$BUN" "$HELPER" launch "$LOG" \'echo "$GREETING from $PWD"; exec sleep 60\''], { env, cwd: artifacts, stdout: "pipe", stderr: "pipe" });
+    expect(launched.exitCode, launched.stderr.toString()).toBe(0);
+    const { pid } = JSON.parse(launched.stdout.toString()) as { pid: number };
+    try {
+      expect(processIsAlive(pid)).toBe(true);
+      expect(readFileSync(log, "utf8")).toContain(`hello from ${artifacts}`);
+      const again = Bun.spawnSync([process.execPath, helper, "launch", log, "sleep 60"], { env, stdout: "pipe", stderr: "pipe" });
+      expect(again.exitCode).not.toBe(0);
+      expect(again.stderr.toString()).toContain("already exists");
+      const stopped = Bun.spawnSync([process.execPath, helper, "stop"], { env, stdout: "pipe", stderr: "pipe" });
+      expect(JSON.parse(stopped.stdout.toString())).toEqual({ status: "stopped" });
+      expect(processIsAlive(pid)).toBe(false);
+    } finally {
+      if (processIsAlive(pid)) process.kill(pid);
+    }
+  }, 20_000);
+  test("Linux records and stops an app launched by a shell, as the checker does", () => {
+    if (process.platform !== "linux" || !appProcessSupport().supported) return;
+    const artifacts = mkdtempSync(join(tmpdir(), "factory-app-process-shell-test-"));
+    const helper = join(import.meta.dir, "..", "scripts", "app-process.ts");
+    const env = { ...process.env, ARTIFACTS_DIR: artifacts, BUN: process.execPath, HELPER: helper };
+    const launched = Bun.spawnSync(["bash", "-c", 'setsid sleep 60 > /dev/null 2>&1 & pid=$!; "$BUN" "$HELPER" record $pid "$("$BUN" "$HELPER" inspect $pid)" && echo $pid'], { env, stdout: "pipe", stderr: "pipe" });
+    expect(launched.exitCode, launched.stderr.toString()).toBe(0);
+    const pid = Number(launched.stdout.toString().trim().split("\n").pop());
+    try {
+      expect(processIsAlive(pid)).toBe(true);
+      const stopped = Bun.spawnSync([process.execPath, helper, "stop"], { env, stdout: "pipe", stderr: "pipe" });
+      expect(stopped.exitCode, stopped.stderr.toString()).toBe(0);
+      expect(JSON.parse(stopped.stdout.toString())).toEqual({ status: "stopped" });
+      expect(processIsAlive(pid)).toBe(false);
+    } finally {
+      if (processIsAlive(pid)) process.kill(pid);
+    }
+  }, 20_000);
   test("selects and publishes against the current encoded branch ref when the PR base snapshot is stale", () => {
     const root = mkdtempSync(join(tmpdir(), "factory-current-base-test-"));
     const log = join(root, "gh.log");
